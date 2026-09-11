@@ -117,3 +117,5 @@ before continuing. Project-specific lessons belong here; lessons that apply ever
 `~/.claude/CLAUDE.md`.
 
 ## Lessons
+
+- Before `git remote add` / `git push` in a directory that has never had its own `git init`, run `git rev-parse --show-toplevel` first — an un-initialized project directory silently belongs to the `/Users/manju` home repo, and remote/push commands run there operate on the whole home directory (2026-09-11: `software-factory-loop` was nearly pushed with the entire home repo).
