@@ -37,7 +37,7 @@ Approved — 2026-09-11, owner.
 - **Behavior:** credentials are read from an untracked `.env` at the repo root and injected into sandbox containers via the Docker provider's env configuration. No secret value appears in any prompt text, PR body, run report, or log line the harness writes. `.env` is git-ignored.
 - **Source traceability:** PRD Implementation Decisions (Data handling); Grilling decision 5; `docs/agents/workflow.md` Secrets.
 - **Sub-step coverage:** WI-1 checklist item 4.
-- **Success criteria:** a vitest case asserts the prompt/report builders produce no substring matching any configured secret value (tested with sentinel dummy values); `git status` is clean with a populated `.env` present; `.gitignore` contains `.env`.
+- **Success criteria:** a vitest case asserts `assertNoSecrets` rejects any string containing a substring of a configured secret value (sentinel dummies), and the loop (FR-005 machinery) applies it to every string it emits — prompt and PR body; `git status` is clean with a populated `.env` present; `.gitignore` contains `.env`.
 - **Evidence label:** harness source (`src/`, vitest).
 - **Boundary and errors:** a missing `.env` or a missing key for the selected provider aborts the run at startup with a named-variable message; it never proceeds with an empty credential.
 - **Non-claims:** no claim of protection against a malicious fix agent exfiltrating values at runtime — the sandbox is trusted code execution; the rule covers what *the harness itself* writes.
