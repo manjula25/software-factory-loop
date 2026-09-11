@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Issue-driven test & fix loop harness (POC) — see harness-prd-v2.md",
+  "description": "Issue-driven test & fix loop harness (POC) \u2014 see harness-prd-v2.md",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "loop": "tsx src/loop.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
