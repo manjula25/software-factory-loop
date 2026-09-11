@@ -65,6 +65,15 @@ Approved — 2026-09-11, owner. Clarification resolved: all three issues filed a
 
 None. Resolved 2026-09-11: all three bug issues are filed on `loop-fixtures-py` at seeding time and stay dormant until WI-2.
 
+Resolved 2026-09-11 (post-seeding): FR-102's "attaches that trace as a raw log file" is
+implemented for BUG-2 as an **inline fenced block** in issue #2's body, not a web-UI file
+attachment — `gh` cannot upload issue attachments (GitHub exposes no API for it; it is a
+web-UI-only feature). The harness normalizer treats the largest fenced block as `attachedLog`,
+so the pipeline behavior is identical. True web-UI attachment support (detect a
+`user-attachments/assets/...` URL in the body, fetch it — plain GET on public repos, gh-token
+GET on private ones — use the content as `attachedLog`) lands in WI-2's normalizer work beside
+multi-source ingestion.
+
 ## Traceability matrix
 
 | FR | WI-1 checklist item | PRD section |
