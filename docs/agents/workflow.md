@@ -28,6 +28,19 @@ Where a surface reads *(none yet)*, it is not scaffolded: any claim about it is 
 (`sandcastle init`, vitest), the real commands replace this table through a PR, like everything
 else.
 
+## Secrets
+
+API credentials reach the sandbox as environment variables injected by the Docker provider,
+sourced from an untracked `.env` at the repo root (never committed). Hard rule: environment
+values are never echoed in prompts, PR bodies, or any log the harness writes — the agent gets
+its key implicitly via the environment, never as prompt text.
+
+## Commit identity (sandbox work in target repos)
+
+Commits made by the fix agent in a target repo are authored
+`software-factory-loop <manjula25+loop@users.noreply.github.com>`; PRs open via the owner's
+`manjula25` GitHub auth. Machine-made commits stay distinguishable from human ones.
+
 ## Review topology
 
 Specification review before code-quality review, both read-only, both rerun when the candidate

@@ -60,6 +60,21 @@ For issue ingestion specifically: Sandcastle's own `init` command already has a 
 
 **Data handling / confidentiality**: unchanged and still a hard gate. The harness must not be pointed at a client production repo, or given a client's log files/issues, until Bitcot's policy on sending that client's data to a third-party AI API has been explicitly confirmed. This applies even more directly now, since attached logs may contain more identifying/sensitive detail (stack traces, internal paths, sometimes data values) than a discovered-issue description would have.
 
+## Decisions from Grilling (2026-09-11)
+
+Stress-test of the architecture and the first work item. These amend the Implementation Decisions above; numbers named here are POC defaults, not forever-choices.
+
+1. **Sandcastle posture: pin + thin adapter, fork on demand.** Lock the exact version in the lockfile; route all Sandcastle calls through one thin adapter module so an upgrade or provider swap is a one-file edit. Do not clone or vendor. Revisit only on a named trigger: upstream dies and blocks us (fork, point the lockfile at the fork); a 0.x breaking release strands us (stay pinned, adapter absorbs the change on our schedule); or a need Sandcastle cannot express through its hooks (fork then, and only then).
+2. **Wrong-test guard: evidence in the PR, human judges.** Every fix PR carries verbatim RED output (before), GREEN output (after), and one line mapping the failure to the issue's reported symptom. No LLM-checks-the-LLM gate — an agent's confirmation signal is no better than its completion signal.
+3. **Provider: cheap models, deliberately.** Accepted trade-off: a failed run is ambiguous between pipeline and model. Standing rule: any inexplicable failure is re-run once with a strong model before the architecture is blamed.
+4. **Provider registry from day one.** Primary: Claude Code CLI via the local CLIProxyAPI proxy; alternates: Sandcastle's native `codex` agent (direct API key) and `opencode`. The sandbox image carries all three CLIs; the harness never hard-codes a provider.
+5. **Secrets reach the sandbox as env vars**, injected via Sandcastle's Docker env config, sourced from an untracked `.env`. Hard rule: environment values are never echoed in prompts, PR bodies, or anything the harness writes.
+6. **Verification is baseline-diff, not absolute green.** Onboarding records the target suite's pre-existing failures and expected duration in the project profile. A fix is verified when the reproduction test passes AND the post-fix suite shows no failures that were not in the baseline — "the suite got no worse, and the reported bug is gone" is the honest claim.
+7. **Agent identity.** PRs open via the owner's GitHub auth (`manjula25`); sandbox commits are authored `software-factory-loop <manjula25+loop@users.noreply.github.com>` so machine-made commits stay distinguishable from human ones.
+8. **Seeded target repo: `manjula25/loop-fixtures-py`** — a small Python/pytest project, separate from this harness repo, standing in for "any future project."
+9. **WI-1 scope.** Seed three bugs — one simple, one with a messy attached log, two sharing a module — but the exit gate is **one bug fixed end-to-end**: reproduction test written and failing, fix applied, fresh-sandbox verification green (baseline-diff), PR open with RED/GREEN evidence. The other two bugs are fuel for later work items (parallelism, dependency grouping, dedup, budget cap).
+10. **Open: demo format for the team lead** (live run vs. artifacts vs. real repo) — deferred until WI-1 is done.
+
 ## Testing Decisions
 
 - Unit test the issue-normalization step directly: given a GitHub issue, a spec doc excerpt, and a plain-text list entry, confirm all three produce the same internal `{ id, description, attachedLog, sourceType }` shape.

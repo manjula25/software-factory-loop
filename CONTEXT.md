@@ -45,7 +45,10 @@ Docker only for the POC.
 - Bitcot policy on client data in third-party AI APIs — gate for any client repo/log; unconfirmed.
 - Sandcastle (`@ai-hero/sandcastle`) upstream — the harness builds on it, configured near its
   `parallel-planner-with-review` template, not rewritten around it.
-- Model/agent provider — swappable config value; no vendor decided.
+- Model/agent provider — a registry, not a single choice: Claude Code CLI via the local
+  CLIProxyAPI proxy (primary), Sandcastle's `codex` agent with a direct API key, and `opencode`
+  as alternates. Cheap models by default; standing rule: any inexplicable failure is re-run
+  once with a strong model before the architecture is blamed.
 
 ## Unresolved domain questions
 
