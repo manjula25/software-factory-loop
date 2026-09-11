@@ -43,16 +43,20 @@ An approved, durable repository context: `CONTEXT.md`, `docs/adr/README.md`, `do
 
 - `CLAUDE.md` — the single copy of agent guidance (repo identity, hard constraints, lifecycle,
   self-learning).
+- `CONTEXT.md` — durable purpose, actors, glossary, invariants, boundaries.
 - `harness-prd-v2.md` — the plan of record; wins on product purpose.
 - `docs/agents/workflow.md` — base branch, worktree policy, and the Repository commands table
   (currently *(none yet)* per surface — that is accurate, not a gap to fill with invented
   commands).
+- `docs/agents/issue-tracker.md` — GitHub Issues on `manjula25/software-factory-loop`;
+  read-only by default.
 - `.claude/skills/<name>/` — the repo-local ADLC skills, flattened (no `engineering/` layer),
   adapted for the harness's two surfaces.
 
 Deliberately absent, and not to be created by a rerun of this skill without approval: no
-`CONTEXT.md` yet, no `docs/adr/` yet, no tracker policy yet, no `docs/agents/issue-tracker.md`.
-Create each only when the decision it records has actually been made.
+`docs/adr/` yet, no `domain.md`/`project-policy.md`/`repository-map.md` (policy lives in
+`CLAUDE.md`'s hard constraints; the repo is small enough not to need a map). Create each only
+when the decision it records has actually been made.
 
 If `templates/` and the live file disagree, the live file wins. The `templates/` directory stays
 as generic starters for a fresh repository; do not copy them over existing content.

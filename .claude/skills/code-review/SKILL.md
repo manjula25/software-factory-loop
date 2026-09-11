@@ -10,7 +10,7 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
-No issue tracker is configured for this repository yet. The originating spec is the work item's `docs/work/{WORK_ITEM}/specification.md`, and product-level questions resolve against `harness-prd-v2.md`. When a tracker is later configured, its policy lives at `docs/agents/issue-tracker.md`.
+The tracker is GitHub Issues on `manjula25/software-factory-loop` (policy: `docs/agents/issue-tracker.md`); work items are referenced as `WI-<n>`. The originating spec is the work item's `docs/work/{WORK_ITEM}/specification.md`, and product-level questions resolve against `harness-prd-v2.md`.
 
 ## Process
 

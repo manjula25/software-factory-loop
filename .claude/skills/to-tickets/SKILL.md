@@ -9,23 +9,24 @@ disable-model-invocation: true
 ## Required inputs
 
 An approved work item (or the `docs/work/{WORK_ITEM}/specification.md` or implementation plan
-derived from it), and `harness-prd-v2.md` for goal context. There is no build plan and no
-configured tracker yet — the work item's approved specification is the decomposition source of
-record. When a tracker is configured, its policy lives in `docs/agents/issue-tracker.md`.
+derived from it), `harness-prd-v2.md` for goal context, and the tracker policy in
+`docs/agents/issue-tracker.md`. There is no build plan yet — the work item's approved
+specification is the decomposition source of record.
 
 ## Optional inputs
 
 Domain glossary (`CONTEXT.md`), Architecture Decision Records, triage labels, and tracker capabilities.
 
-## Project context — the tracker is not configured yet
+## Project context — GitHub Issues is the tracker
 
-No external tracker is wired up for this repository. The ticket layer's job is **dependency
-edges and FR traceability** — `Blocked by` ordering across tickets and within a work item, plus
-which `FR-###` each piece delivers. A ticket that only restates a specification line duplicates
-it and is deleted in review. When a tracker is later configured (the PRD anticipates GitHub
-Issues as one of the ingestion sources), its policy is written to
-`docs/agents/issue-tracker.md` and this section reconciles to it — never assume a tracker
-exists because the skill mentions one.
+GitHub Issues on `manjula25/software-factory-loop` hold **one issue per work item**
+(`[WI-<n>] short title`), per `docs/agents/issue-tracker.md`. The ticket layer's job is
+**dependency edges and FR traceability** — `Blocked by` ordering across tickets and within a
+work item, plus which `FR-###` each piece delivers. A ticket that only restates a specification
+line duplicates it and is deleted in review. Status lives on the GitHub Issue; a ticket
+completing means checking off its checklist item, not opening a second tracker item. Tracker
+writes are read-only by default — prepare proposed mutations, execute only with explicit user
+authority.
 
 ## Required companion skills
 
