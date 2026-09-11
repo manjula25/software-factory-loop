@@ -1,0 +1,17 @@
+{
+  "name": "software-factory-loop",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Issue-driven test & fix loop harness (POC) — see harness-prd-v2.md",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
