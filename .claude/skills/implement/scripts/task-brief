@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Extract exactly one numbered task from a Markdown implementation plan."""
+import argparse
+import re
+from pathlib import Path
+
+parser=argparse.ArgumentParser()
+parser.add_argument("plan", type=Path)
+parser.add_argument("task", type=int)
+args=parser.parse_args()
+text=args.plan.read_text(encoding="utf-8")
+pattern=re.compile(rf"^### Task {args.task}:.*?(?=^### Task \d+:|\Z)", re.MULTILINE|re.DOTALL)
+matches=pattern.findall(text)
+if len(matches)!=1:
+    raise SystemExit(f"task {args.task} is missing or ambiguous ({len(matches)} matches)")
+print(matches[0].rstrip())

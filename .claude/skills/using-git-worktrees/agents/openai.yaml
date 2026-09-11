@@ -1,0 +1,5 @@
+interface:
+  display_name: "Using Git Worktrees"
+  short_description: "Use safe isolated worktrees with verified baselines"
+policy:
+  allow_implicit_invocation: true

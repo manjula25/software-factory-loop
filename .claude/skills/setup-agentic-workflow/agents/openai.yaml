@@ -1,0 +1,5 @@
+interface:
+  display_name: "Setup Agentic Workflow"
+  short_description: "Configure this repository for installed development skills"
+policy:
+  allow_implicit_invocation: false

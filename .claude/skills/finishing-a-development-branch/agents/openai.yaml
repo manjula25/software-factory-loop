@@ -1,0 +1,5 @@
+interface:
+  display_name: "Finishing a Development Branch"
+  short_description: "Prepare an honest branch delivery with explicit authority"
+policy:
+  allow_implicit_invocation: false

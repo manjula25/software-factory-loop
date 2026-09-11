@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Validate non-recursive controller and sequential reviewer invariants."""
+from pathlib import Path
+
+base = Path(__file__).resolve().parents[1]
+checks = {
+    "SKILL.md": [
+        "top-level controller is the only orchestrator",
+        "one implementer for one current slice",
+        "specification review",
+        "before",
+        "code-quality review",
+        "changed candidate invalidates both",
+        "reviewers are read-only leaves",
+        "Missing expertise returns `UNVERIFIED`",
+        "no child can invoke `implement`",
+    ],
+    "implementer-prompt.md": ["one bounded slice", "named public seam", "RED:", "focused verification", "may not dispatch", "UNVERIFIED"],
+    "spec-reviewer-prompt.md": ["Verdict: PASS | FAIL | UNVERIFIED", "read-only leaf", "Blocking specification findings", "Adjacent non-blocking observations", "Missing or unverified evidence"],
+    "code-quality-reviewer-prompt.md": ["Verdict: APPROVED | NEEDS_FIXES | UNVERIFIED", "read-only leaf", "Critical findings", "Important findings", "Minor findings", "Missing or unverified evidence"],
+}
+errors = []
+for filename, terms in checks.items():
+    text = (base / filename).read_text(encoding="utf-8")
+    for term in terms:
+        if term not in text:
+            errors.append(f"{filename}: missing {term!r}")
+if errors:
+    raise SystemExit("\n".join(errors))
+print("review topology: PASS")

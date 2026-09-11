@@ -1,0 +1,5 @@
+interface:
+  display_name: "To Spec"
+  short_description: "Run the to-spec workflow phase"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,93 @@
+# PRD: Issue-Driven Test & Fix Loop (v2, revised scope)
+
+This replaces the earlier "self-discovering" version of this PRD. The discover phase (LLM brainstorming, Hypothesis fuzzing, production error mining) has been dropped. The harness now assumes issues already exist, coming from a GitHub issue list, a spec/requirements document, or a plain list, often with an attached log file or stack trace, and its job is to work through that queue: fix each one, verify the fix for real, and hand it to a human for review.
+
+## Problem Statement
+
+Once a bug is known (reported, logged, or specified), turning it into a verified, working fix is still manual and repetitive: read the issue, reproduce it, understand the log, patch the code, run the tests, make sure nothing else broke, open a PR. When there's a backlog of issues, this is slow and doesn't parallelize well for a human working alone.
+
+## Solution
+
+An automated pipeline that takes a queue of existing issues (regardless of source format), and for each one: writes a regression test capturing the reported problem, confirms that test actually fails against the current code (proving it reproduces the issue), patches the code in an isolated sandbox, independently re-verifies the fix (never trusting the agent's own "done" signal), and opens a PR for human review. Built on Sandcastle (`@ai-hero/sandcastle`), reusing its worktree-per-issue branching, sandboxing, and structured-output primitives, configured close to its built-in `parallel-planner-with-review` template rather than custom-built from scratch. The target project's language is irrelevant to the harness — one pipeline works for repos in any language (see "Target project language" under Implementation Decisions).
+
+## User Stories
+
+1. As a developer, I want to hand the harness a list of issues from any of several sources (GitHub Issues, a spec document, or a plain list), so that I'm not locked into one issue-tracking format.
+2. As a developer, I want the harness to read any attached log file or stack trace for each issue, so that it has the actual failure evidence, not just a one-line description.
+3. As a developer, I want the harness to write a test that reproduces each issue's failure before attempting a fix, so that "fixed" has a concrete, checkable meaning rather than the agent's own judgment.
+4. As a developer, I want each issue processed in its own isolated sandbox on its own branch, so that fixes for unrelated issues can happen in parallel without colliding.
+5. As a developer, I want every claimed fix independently re-verified (re-run the reproduction test AND the full suite in a fresh sandbox), so that I never trust the agent's completion signal at face value.
+6. As a developer, I want every fix to land as a PR, never auto-merged, so that a human always reviews the diff before it becomes part of the real codebase.
+7. As a developer, I want the harness to check whether an issue already has an open, unmerged PR before starting work on it, so that the same issue never gets fixed twice in parallel.
+8. As a developer, I want a hard cap on how many issues get processed per run, with the most important ones prioritized first, so that a large backlog doesn't produce more PRs than a human can realistically review, and doesn't silently blow through my API budget.
+9. As a developer, I want the regression test written for each issue to stay permanently in the test suite after the fix merges, so the reported bug can't silently come back without a test catching it.
+10. As a developer, I want this to run entirely on local Docker for the POC phase, so I can validate the idea without any cloud spend before I have something to show my team lead.
+11. As a developer, I want a results report per run (issues attempted, fixed, failed, cost spent, links to opened PRs), so I have something concrete to bring to my team lead.
+12. As a developer, I want the agent/model provider to be a swappable config value, so I can tune cost vs quality without redesigning the pipeline.
+13. As a developer, I want the harness to onboard itself onto a project I've never pointed it at before — reading the repo's docs for orientation but validating install/test commands by actually running them — so pointing it at a different repo requires no manual configuration, and so it always works from the current code, not a snapshot of what the repo looked like last run.
+
+## Implementation Decisions
+
+**Base framework**: Sandcastle ([github.com/mattpocock/sandcastle](https://github.com/mattpocock/sandcastle), package `@ai-hero/sandcastle`), configured close to its built-in `parallel-planner-with-review` template — plan the issue queue, execute each on its own branch in its own sandbox, review each diff, then hand off for human merge. This scope is a closer match to Sandcastle's original design intent (issue → fix) than the discovery-based version was.
+
+For issue ingestion specifically: Sandcastle's own `init` command already has a built-in path for this. It asks you to choose an issue tracker of `github-issues`, `beads`, or `custom` when scaffolding. Choosing `custom` deliberately scaffolds the project in a broken-until-configured state, along with a `SETUP_ISSUE_TRACKER.md` prompt that you feed to a coding agent to wire up your own tracker by editing the scaffolded files in place. This is the concrete mechanism to use for the spec-doc/plain-list sources described here, rather than building a separate ingestion layer from scratch, we're extending a seam Sandcastle already anticipated, not inventing a new one.
+
+**Issue ingestion (new component, this is the main new piece of work)**: a normalization step that reads issues from whichever source is provided (GitHub Issues via `gh issue list`, a spec/requirements doc, or a plain list) and converts each into one consistent internal shape: `{ id, description, attachedLog?, sourceType }`. This is necessary so the fix step never has to branch on "what kind of issue is this," it always sees the same shape.
+
+**Log handling**: log inputs are heterogeneous by design, plain text, JSON, raw CLI output, or hardware device logs, and the plan does not assume a fixed format. Every log, regardless of type, is written into the sandbox's filesystem as-is (no format-specific parsing) and the agent is instructed to read/grep/inspect it itself as part of its investigation, the same way a human would work with an unfamiliar log format. A short excerpt (first/last N lines) is still inlined in the prompt so the agent has immediate context without needing a tool call just to get started, but no assumption is made about the log being structured, parseable, or human-readable text; treating it as an opaque blob the agent explores is the safe default across all the formats you described.
+
+**Project understanding (onboarding + freshness)**: the PRD previously assumed the agent would just explore an unfamiliar repo, but two kinds of "understanding" need different treatment. **Slow-changing facts are onboarded once**: the first time the harness is pointed at a repo, an onboarding run has the agent read the repo's own documentation (AGENT.md/CLAUDE.md, README, docs/) as hints, then validate everything by execution — it attempts the dependency install and the test suite in a sandbox, and only a command that actually runs successfully lands in a small machine-readable project profile (language, install command, full-suite command, run-one-test command, rough module layout; projects without docs fall back to config files like `pyproject.toml`/`package.json`/`Makefile`, same run-don't-trust rule). Docs are hints, never ground truth, since documentation drifts faster than any other artifact in a repo. The profile is committed into the target repo and human-reviewed once, so it travels with the code through normal PRs rather than living in the harness and going stale. **Issue-level understanding is never cached**: every issue run creates a fresh worktree at current HEAD, so the agent always explores the code as it exists right now — commits merged since the last run are automatically included, with no refresh mechanism to build. If the profile itself goes stale (build tooling changed without updating it), the per-issue verification run catches it: verification executes the pinned commands against HEAD, and a command that errors or runs zero tests counts as a failed verification, never a pass — the run is marked failed and the profile flagged for re-onboarding. Net shape: docs to orient fast, execution to establish facts, fresh code exploration per issue to understand the specific problem.
+
+**Reproduce-then-fix, as one flow per issue**: for each issue, the agent's task is first to write a test that reproduces the reported failure (based on the description and log), confirm it currently fails, then fix the underlying code so it passes, then run the full suite. This mirrors the original "write the test, then fix it" shape, except the test's correctness is now grounded in a human-authored issue and log, rather than the LLM's own invented scenario, which resolves the "agent invents a wrong test, then fixes code to match it" risk without needing the citation/second-opinion mechanism from the discovery-based version.
+
+**Dedup / already-in-progress check**: before starting work on an issue, check whether it already has an open, unmerged PR linked to it (via a label or a PR-body reference to the issue number), skip it if so. This was identified as a real practical failure mode: without this check, re-running the harness while yesterday's PRs are still unreviewed can start a second, duplicate fix attempt on the same issue.
+
+**Parallelization, dependency-aware**: issues are processed in parallel by default (each on its own git worktree/branch, `fix/<issue-id>`), except when they're expected to touch the same code. Before starting a batch, a lightweight dependency check groups issues by whether they reference overlapping files/modules (pulled from the issue description and any attached log's file paths/stack trace). Issues in the same group run sequentially, one fix at a time, since their changes are likely to collide or interact. Issues in different groups run in parallel, since they're touching unrelated parts of the codebase, matching what you described: parallel when there's no dependency between tickets, sequential when there is. This grouping is a heuristic (shared file references), not a guarantee of true independence, worth treating as a starting point to refine once there's real experience with how often it's wrong.
+
+**Budget control**: a hard cap on issues processed per run, with a cheap triage pass (a fast model scoring each issue's priority from its description) selecting which subset of the queue to work on, so a large backlog doesn't overwhelm either the API budget or the human reviewer's capacity. This is now doing double duty compared to the discovery version: it protects both cost and review-queue size.
+
+**Verification**: identical to the original plan. A fresh sandbox run re-executes both the specific reproduction test and the full suite after a fix attempt. Only a pass on both counts as verified. The agent's own completion signal is never treated as sufficient on its own.
+
+**Review and merge gate**: verified fixes get a cheaper-model review pass on the diff, then open as a PR. Merge always requires a human. Full autonomy (auto-merge) remains explicitly out of scope, since even with human-authored issues, the agent can still misread the log or fix the wrong root cause.
+
+**Regression test retention**: the reproduction test written for each fixed issue stays permanently in the test suite (proposed location: `tests/fixed-issues/` or similar), same reasoning as before, unchanged from the original plan.
+
+**Sandbox / execution environment**: local Docker only for the POC, unchanged from the original plan, same cost reasoning (no cloud spend until the POC is proven and a team lead is involved in that decision).
+
+**Target project language: any.** The harness itself is TypeScript (Sandcastle is a TS library), but the target repo being fixed can be in any language — Python, Go, Java, whatever. The two never need to match, because every language-sensitive piece lives in one place: the sandbox Docker image. Sandcastle's stock image is Node-oriented, so per target project we extend the scaffolded `.sandcastle/Dockerfile` with that language's runtime and tooling (e.g. for Python: a Python base image, `pip`/`uv`, and dependency install in the `onSandboxReady` hook instead of the default `npm install`). Everything else is already language-neutral by design: the in-sandbox agent (Claude Code CLI) is a general-purpose coding agent, verification is just shell commands whose exit codes the harness checks (`pytest`, `go test`, `mvn test` — all equivalent to it), worktree-per-issue branching is pure git, log handling writes files to the sandbox filesystem, and regression tests are just files that land in the target repo's own test suite. This makes the POC's proven-out value broader: one pipeline, reusable across the team's repos regardless of their stack.
+
+**Trigger**: manual only for the POC, unchanged from the original plan.
+
+**Data handling / confidentiality**: unchanged and still a hard gate. The harness must not be pointed at a client production repo, or given a client's log files/issues, until Bitcot's policy on sending that client's data to a third-party AI API has been explicitly confirmed. This applies even more directly now, since attached logs may contain more identifying/sensitive detail (stack traces, internal paths, sometimes data values) than a discovered-issue description would have.
+
+## Testing Decisions
+
+- Unit test the issue-normalization step directly: given a GitHub issue, a spec doc excerpt, and a plain-text list entry, confirm all three produce the same internal `{ id, description, attachedLog, sourceType }` shape.
+- Unit/integration test the dedup check: given an issue with an existing open PR referencing it, confirm the harness skips it rather than starting a duplicate fix.
+- Integration test the reproduce-then-fix flow against a small number of seeded, known-buggy example repos (not the real target codebase), to confirm the pipeline can go from issue description to a verified, passing fix without needing constant human tuning. At least one of these seeded repos must be in a non-Node language (e.g. Python with pytest), so the "any target language" claim is demonstrated by test, not just asserted.
+- Test the onboarding pass against seeded repos in at least two different setups — one with thorough docs, one with no docs at all (config files only) — confirming both produce a profile whose commands actually execute, and that docs claims which fail execution never make it into the profile.
+- Test profile staleness handling: given a seeded repo whose profile's test command no longer matches the code (simulating a tooling change merged after onboarding), confirm the harness records a failed verification and flags the profile for re-onboarding, rather than treating an errored or zero-test command run as a pass.
+- Test only external behavior (does the right test get written, does the right branch get created, does verification actually re-run rather than trusting cached state), not internal prompt wording.
+- No existing prior art in this codebase; Sandcastle's own `Output.object()` pattern remains the reference point for any structured extraction this project adds (e.g. triage scores, the normalized issue shape).
+
+## Out of Scope
+
+- Auto-merge / fully autonomous operation
+- Scheduled/unattended runs — manual trigger only for now
+- Cloud sandbox providers — local Docker only for the POC
+- Detecting or handling non-independent issues (two issues whose fixes touch overlapping code) — flagged as an open risk, not solved in this plan
+- Real Sentry or other production-monitoring integration — this scope assumes issues are already reported, not discovered from live systems
+- Escalation/notification mechanism for issues that fail all fix attempts
+- Secrets management strategy for API keys inside the sandbox
+- Git commit identity/authorship convention for agent-made commits
+- Rollback plan for a fix that was verified but still causes a problem post-merge
+- Final choice of agent/model provider — left as a swappable config value
+- Final choice of target repo — not a client repo until confidentiality approval is confirmed
+
+## Further Notes
+
+This is a genuine scope simplification from the original discover-and-fix version, not just a renamed version of it. What's dropped: the discovery phase entirely (brainstorming, fuzzing, log mining) and the citation/second-opinion mechanism that existed specifically to guard against the harness inventing its own wrong test. What's added: an issue-ingestion/normalization step, log-handling strategy, and a dedup check against already-open PRs (this last one was identified as a practical problem with human review lag, and applies to this version just as much as the original).
+
+Both open doubts from the first draft are now resolved: parallelization is dependency-aware (parallel when issues don't share referenced files/modules, sequential when they do), and log handling makes no format assumption, every log type (text, JSON, CLI output, hardware device logs) is treated as an opaque file the agent explores inside the sandbox rather than something pre-parsed by the harness.
+
+One residual risk worth naming: the dependency grouping is a heuristic based on file/module references extracted from the issue and log. It will not catch every real collision (e.g. two issues touching different files that still interact through shared state or a shared interface), and it may also over-group (flagging two issues as dependent when they don't actually conflict), forcing unnecessary sequential processing. This is a reasonable starting point, not a guarantee, and is worth revisiting once there's real data on how often the heuristic gets it wrong.

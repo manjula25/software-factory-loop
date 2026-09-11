@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Build a deterministic fixed-point review package for a Git candidate."""
+import argparse
+import subprocess
+
+parser = argparse.ArgumentParser()
+parser.add_argument("base")
+parser.add_argument("candidate")
+parser.add_argument("task_brief")
+args = parser.parse_args()
+
+def git(*parts: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *parts], check=False, capture_output=True, text=True)
+
+for revision in (args.base, args.candidate):
+    result = git("rev-parse", "--verify", f"{revision}^{{commit}}")
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or f"invalid revision: {revision}")
+if git("merge-base", "--is-ancestor", args.base, args.candidate).returncode:
+    raise SystemExit("base is not an ancestor of candidate")
+changed = git("diff", "--name-only", f"{args.base}...{args.candidate}")
+if changed.returncode:
+    raise SystemExit(changed.stderr.strip())
+paths = [line for line in changed.stdout.splitlines() if line]
+if not paths:
+    raise SystemExit("task range is empty")
+base_id = git("rev-parse", args.base).stdout.strip()
+candidate_id = git("rev-parse", args.candidate).stdout.strip()
+print("# Fixed Review Package")
+print(f"\n- Base: `{base_id}`\n- Candidate: `{candidate_id}`\n- Task brief: `{args.task_brief}`")
+print("\n## Changed paths")
+for path in paths:
+    print(f"- `{path}`")
+print("\n## Accounting requirement\nReviewers must account for every changed path above.")

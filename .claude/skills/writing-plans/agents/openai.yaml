@@ -1,0 +1,5 @@
+interface:
+  display_name: "Writing Plans"
+  short_description: "Create an exact test-driven implementation plan"
+policy:
+  allow_implicit_invocation: false
