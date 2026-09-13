@@ -7,14 +7,14 @@ describe("issue normalization (WI-1 slice)", () => {
       number: 7,
       title: "slugify drops leading digits",
       body: "Calling slugify('7 seas') returns '-seas' instead of '7-seas'.\n\n```\nTraceback (most recent call last):\n  File \"t.py\", line 3, in <module>\nValueError: leading digit\n```",
-      html_url: "https://github.com/manjula25/loop-fixtures-py/issues/7",
+      url: "https://github.com/manjula25/loop-fixtures-py/issues/7",
     };
     const normalized = normalizeGitHubIssue(ghIssue);
     expect(normalized.id).toBe("gh-7");
     expect(normalized.sourceType).toBe("github-issue");
     expect(normalized.description).toContain("slugify('7 seas')");
     expect(normalized.attachedLog).toContain("Traceback (most recent call last):");
-    expect(normalized.url).toBe(ghIssue.html_url);
+    expect(normalized.url).toBe(ghIssue.url);
   });
 
   it("keeps the body as description verbatim and omits attachedLog when no fenced block exists", () => {
@@ -22,7 +22,7 @@ describe("issue normalization (WI-1 slice)", () => {
       number: 8,
       title: "Docs typo",
       body: "README says 'pytohn'.",
-      html_url: "https://github.com/manjula25/loop-fixtures-py/issues/8",
+      url: "https://github.com/manjula25/loop-fixtures-py/issues/8",
     };
     const normalized = normalizeGitHubIssue(ghIssue);
     expect(normalized.description).toBe("# Docs typo\n\nREADME says 'pytohn'.");

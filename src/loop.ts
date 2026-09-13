@@ -270,7 +270,7 @@ async function main(): Promise<void> {
 
   // The issue, normalized from GitHub.
   const raw = JSON.parse(
-    execFileSync("gh", ["issue", "view", String(issueNumber), "--repo", ghRepo, "--json", "number,title,body,html_url"], {
+    execFileSync("gh", ["issue", "view", String(issueNumber), "--repo", ghRepo, "--json", "number,title,body,url"], {
       encoding: "utf8",
     }),
   ) as GitHubIssueInput;

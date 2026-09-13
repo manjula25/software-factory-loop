@@ -23,7 +23,8 @@ export interface GitHubIssueInput {
   readonly number: number;
   readonly title: string;
   readonly body: string | null;
-  readonly html_url?: string;
+  /** The gh CLI's JSON field is `url` (the REST API's `html_url` equivalent). */
+  readonly url?: string;
 }
 
 export function normalizeGitHubIssue(issue: GitHubIssueInput): NormalizedIssue {
@@ -38,6 +39,6 @@ export function normalizeGitHubIssue(issue: GitHubIssueInput): NormalizedIssue {
     description: `# ${issue.title}\n\n${body}`.trim(),
     ...(attachedLog !== undefined ? { attachedLog } : {}),
     sourceType: "github-issue",
-    ...(issue.html_url ? { url: issue.html_url } : {}),
+    ...(issue.url ? { url: issue.url } : {}),
   };
 }
