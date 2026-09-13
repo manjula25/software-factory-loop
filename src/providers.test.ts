@@ -3,6 +3,7 @@ import { resolveProvider, registryNames } from "./providers.js";
 
 const fullEnv: Readonly<Record<string, string>> = {
   CLI_PROXY_API_URL: "http://localhost:8317",
+  CLI_PROXY_API_TOKEN: "proxy-token-dummy",
   CODEX_API_KEY: "codex-key-dummy",
   OPENCODE_API_KEY: "opencode-key-dummy",
 };
@@ -14,8 +15,10 @@ describe("provider registry (FR-002)", () => {
     expect(claude).not.toEqual(codex);
     expect(claude.engine).toBe("claude-code");
     expect(codex.engine).toBe("codex");
-    // the proxy URL reaches the agent env under the name Claude Code reads
+    // the proxy URL + token reach the agent env under the names Claude Code reads
     expect(claude.env?.ANTHROPIC_BASE_URL).toBe("http://localhost:8317");
+    expect(claude.env?.ANTHROPIC_AUTH_TOKEN).toBe("proxy-token-dummy");
+    expect(claude.model).toBe("glm-5.3");
     expect(codex.env?.OPENAI_API_KEY).toBe("codex-key-dummy");
   });
 
@@ -27,7 +30,10 @@ describe("provider registry (FR-002)", () => {
   });
 
   it("throws at startup when the selected provider's env var is missing, naming it", () => {
-    expect(() => resolveProvider("claude-via-proxy", {})).toThrowError(/CLI_PROXY_API_URL/);
+    expect(() => resolveProvider("claude-via-proxy", {})).toThrowError(/CLI_PROXY_API_URL|CLI_PROXY_API_TOKEN/);
+    expect(() =>
+      resolveProvider("claude-via-proxy", { CLI_PROXY_API_URL: "http://localhost:8317" }),
+    ).toThrowError(/CLI_PROXY_API_TOKEN/);
     expect(() => resolveProvider("codex-direct", {})).toThrowError(/CODEX_API_KEY/);
     expect(() => resolveProvider("opencode", {})).toThrowError(/OPENCODE_API_KEY/);
     // an unrelated missing var must not block a provider whose vars are present

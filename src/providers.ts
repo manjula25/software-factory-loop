@@ -19,12 +19,16 @@ interface ProviderEntry {
 }
 
 const ENTRIES: Readonly<Record<string, ProviderEntry>> = {
-  // Primary: Claude Code CLI pointed at CLIProxyAPI (Anthropic-protocol proxy).
+  // Primary: Claude Code CLI pointed at an Anthropic-protocol proxy
+  // (base URL + auth token are the two vars the CLI reads).
   "claude-via-proxy": {
     engine: "claude-code",
-    envKeys: ["CLI_PROXY_API_URL"],
-    defaultModel: "claude-haiku-4-5-20251001",
-    agentEnv: (env) => ({ ANTHROPIC_BASE_URL: env.CLI_PROXY_API_URL! }),
+    envKeys: ["CLI_PROXY_API_URL", "CLI_PROXY_API_TOKEN"],
+    defaultModel: "glm-5.3",
+    agentEnv: (env) => ({
+      ANTHROPIC_BASE_URL: env.CLI_PROXY_API_URL!,
+      ANTHROPIC_AUTH_TOKEN: env.CLI_PROXY_API_TOKEN!,
+    }),
   },
   // Sandcastle's native codex agent, direct API key.
   "codex-direct": {
