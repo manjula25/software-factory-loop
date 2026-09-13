@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { assertNoSecrets } from "./assert-no-secrets.js";
-import { loadEnv } from "./env.js";
+import { loadEnv, readEnvFile } from "./env.js";
 import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import { createFixSandbox, runFixRun, type AgentSpec } from "./sandcastle-adapter.js";
@@ -246,6 +246,10 @@ async function main(): Promise<void> {
 
   const env = loadEnv(process.cwd());
   const agent = resolveProvider(providerName, env);
+  // Guard scope = the values configured in .env, not the whole process env:
+  // npm run exports npm_package_name etc., which collides with our own
+  // "software-factory-loop" identity in prompts — machinery, not secrets.
+  const guardEnv = readEnvFile(process.cwd());
 
   // Resolve the target repo: a local clone directory (contains .git), or
   // owner/name which we clone under ./.loop-work/ first.
@@ -284,7 +288,7 @@ async function main(): Promise<void> {
   const profile = JSON.parse(readFileSync(profilePath, "utf8")) as ProjectProfile;
 
   const deps: LoopDeps = {
-    env,
+    env: guardEnv,
     runFixRun,
     createFixSandbox,
     // The PR opens on the TARGET repo, under the owner's own gh auth; the fix
