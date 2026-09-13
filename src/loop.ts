@@ -250,9 +250,16 @@ async function main(): Promise<void> {
   // Resolve the target repo: a local clone directory (contains .git), or
   // owner/name which we clone under ./.loop-work/ first.
   let repoDir: string;
+  let ghRepo: string;
   if (existsSync(join(repoArg, ".git"))) {
     repoDir = resolve(repoArg);
+    ghRepo = execFileSync(
+      "gh",
+      ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+      { cwd: repoDir, encoding: "utf8" },
+    ).trim();
   } else {
+    ghRepo = repoArg;
     const workRoot = join(process.cwd(), ".loop-work");
     repoDir = join(workRoot, repoArg.split("/").pop()!);
     if (!existsSync(join(repoDir, ".git"))) {
@@ -263,7 +270,7 @@ async function main(): Promise<void> {
 
   // The issue, normalized from GitHub.
   const raw = JSON.parse(
-    execFileSync("gh", ["issue", "view", String(issueNumber), "--repo", repoArg, "--json", "number,title,body,html_url"], {
+    execFileSync("gh", ["issue", "view", String(issueNumber), "--repo", ghRepo, "--json", "number,title,body,html_url"], {
       encoding: "utf8",
     }),
   ) as GitHubIssueInput;
