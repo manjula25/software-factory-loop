@@ -7,6 +7,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "build:image": "sandcastle docker build-image --image-name sandcastle-loop",
+    "smoke:image": "bash scripts/smoke-image.sh",
     "loop": "tsx src/loop.ts"
   },
   "devDependencies": {

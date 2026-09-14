@@ -64,10 +64,11 @@ $ bash scripts/smoke-image.sh → exit 0, 9/9 ok:
   claude 2.1.270, codex-cli 0.154.0, opencode 1.18.30, non-root agent user
 ```
 
-Built with `npx sandcastle docker build-image` (image `sandcastle:wi-1`, tagged `sandcastle-loop`).
+Built with `npm run build:image` (→ `sandcastle docker build-image --image-name sandcastle-loop`,
+the wired one-command path — re-run fresh after wiring: exit 0, image `dbce76b7216c`, smoke 9/9).
 Operational lesson: a plain `docker build` skips the AGENT_UID/GID args and produces an image whose
-container user cannot touch the bind-mounted worktree (attempt-5 failure). Rebuilds must go
-through the sandcastle builder.
+container user cannot touch the bind-mounted worktree (attempt-5 failure). The npm script is the
+only supported build path; plain `docker build` is not used anywhere.
 
 ### FR-005 — identity and PR authorship
 
@@ -104,6 +105,23 @@ gh-2/gh-3 runs were separately requested by the owner as additional evidence, ea
 single-issue run. Normalizer inspection (`scripts/inspect-issue.ts`, fresh): all three real issue
 bodies yield `attachedLog` PRESENT (inline REPL blocks); issue #3's separate web-UI file upload
 (URL) is deliberately not fetched — WI-2 scope per the spec clarification.
+
+**RED truthfulness (owner-requested extra check, 2026-09-14):** fresh clone of `main`, the three
+PRs' repro tests staged on it, run in one sandcastle-loop container (`scripts/red-check.ts`):
+
+```
+FAILED tests/fixed-issues/test_gh_1.py::test_slugify_keeps_first_character
+FAILED tests/fixed-issues/test_gh_1.py::test_slugify_keeps_first_character_simple_phrase
+FAILED tests/fixed-issues/test_gh_2.py::test_parse_iso8601_utc_z_suffix
+FAILED tests/fixed-issues/test_gh_3.py::test_titlecase_not_all_caps
+FAILED tests/fixed-issues/test_gh_3.py::test_titlecase_preserves_inner_casing
+5 failed in 0.37s  (exit 1 — every repro test genuinely fails on unfixed main)
+```
+
+All three PR bodies carry all four evidence sections (RED verbatim, GREEN verbatim, symptom
+mapping, independent-verification line); source diffs are one focused fix each (gh-1 drops the
+`[1:]` slice; gh-2 strips a trailing `Z` and sets `tzinfo=utc`; gh-3 title-cases per word
+preserving inner casing, exactly the issue's `pyTest suite` → `PyTest Suite` expectation).
 
 Machinery defects found and fixed during the runs (each TDD, committed):
 
