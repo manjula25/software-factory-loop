@@ -20,8 +20,8 @@ One worktree per work item, created under `.claude/worktrees/` named for its bra
 
 | Surface | Commands |
 |---|---|
-| Harness source (`src/`, TypeScript) | *(none yet — no scaffold)* |
-| Pipeline integration (local Docker) | *(none yet — no scaffold)* |
+| Harness source (`src/`, TypeScript) | `npm run typecheck` (exit 0), `npm test` (vitest) |
+| Pipeline integration (local Docker) | `npm run build:image` (Sandcastle-built `sandcastle-loop`), `npm run smoke:image` (9 checks), `npm run loop -- --repo <dir> --issue <n> --provider <name> [--model <m>]` |
 
 Where a surface reads *(none yet)*, it is not scaffolded: any claim about it is a stated
 **non-claim**, not a pass, and no command may be invented for it. When the scaffold lands
