@@ -20,6 +20,13 @@ const useEnvModel = process.argv.includes("--env-model");
 const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const model = positional[0] ?? "glm-5.3";
 if (useEnvModel) dockerEnv.ANTHROPIC_MODEL = model;
+// Explicit window: the CLI's model catalog doesn't know proxy models, so it
+// warns and assumes 200k; naming the window tells it what to compact against.
+// Non-essential background calls (session-title generation) are off — the
+// proxy has no small model for them and their failure is the noisy
+// unrecognized_model line.
+dockerEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = envFile.CLI_PROXY_MAX_CONTEXT_TOKENS ?? "200000";
+dockerEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
 dockerEnv.ANTHROPIC_BASE_URL = base;
 dockerEnv.ANTHROPIC_AUTH_TOKEN = token;
 

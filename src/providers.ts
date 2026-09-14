@@ -28,6 +28,12 @@ const ENTRIES: Readonly<Record<string, ProviderEntry>> = {
     agentEnv: (env) => ({
       ANTHROPIC_BASE_URL: env.CLI_PROXY_API_URL!,
       ANTHROPIC_AUTH_TOKEN: env.CLI_PROXY_API_TOKEN!,
+      // Proxy models are absent from Claude Code's catalog: without an explicit
+      // window it assumes 200k and warns; background calls (session titles) hit
+      // an API the proxy has no small model for. One startup notice remains —
+      // known-benign (see verification.md).
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: env.CLI_PROXY_MAX_CONTEXT_TOKENS ?? "200000",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     }),
   },
   // Sandcastle's native codex agent, direct API key.
@@ -53,11 +59,13 @@ export function registryNames(): string[] {
 /**
  * Resolve a provider by name. Throws at startup — not mid-run — when the name
  * is unknown (message lists the registry) or a required env var is missing
- * (message names the variable).
+ * (message names the variable). `modelOverride` (CLI `--model`) replaces the
+ * registry default; whitespace-only falls back to the default.
  */
 export function resolveProvider(
   name: string,
   env: Readonly<Record<string, string>>,
+  modelOverride?: string,
 ): AgentSpec {
   const entry = ENTRIES[name];
   if (!entry) {
@@ -73,7 +81,7 @@ export function resolveProvider(
   }
   return {
     engine: entry.engine,
-    model: entry.defaultModel,
+    model: modelOverride?.trim() || entry.defaultModel,
     env: entry.agentEnv(env),
   };
 }

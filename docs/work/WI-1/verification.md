@@ -138,6 +138,20 @@ $ npm test → Test Files 7 passed (7), Tests 32 passed (32), exit 0
 $ npx tsc --noEmit → exit 0
 ```
 
+## Post-verification hardening (owner-requested, before code review)
+
+Five small issues were fixed after the e2e runs above (owner reviewed the list and approved):
+unreadable-suite gate refusal, failed-run branch cleanup, `--model` CLI override, agent env hardening
+(`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` — probe-verified to
+kill the background session-title call; one benign startup catalog notice remains and cannot be
+silenced), and the FR-104 baseline-staleness preflight (runs before agent spend; component-checked
+against the real repo in docker: `scripts/preflight-check.ts` → MATCH, branch deleted).
+
+**Evidence boundary:** the three PR-evidence e2e runs were produced by the pre-hardening loop;
+unit evidence for the hardened loop is fresh (38/38) but no full e2e run has yet used it (all
+three issues already have open PRs; a re-run needs quota and branch/PR cleanup or a new seeded
+issue). Recommend one confirming e2e at WI-2 kickoff.
+
 ## Unknowns — closed or deferred
 
 - **Closed:** container agent could run against the proxy (probe: glm-5.2 → `OK`, exit 0).

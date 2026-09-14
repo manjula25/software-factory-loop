@@ -47,6 +47,8 @@ export interface LoopDeps {
   createFixSandbox(input: {
     cwd: string;
     branch: string;
+    /** Ref to fork from when `branch` does not exist yet (e.g. main, for preflight). */
+    baseBranch?: string;
     imageName: string;
   }): Promise<{
     branch: string;
@@ -57,6 +59,8 @@ export interface LoopDeps {
     ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
     close(): Promise<unknown>;
   }>;
+  /** Removes the loop's own leftover branches; resolves even if absent. */
+  deleteBranch(repoDir: string, branch: string): Promise<void>;
   createPr(args: { repoDir: string; title: string; body: string; base: string; head: string }): Promise<{
     url: string;
   }>;
@@ -86,6 +90,27 @@ export function reproTestPath(issue: NormalizedIssue): string {
 
 export function fixBranch(issue: NormalizedIssue): string {
   return `fix/${issue.id}`;
+}
+
+/** Throwaway branch the baseline preflight check runs on (deleted after). */
+function preflightBranch(issue: NormalizedIssue): string {
+  return `loop/preflight-${issue.id}`;
+}
+
+/** A pytest summary line ("N passed/failed/error…") — proof the output is readable. */
+const SUITE_SUMMARY_RE = /\b\d+ (?:passed|failed|error)/;
+
+/**
+ * Parse full-suite output, or reject it as unreadable. "No failure lines" from
+ * a command that never ran (exit 127, empty output) must not read as "no new
+ * failures" — silence is not success for the gate.
+ */
+function parseSuiteOrReject(stdout: string): { ok: true; failures: string[] } | { ok: false; reason: string } {
+  if (!SUITE_SUMMARY_RE.test(stdout)) {
+    const head = stdout.trim().slice(0, 120).replace(/\n/g, "\\n");
+    return { ok: false, reason: `full-suite output is unreadable — no pytest summary line found (starts: "${head}")` };
+  }
+  return { ok: true, failures: parsePytestFailures(stdout) };
 }
 
 function extractEvidence(stdout: string, tag: "red" | "green"): string {
@@ -175,6 +200,46 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   // FR-003: everything we emit is checked before it leaves the harness.
   assertNoSecrets([prompt], deps.env);
 
+  // Baseline preflight (FR-104 staleness rule): the recorded baseline must
+  // still match a fresh run of the unfixed tree, or every later diff is
+  // meaningless. Runs before the fix agent — no API spend on a stale profile.
+  const preBranch = preflightBranch(input.issue);
+  const pre = await deps.createFixSandbox({
+    cwd: input.repoDir,
+    branch: preBranch,
+    baseBranch: "main",
+    imageName: input.imageName,
+  });
+  let baselineProblem: string | undefined;
+  try {
+    const install = await pre.exec(input.profile.installCmd);
+    if (install.exitCode !== 0) {
+      baselineProblem = `install command exited ${install.exitCode} during the baseline check`;
+    } else {
+      const suite = await pre.exec(input.profile.testCmd);
+      const parsed = parseSuiteOrReject(suite.stdout);
+      if (!parsed.ok) {
+        baselineProblem = parsed.reason;
+      } else {
+        const actual = new Set(parsed.failures);
+        const missing = input.profile.baselineFailures.filter((f) => !actual.has(f));
+        const extra = parsed.failures.filter((f) => !input.profile.baselineFailures.includes(f));
+        if (missing.length > 0 || extra.length > 0) {
+          baselineProblem =
+            `project profile is stale — baseline no longer matches a fresh run ` +
+            `(recorded but not failing: ${missing.join(", ") || "none"}; ` +
+            `failing but not recorded: ${extra.join(", ") || "none"}). Re-run onboarding.`;
+        }
+      }
+    }
+  } finally {
+    await pre.close();
+    await deps.deleteBranch(input.repoDir, preBranch);
+  }
+  if (baselineProblem) {
+    return { branch, failure: `Aborted before the fix run — ${baselineProblem}.` };
+  }
+
   const fix = await deps.runFixRun({
     cwd: input.repoDir,
     prompt,
@@ -184,8 +249,15 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     name: input.issue.id,
   });
 
+  // A failed run must not leave its fix branch behind — the next run would
+  // trip over it (attempt-5/6 lesson).
+  const fail = async (reason: string, newFailures?: readonly string[]): Promise<LoopOutcome> => {
+    await deps.deleteBranch(input.repoDir, branch);
+    return { branch, failure: reason, ...(newFailures ? { newFailures } : {}) };
+  };
+
   if (fix.commits.length === 0) {
-    return { branch, failure: "Fix run produced no commits — nothing to verify or PR." };
+    return fail("Fix run produced no commits — nothing to verify or PR.");
   }
 
   // Fresh-sandbox verification: the agent's own "done" is never evidence.
@@ -204,21 +276,25 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     // install, every test file errors at collection and reads as new failures.
     const install = await sandbox.exec(input.profile.installCmd);
     if (install.exitCode !== 0) {
-      return { branch, failure: `Verification failed — install command exited ${install.exitCode} in the fresh sandbox.` };
+      return fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
     }
     const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
     const repro = await sandbox.exec(reproCmd);
     const suite = await sandbox.exec(input.profile.testCmd);
+    const parsed = parseSuiteOrReject(suite.stdout);
+    if (!parsed.ok) {
+      return fail(`Verification failed — ${parsed.reason}.`);
+    }
     const verification = diffVerification({
       baselineFailures: input.profile.baselineFailures,
-      postFixFailures: parsePytestFailures(suite.stdout),
+      postFixFailures: parsed.failures,
       reproTestPassed: repro.exitCode === 0,
     });
     if (!verification.passed) {
       const reason = verification.newFailures.length > 0
         ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
         : "reproduction test did not pass in the fresh sandbox";
-      return { branch, failure: `Verification failed — ${reason}.`, newFailures: verification.newFailures };
+      return fail(`Verification failed — ${reason}.`, verification.newFailures);
     }
 
     const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
@@ -250,9 +326,10 @@ async function main(): Promise<void> {
   const issueNumber = Number(flag("issue"));
   const providerName = flag("provider");
   const imageName = args.includes("--image") ? flag("image") : "sandcastle-loop";
+  const modelOverride = args.includes("--model") ? flag("model") : undefined;
 
   const env = loadEnv(process.cwd());
-  const agent = resolveProvider(providerName, env);
+  const agent = resolveProvider(providerName, env, modelOverride);
   // Guard scope = the values configured in .env, not the whole process env:
   // npm run exports npm_package_name etc., which collides with our own
   // "software-factory-loop" identity in prompts — machinery, not secrets.
@@ -298,6 +375,13 @@ async function main(): Promise<void> {
     env: guardEnv,
     runFixRun,
     createFixSandbox,
+    async deleteBranch(repoDir, branchToDelete) {
+      try {
+        execFileSync("git", ["branch", "-D", branchToDelete], { cwd: repoDir, stdio: "pipe" });
+      } catch {
+        // already absent — nothing to clean up
+      }
+    },
     // The PR opens on the TARGET repo, under the owner's own gh auth; the fix
     // branch is pushed first because gh pr create needs it on the remote.
     async createPr({ repoDir: dir, title, body, base, head }) {

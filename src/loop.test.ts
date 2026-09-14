@@ -37,6 +37,11 @@ const RED = `============================= test session starts =================
 FAILED tests/test_fixed.py::test_gh_1 - AssertionError: assert 'ello-world' == 'hello-world'
 1 failed in 0.01s`;
 const GREEN = `tests/fixed-issues/test_gh_1.py . [100%]\n1 passed in 0.01s`;
+/** Clean-checkout suite: exactly the recorded baseline failures (3 seeded bugs). */
+const BASELINE_SUITE = `FAILED tests/test_textops.py::TestSlugify::test_basic_phrase - AssertionError
+FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+3 failed, 3 passed in 0.8s`;
 const SUITE_AFTER_FIX = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
 FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
 2 failed, 5 passed in 0.8s`; // only baseline failures remain
@@ -79,16 +84,26 @@ function sandboxHandle(suiteOutput: string, reproExit = 0, installExit = 0): Fix
 
 interface DepOverrides {
   fixOutcome?: FixRunOutcome;
+  /** Verification (second) sandbox; the preflight sandbox defaults to a matching baseline. */
   sandbox?: FixSandboxHandle;
+  /** Preflight (first) sandbox — override to simulate a stale baseline. */
+  preflight?: FixSandboxHandle;
   env?: Record<string, string>;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
   const env = overrides.env ?? {};
+  let sandboxCalls = 0;
   return {
     env,
     runFixRun: vi.fn(async (_input: { branch: string; prompt: string }) => overrides.fixOutcome ?? fixOutcome()),
-    createFixSandbox: vi.fn(async () => overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX)),
+    createFixSandbox: vi.fn(async () => {
+      sandboxCalls += 1;
+      return sandboxCalls === 1
+        ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
+        : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
+    }),
+    deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {}),
     createPr: vi.fn(async (args: { title: string; body: string }) => ({
       url: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       ...args,
@@ -123,9 +138,30 @@ describe("runSingleIssue", () => {
     expect(body).toContain(issue.id);
     // no closing keywords before issue numbers (issue-tracker doc rule)
     expect(body).not.toMatch(/(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#?\d/i);
+    // success: only the preflight branch is cleaned up, never the PR's fix branch
+    expect(deps.deleteBranch).toHaveBeenCalledTimes(1);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/preflight-gh-1");
   });
 
-  it("records failure and opens no PR when verification fails (new failure vs baseline)", async () => {
+  it("aborts before the fix run when the onboarding baseline no longer matches a fresh run (stale profile)", async () => {
+    // SUITE_AFTER_FIX lacks one baseline failure → the recorded profile is stale
+    const deps = makeDeps({ preflight: sandboxHandle(SUITE_AFTER_FIX) });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // no agent spend on a stale profile
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toMatch(/stale|re-?onboard/i);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/preflight-gh-1");
+  });
+
+  it("aborts before the fix run when the preflight suite output is unreadable", async () => {
+    const deps = makeDeps({ preflight: sandboxHandle("") });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(deps.runFixRun).not.toHaveBeenCalled();
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toMatch(/unreadable|summary/i);
+  });
+
+  it("records failure and opens no PR when verification fails (new failure vs baseline), and cleans up the fix branch", async () => {
     const suiteWithNewFailure = SUITE_AFTER_FIX.replace(
       "2 failed, 5 passed",
       "FAILED tests/test_textops.py::TestWordCount::test_counts_words - AssertionError\n3 failed, 4 passed",
@@ -136,6 +172,8 @@ describe("runSingleIssue", () => {
     expect(deps.createPr).not.toHaveBeenCalled();
     expect(outcome.failure).toBeTruthy();
     expect(outcome.newFailures).toContain("tests/test_textops.py::TestWordCount::test_counts_words");
+    // the failed run's fix branch is deleted so a re-run starts clean
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
   });
 
   it("records failure and opens no PR when the reproduction test does not pass in the fresh sandbox", async () => {
@@ -143,23 +181,40 @@ describe("runSingleIssue", () => {
     const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
     expect(deps.createPr).not.toHaveBeenCalled();
     expect(outcome.failure).toBeTruthy();
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
   });
 
-  it("installs the project in the fresh sandbox before running any test", async () => {
-    const sandbox = sandboxHandle(SUITE_AFTER_FIX);
-    const deps = makeDeps({ sandbox });
+  it("refuses the gate when the verification suite output is unreadable (no summary line)", async () => {
+    const deps = makeDeps({ sandbox: sandboxHandle("") });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toMatch(/unreadable|summary/i);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+  });
+
+  it("installs the project in every fresh sandbox before running any test", async () => {
+    const deps = makeDeps();
+    const results = deps.createFixSandbox.mock.results as unknown as { value: Promise<FixSandboxHandle & { commands: string[] }> }[];
     await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
-    expect(sandbox.commands[0]).toBe(profile.installCmd);
+    const handles = await Promise.all(results.map((r) => r.value));
+    expect(handles[0]!.commands[0]).toBe(profile.installCmd); // preflight
+    expect(handles[1]!.commands[0]).toBe(profile.installCmd); // verification
     expect(deps.createPr).toHaveBeenCalledTimes(1);
   });
 
   it("records failure and opens no PR when the install command fails in the fresh sandbox", async () => {
-    const sandbox = sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 0, /* installExit */ 1);
-    const deps = makeDeps({ sandbox });
+    const deps = makeDeps({ sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 0, /* installExit */ 1) });
     const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
     expect(deps.createPr).not.toHaveBeenCalled();
     expect(outcome.failure).toContain("install");
-    expect(sandbox.commands).toHaveLength(1); // no test ran after a failed install
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+  });
+
+  it("cleans up the fix branch when the fix run produces no commits", async () => {
+    const deps = makeDeps({ fixOutcome: { stdout: "did nothing", commits: [], branch: "fix/gh-1" } });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(outcome.prUrl).toBeUndefined();
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
   });
 
   it("blocks emission when any emitted string would leak an env value (FR-003)", async () => {

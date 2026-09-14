@@ -19,7 +19,23 @@ describe("provider registry (FR-002)", () => {
     expect(claude.env?.ANTHROPIC_BASE_URL).toBe("http://localhost:8317");
     expect(claude.env?.ANTHROPIC_AUTH_TOKEN).toBe("proxy-token-dummy");
     expect(claude.model).toBe("glm-5.2");
+    // proxy models are absent from Claude Code's catalog: name the context window
+    // explicitly and skip background calls the proxy has no small model for
+    expect(claude.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("200000");
+    expect(claude.env?.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
     expect(codex.env?.OPENAI_API_KEY).toBe("codex-key-dummy");
+  });
+
+  it("accepts a model override (CLI --model) instead of the registry default", () => {
+    const claude = resolveProvider("claude-via-proxy", fullEnv, "glm-5.3");
+    expect(claude.model).toBe("glm-5.3");
+    // whitespace-only override falls back to the default, not an empty model
+    expect(resolveProvider("claude-via-proxy", fullEnv, "  ").model).toBe("glm-5.2");
+  });
+
+  it("honors an explicit context-window override from the environment", () => {
+    const claude = resolveProvider("claude-via-proxy", { ...fullEnv, CLI_PROXY_MAX_CONTEXT_TOKENS: "1000000" });
+    expect(claude.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
   });
 
   it("throws on an unknown provider name, listing the registry entries", () => {
