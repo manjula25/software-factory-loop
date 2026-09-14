@@ -65,7 +65,7 @@ Nothing found that a smaller replacement would improve without weakening a seam.
 | 1 | **Blocking** | Secrets-guard error message echoed the secret (and its test asserted it) | Fixed inline this review; TDD-updated |
 | 2 | Adjacent | `docs/agents/workflow.md` pipeline row still said "none yet" after T7/T11 landed | Fixed inline |
 | 3 | Adjacent | `scripts/*.ts` outside `tsconfig` include — tsx-run but never typechecked | Fixed inline (`scripts` added; strict tsc clean) |
-| 4 | Adjacent | `.sandcastle/main.ts` template imports sandcastle outside the adapter | Recorded; init scaffold is dead template code, FR-001 scope is `src/` |
+| 4 | Adjacent | `.sandcastle/main.ts` template imports sandcastle outside the adapter | Resolved post-review (owner direction): boundary test now scans `src/` **and** `.sandcastle/` with an explicit allowlist — the template is the one named exemption; any new importer anywhere fails the build |
 | 5 | Missing evidence | No full e2e run with the hardened loop (post-`9d5ccd7` changes) | Recorded in verification.md; recommend one confirming e2e at WI-2 kickoff |
 
 ## Unverified evidence
