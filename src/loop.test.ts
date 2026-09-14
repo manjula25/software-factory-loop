@@ -55,11 +55,17 @@ function fixOutcome(): FixRunOutcome {
   return { stdout: agentStdout(), commits: [{ sha: "abc123" }], branch: "fix/gh-1" };
 }
 
-function sandboxHandle(suiteOutput: string, reproExit = 0): FixSandboxHandle {
+function sandboxHandle(suiteOutput: string, reproExit = 0, installExit = 0): FixSandboxHandle & { commands: string[] } {
+  const commands: string[] = [];
   return {
     branch: "fix/gh-1",
     worktreePath: "/tmp/wt",
+    commands,
     async exec(command: string) {
+      commands.push(command);
+      if (command === profile.installCmd) {
+        return { exitCode: installExit, stdout: "", stderr: installExit === 0 ? "" : "pip: build failed" };
+      }
       if (command.includes(reproTestPath(issue))) {
         return { exitCode: reproExit, stdout: reproExit === 0 ? GREEN : RED, stderr: "" };
       }
@@ -137,6 +143,23 @@ describe("runSingleIssue", () => {
     const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
     expect(deps.createPr).not.toHaveBeenCalled();
     expect(outcome.failure).toBeTruthy();
+  });
+
+  it("installs the project in the fresh sandbox before running any test", async () => {
+    const sandbox = sandboxHandle(SUITE_AFTER_FIX);
+    const deps = makeDeps({ sandbox });
+    await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(sandbox.commands[0]).toBe(profile.installCmd);
+    expect(deps.createPr).toHaveBeenCalledTimes(1);
+  });
+
+  it("records failure and opens no PR when the install command fails in the fresh sandbox", async () => {
+    const sandbox = sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 0, /* installExit */ 1);
+    const deps = makeDeps({ sandbox });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toContain("install");
+    expect(sandbox.commands).toHaveLength(1); // no test ran after a failed install
   });
 
   it("blocks emission when any emitted string would leak an env value (FR-003)", async () => {

@@ -199,6 +199,13 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     imageName: input.imageName,
   });
   try {
+    // Each sandbox is a fresh container: the agent's `pip install -e .` (or
+    // equivalent) lived in ITS site-packages, not this one's. Without the
+    // install, every test file errors at collection and reads as new failures.
+    const install = await sandbox.exec(input.profile.installCmd);
+    if (install.exitCode !== 0) {
+      return { branch, failure: `Verification failed — install command exited ${install.exitCode} in the fresh sandbox.` };
+    }
     const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
     const repro = await sandbox.exec(reproCmd);
     const suite = await sandbox.exec(input.profile.testCmd);
