@@ -19,8 +19,11 @@ export function assertNoSecrets(
   strings.forEach((text, index) => {
     for (const [key, value] of secrets) {
       if (text.includes(value)) {
+        // The message names the KEY only — echoing the offending string would
+        // re-print the secret into the console/log this very guard exists to
+        // keep it out of (FR-003).
         throw new Error(
-          `Secret leak blocked: string #${index + 1} contains the value of ${key}: "${text}"`,
+          `Secret leak blocked: string #${index + 1} contains the value of ${key}.`,
         );
       }
     }

@@ -8,10 +8,15 @@ const envWithSecrets: Readonly<Record<string, string>> = {
 };
 
 describe("secrets leak guard (FR-003)", () => {
-  it("throws naming the offending string when one contains a secret value", () => {
+  it("throws naming the env KEY when a string contains a secret value — but never echoes the value itself", () => {
     expect(() =>
       assertNoSecrets(["PR body: fixed via key sk-codex-SENTINEL-123"], envWithSecrets),
-    ).toThrowError(/sk-codex-SENTINEL-123/);
+    ).toThrowError(/CODEX_API_KEY/);
+    // the guard's own error must not re-print the offending string: an uncaught
+    // error lands in the console/log, and it contains the secret (FR-003)
+    expect(() =>
+      assertNoSecrets(["PR body: fixed via key sk-codex-SENTINEL-123"], envWithSecrets),
+    ).not.toThrowError(/sk-codex-SENTINEL-123/);
   });
 
   it("throws when the whole secret value appears inside longer text", () => {
