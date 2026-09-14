@@ -18,7 +18,7 @@ describe("provider registry (FR-002)", () => {
     // the proxy URL + token reach the agent env under the names Claude Code reads
     expect(claude.env?.ANTHROPIC_BASE_URL).toBe("http://localhost:8317");
     expect(claude.env?.ANTHROPIC_AUTH_TOKEN).toBe("proxy-token-dummy");
-    expect(claude.model).toBe("glm-5.3");
+    expect(claude.model).toBe("glm-5.2");
     expect(codex.env?.OPENAI_API_KEY).toBe("codex-key-dummy");
   });
 

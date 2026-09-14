@@ -38,7 +38,10 @@ RUN groupadd -o -g $AGENT_GID agent \
 USER agent
 WORKDIR /home/agent
 ENV PATH="/home/agent/.local/bin:${PATH}"
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pinned (not claude.ai/install.sh): the rolling install once shipped 2.1.268,
+# whose model catalog doesn't describe glm-5.3 and warns unrecognized_model on
+# every call. 2.1.270 (the verified host version) knows it.
+RUN npm install -g @anthropic-ai/claude-code@2.1.270 --prefix /home/agent/.local
 RUN npm install -g @openai/codex opencode-ai --prefix /home/agent/.local
 
 # In worktree sandbox mode, Sandcastle bind-mounts the git worktree at

@@ -24,7 +24,7 @@ const ENTRIES: Readonly<Record<string, ProviderEntry>> = {
   "claude-via-proxy": {
     engine: "claude-code",
     envKeys: ["CLI_PROXY_API_URL", "CLI_PROXY_API_TOKEN"],
-    defaultModel: "glm-5.3",
+    defaultModel: "glm-5.2",
     agentEnv: (env) => ({
       ANTHROPIC_BASE_URL: env.CLI_PROXY_API_URL!,
       ANTHROPIC_AUTH_TOKEN: env.CLI_PROXY_API_TOKEN!,
