@@ -82,7 +82,8 @@ in conversation ("yes finishing-a-development-branch", after explicit confirmati
 
 ## Executed external actions and observed results
 
-(filled in as executed)
+- `git push -u origin worktree-wi-1` → new branch on origin, tracking set (a94d483 at push time).
+- `gh pr create --base main --head worktree-wi-1` → **https://github.com/manjula25/software-factory-loop/pull/2** (open).
 
 ## Pending actions
 
