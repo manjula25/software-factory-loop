@@ -66,7 +66,7 @@ Nothing found that a smaller replacement would improve without weakening a seam.
 | 2 | Adjacent | `docs/agents/workflow.md` pipeline row still said "none yet" after T7/T11 landed | Fixed inline |
 | 3 | Adjacent | `scripts/*.ts` outside `tsconfig` include — tsx-run but never typechecked | Fixed inline (`scripts` added; strict tsc clean) |
 | 4 | Adjacent | `.sandcastle/main.ts` template imports sandcastle outside the adapter | Resolved post-review (owner direction): boundary test now scans `src/` **and** `.sandcastle/` with an explicit allowlist — the template is the one named exemption; any new importer anywhere fails the build |
-| 5 | Missing evidence | No full e2e run with the hardened loop (post-`9d5ccd7` changes) | Recorded in verification.md; recommend one confirming e2e at WI-2 kickoff |
+| 5 | Missing evidence | No full e2e run with the hardened loop (post-`9d5ccd7` changes) | Resolved post-review (owner direction): gh-1 re-run through the hardened loop → PR #7 with full evidence; preflight and branch cleanup verified live. verification.md updated |
 
 ## Unverified evidence
 

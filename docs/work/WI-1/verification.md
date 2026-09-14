@@ -152,6 +152,14 @@ unit evidence for the hardened loop is fresh (38/38) but no full e2e run has yet
 three issues already have open PRs; a re-run needs quota and branch/PR cleanup or a new seeded
 issue). Recommend one confirming e2e at WI-2 kickoff.
 
+**Boundary closed 2026-09-14 (owner direction):** gh-1 was re-run end-to-end through the hardened
+loop (PR #4 closed as superseded, branch deleted). Fresh evidence:
+[PR #7](https://github.com/manjula25/loop-fixtures-py/pull/7) — preflight baseline check ran
+before agent spend, the throwaway `loop/preflight-gh-1` branch was auto-deleted (no leftovers),
+fix branch pushed and PR opened with all four evidence sections (RED/GREEN verbatim, symptom
+mapping, independent verification) and the FR-005 author identity. The flagship flow is now
+proven in its final form.
+
 ## Unknowns — closed or deferred
 
 - **Closed:** container agent could run against the proxy (probe: glm-5.2 → `OK`, exit 0).
