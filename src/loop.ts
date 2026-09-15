@@ -11,8 +11,25 @@ import { assertNoSecrets } from "./assert-no-secrets.js";
 import { loadEnv, readEnvFile } from "./env.js";
 import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
 import { resolveProvider } from "./providers.js";
-import { createFixSandbox, runFixRun, type AgentSpec } from "./sandcastle-adapter.js";
+import {
+  createFixSandbox,
+  runFixRun,
+  runTriage,
+  type AgentSpec,
+  type TriageRunInput,
+} from "./sandcastle-adapter.js";
 import { diffVerification, parsePytestFailures } from "./verify.js";
+import {
+  admitIssues,
+  buildTriagePrompt,
+  listOpenIssues,
+  parseTriageOutput,
+  realGhJson,
+  splitQueue,
+  type OpenPr,
+  type QueueDeps,
+  type TriageValue,
+} from "./queue.js";
 
 /** Commits made by the fix agent in target repos (workflow.md, FR-005). */
 export const LOOP_IDENTITY = {
@@ -309,7 +326,158 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
 }
 
 // ---------------------------------------------------------------------------
-// CLI entry: npm run loop -- --repo <dir-or-owner/name> --issue <n> --provider <name>
+// WI-2: queue mode — sequential runner over the admitted queue (FR-004/FR-005).
+// ---------------------------------------------------------------------------
+
+/** Everything the queue runner needs beyond the single-issue loop. */
+export type QueueLoopDeps = LoopDeps & QueueDeps & {
+  runTriage(input: TriageRunInput): Promise<string>;
+};
+
+export interface QueueRunInput {
+  readonly ghRepo: string;
+  readonly repoDir: string;
+  readonly imageName: string;
+  readonly agent: AgentSpec;
+  readonly profile: ProjectProfile;
+  readonly label?: string;
+  readonly cap: number;
+  readonly triage: boolean;
+}
+
+export interface QueueSummary {
+  readonly attempted: string[];
+  readonly fixed: string[];
+  readonly failed: [string, string][];
+  readonly skippedDuplicate: string[];
+  /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
+  readonly notAdmitted: [string, string][];
+  readonly prUrls: string[];
+}
+
+/**
+ * Run the queue: acquire → dedup → (opt-in triage) → admit ≤ cap → run each
+ * admitted issue sequentially through runSingleIssue. An issue-level failure
+ * is recorded and the queue continues; a harness-level failure (stale
+ * baseline, credentials) aborts by throwing — the caller prints the reason,
+ * never a summary.
+ */
+export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
+  const issues = await listOpenIssues(deps, {
+    repo: input.ghRepo,
+    ...(input.label !== undefined ? { label: input.label } : {}),
+  });
+  const split = await splitQueue(deps, input.repoDir, issues);
+
+  let triage: TriageValue | undefined;
+  let triageUnusable = false;
+  if (input.triage && split.eligible.length > input.cap) {
+    const prompt = buildTriagePrompt(split.eligible);
+    assertNoSecrets([prompt], deps.env);
+    const stdout = await deps.runTriage({
+      cwd: input.repoDir,
+      prompt,
+      imageName: input.imageName,
+      agent: input.agent,
+    });
+    triage = parseTriageOutput(stdout, split.eligible.map((i) => i.id));
+    triageUnusable = triage === undefined;
+    await deps.deleteBranch(input.repoDir, "loop/triage");
+  }
+
+  const admission = admitIssues({
+    issues: split.eligible,
+    cap: input.cap,
+    ...(triage !== undefined ? { triage } : {}),
+    ...(triageUnusable ? { triageUnusable: true } : {}),
+  });
+  if (admission.degraded) {
+    console.error(
+      "[queue] WARNING: triage output unusable — falling back to deterministic order (ascending issue number).",
+    );
+  }
+
+  const attempted: string[] = [];
+  const fixed: string[] = [];
+  const failed: [string, string][] = [];
+  const prUrls: string[] = [];
+  for (const issue of admission.admitted) {
+    const outcome = await runSingleIssue(
+      {
+        issue,
+        repoDir: input.repoDir,
+        imageName: input.imageName,
+        agent: input.agent,
+        profile: input.profile,
+      },
+      deps,
+    );
+    attempted.push(issue.id);
+    if (outcome.prUrl) {
+      fixed.push(issue.id);
+      prUrls.push(outcome.prUrl);
+      continue;
+    }
+    // A repo-wide preflight abort (stale baseline) will fail every remaining
+    // issue identically — that is a harness-level failure, not this issue's.
+    if (outcome.failure?.startsWith("Aborted before the fix run") === true) {
+      throw new Error(`Queue aborted — ${issue.id}: ${outcome.failure}`);
+    }
+    failed.push([issue.id, outcome.failure ?? "unknown failure"]);
+  }
+
+  return {
+    attempted,
+    fixed,
+    failed,
+    skippedDuplicate: split.skippedDuplicate,
+    notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    prUrls,
+  };
+}
+
+export function formatSummary(summary: QueueSummary): string {
+  return [
+    `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | not-admitted: ${summary.notAdmitted.length}`,
+    ...summary.prUrls.map((url) => `PR: ${url}`),
+    ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
+    ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
+  ].join("\n");
+}
+
+/** `--max-issues` is validated at startup, before any acquisition or spend. */
+export function parseCap(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`--max-issues must be an integer >= 1 (got "${raw}")`);
+  }
+  return n;
+}
+
+export type OverrideOutcome =
+  | { readonly kind: "skipped-duplicate"; readonly id: string }
+  | { readonly kind: "run"; readonly outcome: LoopOutcome };
+
+/**
+ * `--issue N` single-issue override: no cap, no triage — the user named the
+ * issue — but dedup still applies (decision 6). Also cleans a stale fix
+ * branch for the named issue so the retry starts from clean main.
+ */
+export async function runOverrideIssue(
+  input: SingleIssueInput,
+  deps: LoopDeps & QueueDeps,
+): Promise<OverrideOutcome> {
+  const split = await splitQueue(deps, input.repoDir, [input.issue]);
+  if (split.skippedDuplicate.includes(input.issue.id)) {
+    return { kind: "skipped-duplicate", id: input.issue.id };
+  }
+  return { kind: "run", outcome: await runSingleIssue(input, deps) };
+}
+
+// ---------------------------------------------------------------------------
+// CLI entry (WI-2: queue mode is the default; --issue N is the override):
+// npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
+//                [--max-issues <n>] [--triage] --provider <name>
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -321,12 +489,17 @@ async function main(): Promise<void> {
     }
     return args[i + 1]!;
   };
+  const optFlag = (name: string): string | undefined =>
+    args.includes(`--${name}`) ? flag(name) : undefined;
 
   const repoArg = flag("repo");
-  const issueNumber = Number(flag("issue"));
+  const issueArg = optFlag("issue");
   const providerName = flag("provider");
-  const imageName = args.includes("--image") ? flag("image") : "sandcastle-loop";
-  const modelOverride = args.includes("--model") ? flag("model") : undefined;
+  const imageName = optFlag("image") ?? "sandcastle-loop";
+  const modelOverride = optFlag("model");
+  const cap = parseCap(optFlag("max-issues") ?? "3");
+  const label = optFlag("label");
+  const triage = args.includes("--triage");
 
   const env = loadEnv(process.cwd());
   const agent = resolveProvider(providerName, env, modelOverride);
@@ -355,14 +528,6 @@ async function main(): Promise<void> {
       execFileSync("gh", ["repo", "clone", repoArg, repoDir], { stdio: "inherit" });
     }
   }
-
-  // The issue, normalized from GitHub.
-  const raw = JSON.parse(
-    execFileSync("gh", ["issue", "view", String(issueNumber), "--repo", ghRepo, "--json", "number,title,body,url"], {
-      encoding: "utf8",
-    }),
-  ) as GitHubIssueInput;
-  const issue = normalizeGitHubIssue(raw);
 
   // The profile — onboarding (T9) must have recorded it already.
   const profilePath = join(repoDir, ".loop-harness", "profile.json");
@@ -395,13 +560,87 @@ async function main(): Promise<void> {
     },
   };
 
-  const outcome = await runSingleIssue({ issue, repoDir, imageName, agent, profile }, deps);
-  if (outcome.prUrl) {
-    console.log(`PR opened: ${outcome.prUrl}`);
-  } else {
-    console.error(`Loop finished without a PR — ${outcome.failure}`);
-    process.exitCode = 1;
+  // Real QueueDeps wiring: gh + git subprocesses against the target clone.
+  const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
+    ghJson: realGhJson,
+    async listOpenPrs(dir) {
+      return JSON.parse(
+        realGhJson(["pr", "list", "--state", "open", "--json", "headRefName,body"], dir),
+      ) as OpenPr[];
+    },
+    async listFixBranches(dir) {
+      return [...new Set([...localFixBranches(dir), ...remoteFixBranches(dir)])];
+    },
+    async deleteRemoteBranch(dir, branch) {
+      try {
+        execFileSync("git", ["push", "origin", "--delete", branch], { cwd: dir, stdio: "pipe" });
+      } catch {
+        // already absent on the remote — nothing to clean up
+      }
+    },
+    runTriage,
+  };
+  const allDeps = { ...deps, ...queueDeps };
+
+  if (issueArg !== undefined) {
+    // Single-issue override (decision 6): no cap, no triage, dedup applies.
+    const raw = JSON.parse(
+      execFileSync(
+        "gh",
+        ["issue", "view", issueArg, "--repo", ghRepo, "--json", "number,title,body,url"],
+        { encoding: "utf8" },
+      ),
+    ) as GitHubIssueInput;
+    const issue = normalizeGitHubIssue(raw);
+    const result = await runOverrideIssue(
+      { issue, repoDir, imageName, agent, profile },
+      allDeps,
+    );
+    if (result.kind === "skipped-duplicate") {
+      console.log(`[${result.id}] skipped — an open PR already covers it`);
+      return;
+    }
+    if (result.outcome.prUrl) {
+      console.log(`PR opened: ${result.outcome.prUrl}`);
+    } else {
+      console.error(`Loop finished without a PR — ${result.outcome.failure}`);
+      process.exitCode = 1;
+    }
+    return;
   }
+
+  // Queue mode (the WI-2 default).
+  const summary = await runQueue(
+    { ghRepo, repoDir, imageName, agent, profile, ...(label !== undefined ? { label } : {}), cap, triage },
+    allDeps,
+  );
+  const text = formatSummary(summary);
+  assertNoSecrets([text], guardEnv);
+  console.log(text);
+}
+
+/** Local `fix/*` branches in the target clone. */
+function localFixBranches(repoDir: string): string[] {
+  return execFileSync("git", ["branch", "--list", "fix/*"], {
+    cwd: repoDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+    .split("\n")
+    .map((line) => line.trim().replace(/^\* ?/, ""))
+    .filter(Boolean);
+}
+
+/** Remote `fix/*` branches on origin, as short names. */
+function remoteFixBranches(repoDir: string): string[] {
+  return execFileSync("git", ["ls-remote", "--heads", "origin", "refs/heads/fix/*"], {
+    cwd: repoDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+    .split("\n")
+    .map((line) => line.trim().split("refs/heads/")[1] ?? "")
+    .filter(Boolean);
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]).endsWith("src/loop.ts");
