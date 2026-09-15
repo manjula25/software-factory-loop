@@ -3,10 +3,18 @@
 ## Candidate identity
 
 - Branch: `worktree-wi-2` (worktree `.claude/worktrees/wi-2`)
-- HEAD: `cdc643982a281b8f40963e795058046a06e0aed8` (`cdc6439`)
-- Commit range vs `main`: 7 commits (`44f9d10`…`cdc6439`), ancestry verified (`git merge-base --is-ancestor main HEAD`, exit 0)
+- HEAD: `ecbaed8a0079779ac6a302999e68b9d01ffaa902` (`ecbaed8`)
+- Commit range vs `main`: 9 commits (`44f9d10`…`ecbaed8`), ancestry verified (`git merge-base --is-ancestor main HEAD`, exit 0)
 - Working tree: clean (`git status --porcelain` empty) at verification time
-- Source identity of the live runs: `git diff --stat 9356865..cdc6439` touches only the three evidence logs — the code exercised by live runs (a)/(b)/(c) is byte-identical to HEAD.
+- **Post-evidence source change, disclosed:** the three live runs were gathered at
+  `cdc6439`. `ecbaed8` applies the two review findings (typed `failureKind` on the
+  stale-baseline return, simplified `degraded` boolean) — `git diff cdc6439..ecbaed8`
+  touches only `src/loop.ts` and `src/queue.ts`, both changes behavior-preserving by
+  construction and covered by the existing unit suite (the harness-abort test exercises
+  the typed field; the degrade test the simplified boolean), which was re-run green
+  against `ecbaed8`. The live runs were not repeated: their purpose (end-to-end
+  acquisition/dedup/admission/PR behavior) is unaffected by a failure-classification
+  field the runs' happy paths never hit; see non-claims.
 
 ## The claim, stated exactly
 
@@ -20,19 +28,19 @@ behavior end to end.
 
 ## Evidence
 
-### Broad (unit) — `npm test`, fresh, exit 0 (2026-09-15 14:19)
+### Broad (unit) — `npm test`, fresh, exit 0 (2026-09-15 14:19 at `cdc6439`; re-run 14:31 at `ecbaed8`)
 
 ```
  Test Files  8 passed (8)
       Tests  59 passed (59)
-   Duration  2.77s
+   Duration  1.35s
 ```
 
 38 pre-existing WI-1 tests + 21 new (T1: 3, T2: 3, T3: 6, T4: 9, including the
 sequential-ordering, harness-abort, deferral, degrade, override-dedup, and cap-validation
 cases). No skips, no warnings.
 
-### Static — `npm run typecheck`, fresh, exit 0
+### Static — `npm run typecheck`, fresh, exit 0 (both `cdc6439` and `ecbaed8`)
 
 `tsc --noEmit`, no output.
 
@@ -76,6 +84,10 @@ and PR bodies also pass `assertNoSecrets` in code; this scan covers the artifact
 
 ## Non-claims
 
+- No claim that **the live runs exercised `ecbaed8`** — they ran at `cdc6439`; the
+  subsequent fix commit adds a typed failure-classification field and simplifies a
+  redundant boolean, both unit-proven, and neither alters the happy paths the runs
+  observed.
 - No claim of **triage ranking quality** — the prompt is a cheap heuristic; FR-003
   explicitly disclaims this.
 - No claim that the **degraded triage path fires live** — it is proven under unit stubs

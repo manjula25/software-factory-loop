@@ -103,3 +103,27 @@ or a live-run log.
 **No blocking findings.** All four axes pass; the three adjacent findings are recorded
 for a future touch, none weaken a protected seam. The candidate is ready for
 `finishing-a-development-branch` upon owner authorization.
+
+## Post-review follow-up (owner-directed fix of the open items, same day)
+
+The owner directed the open items be fixed before delivery. Fix commit:
+`ecbaed8a0079779ac6a302999e68b9d01ffaa902` (`ecbaed8`), exactly 2 files changed
+(`src/loop.ts`, `src/queue.ts`, +13/−3).
+
+- **Finding 1 (resolved):** `admitIssues` now returns `degraded:
+  input.triageUnusable === true`; the redundant disjunct is gone. The degrade-warning
+  unit test still passes — behavior unchanged.
+- **Finding 2 (resolved):** `LoopOutcome` carries a typed `failureKind?: "harness"`,
+  set on the stale-baseline preflight return; `runQueue` branches on that field, not
+  on the `"Aborted before the fix run"` string prefix. The queue-abort unit test
+  (which stubs the real `runSingleIssue` path) passes through the typed field, so the
+  string coupling is fully removed.
+- **Finding 3 (kept as recorded choice):** queue-mode exit 0 on mixed outcomes
+  remains, deliberately — the summary is the deliverable; harness-level aborts throw
+  and exit non-zero. No change.
+
+Re-verification at `ecbaed8`: `npm test` 59/59 exit 0, `npm run typecheck` clean
+(recorded in `verification.md`). The four axis verdicts above were re-checked against
+the delta diff — no axis is affected by a typed discriminator and a simplified
+boolean. Verdict stands for `ecbaed8`; candidate ready for
+`finishing-a-development-branch` upon owner authorization.
