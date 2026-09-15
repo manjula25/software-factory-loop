@@ -1,0 +1,19 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /Users/manju/Documents/loop-fixtures-py --max-issues 1 --provider claude-via-proxy
+
+[gh-1] Started on branch fix/gh-1
+  tail -f /Users/manju/Documents/loop-fixtures-py/.sandcastle/logs/fix-gh-1-gh-1.log
+remote: 
+remote: Create a pull request for 'fix/gh-1' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-1        
+remote: 
+To https://github.com/manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-1 -> fix/gh-1
+branch 'fix/gh-1' set up to track 'origin/fix/gh-1'.
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 0 | not-admitted: 2
+PR: https://github.com/manjula25/loop-fixtures-py/pull/8
+NOT ADMITTED gh-2: cap
+NOT ADMITTED gh-3: cap
+{"headRefName":"fix/gh-1","number":8,"state":"OPEN","title":"[loop] fix gh-1: slugify: generated slug is missing its first character"}
+[{"number":3},{"number":2},{"number":1}]
