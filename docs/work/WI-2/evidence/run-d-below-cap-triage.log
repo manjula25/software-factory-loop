@@ -1,0 +1,19 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /Users/manju/Documents/loop-fixtures-py --provider claude-via-proxy --triage
+
+[triage] Started on branch loop/triage
+  tail -f /Users/manju/Documents/loop-fixtures-py/.sandcastle/logs/loop-triage-triage.log
+[gh-10] Started on branch fix/gh-10
+  tail -f /Users/manju/Documents/loop-fixtures-py/.sandcastle/logs/fix-gh-10-gh-10.log
+remote: 
+remote: Create a pull request for 'fix/gh-10' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-10        
+remote: 
+To https://github.com/manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-10 -> fix/gh-10
+branch 'fix/gh-10' set up to track 'origin/fix/gh-10'.
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 0 | not-admitted: 1
+PR: https://github.com/manjula25/loop-fixtures-py/pull/11
+NOT ADMITTED gh-3: file overlap with gh-10
+EXIT_CODE=0

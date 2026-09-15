@@ -21,12 +21,12 @@ One worktree per work item, created under `.claude/worktrees/` named for its bra
 | Surface | Commands |
 |---|---|
 | Harness source (`src/`, TypeScript) | `npm run typecheck` (exit 0), `npm test` (vitest) |
-| Pipeline integration (local Docker) | `npm run build:image` (Sandcastle-built `sandcastle-loop`), `npm run smoke:image` (9 checks), `npm run loop -- --repo <dir> --issue <n> --provider <name> [--model <m>]` |
+| Pipeline integration (local Docker) | `npm run build:image` (Sandcastle-built `sandcastle-loop`), `npm run smoke:image` (9 checks), `npm run loop -- --repo <dir> --provider <name> [--model <m>] [--issue <n>] [--label <label>] [--max-issues <n>] [--triage]` — queue mode is the default (caps at 3 issues per run); `--issue <n>` is the single-issue override (no cap, no triage, dedup still applies); `--triage` spends one bounded scoring pass per run whenever more than one issue is eligible, and degrades loudly to ascending issue number if that pass fails or returns unusable output |
 
+Both surfaces are scaffolded; there is no lint surface, and no command may be invented for one.
 Where a surface reads *(none yet)*, it is not scaffolded: any claim about it is a stated
-**non-claim**, not a pass, and no command may be invented for it. When the scaffold lands
-(`sandcastle init`, vitest), the real commands replace this table through a PR, like everything
-else.
+**non-claim**, not a pass. This table is the authoritative command list — it changes through a
+PR, like everything else.
 
 ## Secrets
 

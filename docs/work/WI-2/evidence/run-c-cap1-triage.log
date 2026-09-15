@@ -1,0 +1,22 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /Users/manju/Documents/loop-fixtures-py --max-issues 1 --triage --provider claude-via-proxy
+
+[triage] Started on branch loop/triage
+  tail -f /Users/manju/Documents/loop-fixtures-py/.sandcastle/logs/loop-triage-triage.log
+[gh-2] Started on branch fix/gh-2
+  tail -f /Users/manju/Documents/loop-fixtures-py/.sandcastle/logs/fix-gh-2-gh-2.log
+remote: 
+remote: Create a pull request for 'fix/gh-2' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-2        
+remote: 
+To https://github.com/manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-2 -> fix/gh-2
+branch 'fix/gh-2' set up to track 'origin/fix/gh-2'.
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 1 | not-admitted: 1
+PR: https://github.com/manjula25/loop-fixtures-py/pull/9
+NOT ADMITTED gh-3: cap
+<triage>{"scores":{"gh-3":2,"gh-2":4},"files":{"gh-3":["src/loopfix/textops.py","tests/test_textops.py"],"gh-2":["src/loopfix/dates.py","tests/test_dates.py"]}}</triage>
+  fix/gh-1
+  fix/gh-2
+{"headRefName":"fix/gh-2","number":9,"state":"OPEN","title":"[loop] fix gh-2: parse_iso8601: ValueError on UTC timestamps ending in Z"}

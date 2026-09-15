@@ -17,12 +17,23 @@ The target project being fixed can be in **any language** — the harness is Typ
 target's language only shapes the sandbox Docker image. The harness never *discovers* issues; it
 works through a queue of issues a human already reported.
 
-### There is no code yet
+### What is built so far
 
-Documentation-only so far: no scaffold, no build, no lint, no test command, no package manifest.
-Nothing has been generated because that work has not been started. Do not invent commands for
-what does not exist; when the scaffold lands, the real commands are recorded in
-`docs/agents/workflow.md` (Repository commands).
+The harness is scaffolded and runs. **WI-1** (single-issue loop) and **WI-2** (queue
+ingestion) are implemented in `src/`, under vitest, with a committed Docker sandbox image.
+
+| Module | What it owns |
+|---|---|
+| `src/loop.ts` | The per-issue loop, the queue runner, and the CLI entry |
+| `src/queue.ts` | Acquisition, dedup against open PRs and stale branches, capped admission, triage parsing |
+| `src/sandcastle-adapter.ts` | The **only** file permitted to import `@ai-hero/sandcastle` — a boundary test enforces this |
+| `src/issues.ts`, `src/verify.ts` | Issue normalization; the verification gate over fresh-sandbox output |
+| `src/assert-no-secrets.ts`, `src/env.ts` | The confidentiality seam every emitted string passes through |
+
+There is still **no lint step** — do not invent one. The authoritative command list lives in
+`docs/agents/workflow.md` (Repository commands); read it rather than guessing, and when a
+command changes, change it there. Keep this section honest: if you add a surface, say so here
+in the same PR that adds it.
 
 ## Hard constraints — each prevents a specific failure
 

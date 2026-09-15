@@ -146,3 +146,50 @@ export async function createFixSandbox(input: FixSandboxInput): Promise<FixSandb
 export function mergeBack(): MergeToHeadBranchStrategy {
   return { type: "merge-to-head" };
 }
+
+export interface TriageRunInput {
+  /** Host repo directory the run anchors to. */
+  readonly cwd: string;
+  /** Scoring prompt (already secrets-guarded by the caller). */
+  readonly prompt: string;
+  readonly imageName: string;
+  readonly agent: AgentSpec;
+  /** Env injected into the sandbox (never echoed anywhere). */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/** Throwaway branch the triage pass runs on — never a `fix/*` branch. */
+export const TRIAGE_BRANCH = "loop/triage";
+
+/**
+ * The triage pass's cost controls, as a value rather than an inline literal, so
+ * they are assertable without spending a model call. `maxIterations: 1` is what
+ * makes the pass cheap enough to be worth opting into (constraint 5): a scoring
+ * run that could iterate would be an unbounded second agent.
+ */
+export function triageRunOptions(): {
+  readonly name: string;
+  readonly maxIterations: number;
+  readonly branchStrategy: NamedBranchStrategy;
+} {
+  return {
+    name: "triage",
+    maxIterations: 1,
+    branchStrategy: { type: "branch", branch: TRIAGE_BRANCH },
+  };
+}
+
+/**
+ * One bounded scoring pass for queue triage (WI-2 T3): stdout is returned for
+ * `<triage>` extraction. The caller deletes the branch afterwards.
+ */
+export async function runTriage(input: TriageRunInput): Promise<string> {
+  const result = await run({
+    cwd: input.cwd,
+    prompt: input.prompt,
+    agent: agentProvider(input.agent),
+    sandbox: sandboxProvider(input.imageName, input.env),
+    ...triageRunOptions(),
+  });
+  return result.stdout;
+}
