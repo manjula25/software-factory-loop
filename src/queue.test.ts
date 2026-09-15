@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   admitIssues,
+  buildTriagePrompt,
+  ISSUE_PAGE_LIMIT,
   listOpenIssues,
+  openPrListArgs,
   parseTriageOutput,
   QueueAcquisitionError,
   splitQueue,
@@ -116,6 +119,48 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
     expect(result.eligible.map((i) => i.id)).toEqual(["gh-1"]);
   });
 
+  it("pins the open-PR page explicitly, never narrower than the issue page", () => {
+    // gh pr list defaults to 30 silently: past that, a fix already in flight
+    // reads as absent and the harness opens a competing PR.
+    const args = openPrListArgs();
+    const at = args.indexOf("--limit");
+
+    expect(at).toBeGreaterThan(-1);
+    expect(Number(args[at + 1])).toBeGreaterThanOrEqual(ISSUE_PAGE_LIMIT);
+    expect(args).toContain("--state");
+    expect(args).toContain("open");
+  });
+
+  it("matches an id however a human capitalized it in the PR body", async () => {
+    const deps = makeDeps({
+      listOpenPrs: async () => [{ headRefName: "feature/other", body: "Fixes GH-1" }],
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1)]);
+
+    expect(result.skippedDuplicate).toEqual(["gh-1"]);
+    expect(result.eligible).toEqual([]);
+  });
+
+  it("treats a regex metacharacter in an id as literal text, not a pattern", async () => {
+    // Non-GitHub sources (spec documents, plain lists) are in PRD scope, so an
+    // id is not guaranteed to be `gh-N`.
+    const dotted: NormalizedIssue = {
+      id: "spec-1.2",
+      description: "# from a spec document",
+      sourceType: "github-issue",
+    };
+    const deps = makeDeps({
+      listOpenPrs: async () => [{ headRefName: "feature/other", body: "covers spec-1x2" }],
+    });
+
+    const result = await splitQueue(deps, "/repo", [dotted]);
+
+    // "." must not match the "x" — the issue is still eligible
+    expect(result.skippedDuplicate).toEqual([]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["spec-1.2"]);
+  });
+
   it("aborts with QueueAcquisitionError on a PR-listing failure, deleting nothing", async () => {
     const localDeleted: string[] = [];
     const remoteDeleted: string[] = [];
@@ -225,5 +270,70 @@ describe("parseTriageOutput (WI-2 T3, Zod-validated)", () => {
       parseTriageOutput('<triage>{"scores":{"gh-1":3.5,"gh-2":1},"files":{}}</triage>', ids),
     ).toBeUndefined(); // non-integer
     expect(parseTriageOutput("<triage>not json</triage>", ids)).toBeUndefined();
+  });
+});
+
+describe("buildTriagePrompt (WI-2 T3)", () => {
+  it("lists every queued id with its first description line, and nothing more", () => {
+    const multiline: NormalizedIssue = {
+      id: "gh-7",
+      description: "# crash on empty input\n\nStack trace follows\nline two",
+      sourceType: "github-issue",
+    };
+
+    const prompt = buildTriagePrompt([issue(1), multiline]);
+
+    expect(prompt).toContain("- gh-1: # issue 1");
+    // only the first line travels — the body can be long, and the pass is bounded
+    expect(prompt).toContain("- gh-7: # crash on empty input");
+    expect(prompt).not.toContain("Stack trace follows");
+    expect(prompt).not.toContain("line two");
+  });
+
+  it("asks for the exact block shape parseTriageOutput accepts", () => {
+    const prompt = buildTriagePrompt([issue(1), issue(2)]);
+
+    expect(prompt).toContain("<triage>");
+    expect(prompt).toContain("</triage>");
+    expect(prompt).toContain("scores");
+    expect(prompt).toContain("files");
+    expect(prompt).toMatch(/1 \(low\) to 5 \(urgent\)/);
+  });
+
+  it("round-trips: a reply in the shape the prompt asks for parses and covers every id", () => {
+    // The prompt and the parser are two halves of one contract; this pins them
+    // together so rewording one without the other fails here.
+    const issues = [issue(1), issue(2)];
+    const prompt = buildTriagePrompt(issues);
+    const ids = issues.map((i) => i.id);
+
+    const reply = [
+      "Here is my assessment.",
+      '<triage>{"scores":{"gh-1":4,"gh-2":2},"files":{"gh-1":["src/a.py"],"gh-2":[]}}</triage>',
+    ].join("\n");
+
+    const parsed = parseTriageOutput(reply, ids);
+
+    expect(parsed).toBeDefined();
+    expect(parsed?.scores).toEqual({ "gh-1": 4, "gh-2": 2 });
+    // and the ids the prompt asked about are exactly the ids the parser demands
+    for (const id of ids) {
+      expect(prompt).toContain(id);
+      expect(parsed?.scores[id]).toBeDefined();
+    }
+  });
+
+  it("emits no issue body beyond the first line, so a log-bearing issue cannot bloat the pass", () => {
+    const withLog: NormalizedIssue = {
+      id: "gh-9",
+      description: "# timeout",
+      attachedLog: "Traceback...\n  File \"/home/someone/secret/path.py\"",
+      sourceType: "github-issue",
+    };
+
+    const prompt = buildTriagePrompt([withLog, issue(2)]);
+
+    expect(prompt).not.toContain("Traceback");
+    expect(prompt).not.toContain("/home/someone/secret/path.py");
   });
 });

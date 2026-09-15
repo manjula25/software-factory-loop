@@ -158,20 +158,38 @@ export interface TriageRunInput {
   readonly env?: Readonly<Record<string, string>>;
 }
 
+/** Throwaway branch the triage pass runs on — never a `fix/*` branch. */
+export const TRIAGE_BRANCH = "loop/triage";
+
 /**
- * One bounded scoring pass for queue triage (WI-2 T3): maxIterations 1, a
- * throwaway `loop/triage` branch, stdout returned for `<triage>` extraction.
- * The caller deletes the branch afterwards.
+ * The triage pass's cost controls, as a value rather than an inline literal, so
+ * they are assertable without spending a model call. `maxIterations: 1` is what
+ * makes the pass cheap enough to be worth opting into (constraint 5): a scoring
+ * run that could iterate would be an unbounded second agent.
+ */
+export function triageRunOptions(): {
+  readonly name: string;
+  readonly maxIterations: number;
+  readonly branchStrategy: NamedBranchStrategy;
+} {
+  return {
+    name: "triage",
+    maxIterations: 1,
+    branchStrategy: { type: "branch", branch: TRIAGE_BRANCH },
+  };
+}
+
+/**
+ * One bounded scoring pass for queue triage (WI-2 T3): stdout is returned for
+ * `<triage>` extraction. The caller deletes the branch afterwards.
  */
 export async function runTriage(input: TriageRunInput): Promise<string> {
   const result = await run({
     cwd: input.cwd,
     prompt: input.prompt,
-    name: "triage",
     agent: agentProvider(input.agent),
     sandbox: sandboxProvider(input.imageName, input.env),
-    maxIterations: 1,
-    branchStrategy: { type: "branch", branch: "loop/triage" } satisfies NamedBranchStrategy,
+    ...triageRunOptions(),
   });
   return result.stdout;
 }

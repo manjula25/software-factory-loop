@@ -12,6 +12,7 @@ import { loadEnv, readEnvFile } from "./env.js";
 import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
+  TRIAGE_BRANCH,
   createFixSandbox,
   runFixRun,
   runTriage,
@@ -23,6 +24,7 @@ import {
   admitIssues,
   buildTriagePrompt,
   listOpenIssues,
+  openPrListArgs,
   parseTriageOutput,
   realGhJson,
   splitQueue,
@@ -366,11 +368,26 @@ export interface QueueSummary {
 }
 
 /**
+ * A harness-level abort, carrying the summary of everything the run had
+ * already earned. A queue that opened a PR for gh-1 and then hit a stale
+ * baseline on gh-2 must still tell the operator about that PR — it is real,
+ * human-reviewable work, and losing it would make the run dishonest.
+ */
+export class QueueAbortedError extends Error {
+  readonly summary: QueueSummary;
+  constructor(message: string, summary: QueueSummary) {
+    super(message);
+    this.name = "QueueAbortedError";
+    this.summary = summary;
+  }
+}
+
+/**
  * Run the queue: acquire → dedup → (opt-in triage) → admit ≤ cap → run each
  * admitted issue sequentially through runSingleIssue. An issue-level failure
  * is recorded and the queue continues; a harness-level failure (stale
- * baseline, credentials) aborts by throwing — the caller prints the reason,
- * never a summary.
+ * baseline, credentials) aborts with a `QueueAbortedError` whose `summary`
+ * holds the partial run — the caller prints both that and the abort reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
   const issues = await listOpenIssues(deps, {
@@ -379,20 +396,33 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   });
   const split = await splitQueue(deps, input.repoDir, issues);
 
+  // The flag is the opt-in, so triage runs at any queue size — its file-overlap
+  // deferral (decision 14) is what keeps two same-module fixes from becoming
+  // conflicting PRs, and that matters below the cap too. One issue can overlap
+  // nothing and outrank nobody, so it never buys a model call.
   let triage: TriageValue | undefined;
   let triageUnusable = false;
-  if (input.triage && split.eligible.length > input.cap) {
+  let triageError: string | undefined;
+  if (input.triage && split.eligible.length > 1) {
     const prompt = buildTriagePrompt(split.eligible);
     assertNoSecrets([prompt], deps.env);
-    const stdout = await deps.runTriage({
-      cwd: input.repoDir,
-      prompt,
-      imageName: input.imageName,
-      agent: input.agent,
-    });
-    triage = parseTriageOutput(stdout, split.eligible.map((i) => i.id));
+    try {
+      const stdout = await deps.runTriage({
+        cwd: input.repoDir,
+        prompt,
+        imageName: input.imageName,
+        agent: input.agent,
+      });
+      triage = parseTriageOutput(stdout, split.eligible.map((i) => i.id));
+    } catch (error) {
+      // The scoring pass is an optimization, never a gate: a failed triage run
+      // degrades the ordering, it does not cost the queue its issues.
+      triageError = error instanceof Error ? error.message : String(error);
+    } finally {
+      // Runs on the throw path too, so a failed pass never leaks the branch.
+      await deps.deleteBranch(input.repoDir, TRIAGE_BRANCH);
+    }
     triageUnusable = triage === undefined;
-    await deps.deleteBranch(input.repoDir, "loop/triage");
   }
 
   const admission = admitIssues({
@@ -402,15 +432,26 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     ...(triageUnusable ? { triageUnusable: true } : {}),
   });
   if (admission.degraded) {
-    console.error(
-      "[queue] WARNING: triage output unusable — falling back to deterministic order (ascending issue number).",
-    );
+    // The reason can quote a subprocess error, so it passes the guard like any
+    // other emitted string before it reaches a terminal or an evidence log.
+    const warning = `[queue] WARNING: triage unusable (${triageError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
+    assertNoSecrets([warning], deps.env);
+    console.error(warning);
   }
 
   const attempted: string[] = [];
   const fixed: string[] = [];
   const failed: [string, string][] = [];
   const prUrls: string[] = [];
+  const snapshot = (): QueueSummary => ({
+    attempted: [...attempted],
+    fixed: [...fixed],
+    failed: [...failed],
+    skippedDuplicate: split.skippedDuplicate,
+    notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    prUrls: [...prUrls],
+  });
+
   for (const issue of admission.admitted) {
     const outcome = await runSingleIssue(
       {
@@ -430,20 +471,13 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
     // issue identically — that is a harness-level failure, not this issue's.
-    if (outcome.failureKind === "harness") {
-      throw new Error(`Queue aborted — ${issue.id}: ${outcome.failure}`);
-    }
     failed.push([issue.id, outcome.failure ?? "unknown failure"]);
+    if (outcome.failureKind === "harness") {
+      throw new QueueAbortedError(`Queue aborted — ${issue.id}: ${outcome.failure}`, snapshot());
+    }
   }
 
-  return {
-    attempted,
-    fixed,
-    failed,
-    skippedDuplicate: split.skippedDuplicate,
-    notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
-    prUrls,
-  };
+  return snapshot();
 }
 
 export function formatSummary(summary: QueueSummary): string {
@@ -574,9 +608,7 @@ async function main(): Promise<void> {
   const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
     ghJson: realGhJson,
     async listOpenPrs(dir) {
-      return JSON.parse(
-        realGhJson(["pr", "list", "--state", "open", "--json", "headRefName,body"], dir),
-      ) as OpenPr[];
+      return JSON.parse(realGhJson(openPrListArgs(), dir)) as OpenPr[];
     },
     async listFixBranches(dir) {
       return [...new Set([...localFixBranches(dir), ...remoteFixBranches(dir)])];
@@ -619,14 +651,31 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Queue mode (the WI-2 default).
-  const summary = await runQueue(
-    { ghRepo, repoDir, imageName, agent, profile, ...(label !== undefined ? { label } : {}), cap, triage },
-    allDeps,
-  );
-  const text = formatSummary(summary);
-  assertNoSecrets([text], guardEnv);
-  console.log(text);
+  // Queue mode (the WI-2 default). A harness-level abort still prints the
+  // summary of what the run already earned — PRs opened before the abort are
+  // real work the operator has to know about — then the reason, then exits 1.
+  const emit = (summary: QueueSummary, abort?: string): void => {
+    const text = formatSummary(summary);
+    assertNoSecrets(abort !== undefined ? [text, abort] : [text], guardEnv);
+    console.log(text);
+    if (abort !== undefined) {
+      console.error(abort);
+      process.exitCode = 1;
+    }
+  };
+  try {
+    emit(
+      await runQueue(
+        { ghRepo, repoDir, imageName, agent, profile, ...(label !== undefined ? { label } : {}), cap, triage },
+        allDeps,
+      ),
+    );
+  } catch (error) {
+    if (!(error instanceof QueueAbortedError)) {
+      throw error;
+    }
+    emit(error.summary, error.message);
+  }
 }
 
 /** Local `fix/*` branches in the target clone. */
@@ -655,5 +704,12 @@ function remoteFixBranches(repoDir: string): string[] {
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]).endsWith("src/loop.ts");
 if (isDirectRun) {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    // A plain throw here surfaces as an unhandled rejection — a stack trace
+    // where the operator needs a reason and a usable exit code.
+    console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+    process.exitCode = 1;
+  }
 }

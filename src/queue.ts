@@ -39,7 +39,29 @@ export interface ListIssuesInput {
 }
 
 /** The one-page bound: acquisition never pages past this many issues. */
-const ISSUE_PAGE_LIMIT = 30;
+export const ISSUE_PAGE_LIMIT = 30;
+
+/**
+ * The dedup signal's own page bound. `gh pr list` silently defaults to 30: on a
+ * repo with more open PRs than that, a fix already in flight on page 2 reads as
+ * absent, so the issue is re-run and a competing PR opened. The bound is
+ * explicit here and never narrower than the queue it filters.
+ */
+export const OPEN_PR_PAGE_LIMIT = 100;
+
+/** Args for the open-PR dedup listing — exported so the bound above is testable. */
+export function openPrListArgs(): string[] {
+  return [
+    "pr",
+    "list",
+    "--state",
+    "open",
+    "--limit",
+    String(OPEN_PR_PAGE_LIMIT),
+    "--json",
+    "headRefName,body",
+  ];
+}
 
 export async function listOpenIssues(
   deps: QueueDeps,
@@ -98,6 +120,15 @@ export interface SplitResult {
 }
 
 /**
+ * Escape every RegExp metacharacter. Ids are `gh-N` today, but the PRD keeps
+ * spec-document and plain-list sources in scope, and an id carrying a `.` or
+ * `(` would otherwise match the wrong PR body or throw at construction.
+ */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+}
+
+/**
  * Splits the normalized queue into eligible / skipped-duplicate, deleting
  * stale `fix/<id>` branches along the way. An issue is in flight when an
  * open PR's head branch is its fix branch or its body references the issue
@@ -126,7 +157,9 @@ export async function splitQueue(
 
   for (const issue of issues) {
     const branch = fixBranch(issue);
-    const token = new RegExp(`\\b${issue.id.replace(/[-]/g, "\\-")}\\b`);
+    // Case-insensitive: a human PR body writes "Fixes GH-1" as often as "gh-1",
+    // and skipping an issue costs nothing — it reappears in the next queue.
+    const token = new RegExp(`\\b${escapeRegExp(issue.id)}\\b`, "i");
     const inFlight = prs.some(
       (pr) => pr.headRefName === branch || token.test(pr.body),
     );

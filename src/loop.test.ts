@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import {
   LOOP_IDENTITY,
+  QueueAbortedError,
   buildFixPrompt,
   buildPrBody,
   fixBranch,
+  formatSummary,
   parseCap,
   reproTestPath,
   runOverrideIssue,
@@ -292,7 +294,11 @@ interface QueueDepsConfig {
   failReproFor?: string;
   /** Preflight reports a stale baseline for every issue (harness-level abort). */
   staleBaseline?: boolean;
+  /** Preflight reports a stale baseline for this id only — aborts mid-queue. */
+  staleBaselineFor?: string;
   triageStdout?: string;
+  /** The triage run itself throws (sandbox/credentials failure), not its output. */
+  triageThrows?: string;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -317,9 +323,14 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     createFixSandbox: vi.fn(async (input: { branch: string; baseBranch?: string }) => {
       openNow += 1;
       maxOpen = Math.max(maxOpen, openNow);
+      // Both `fix/<id>` and `loop/preflight-<id>` end in the id, so the
+      // preflight sandbox resolves to its own issue rather than the previous
+      // one — `runFixRun` has not been reached yet when preflight runs.
+      active = issues.find((i) => input.branch.endsWith(i.id)) ?? active;
       if (input.baseBranch === "main") {
         // baseline preflight
-        return track(issueSandbox(active, config.staleBaseline ? SUITE_AFTER_FIX : BASELINE_SUITE));
+        const stale = config.staleBaseline === true || config.staleBaselineFor === active.id;
+        return track(issueSandbox(active, stale ? SUITE_AFTER_FIX : BASELINE_SUITE));
       }
       const fails = config.failReproFor === active.id;
       return track(issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0));
@@ -332,7 +343,12 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     listOpenPrs: vi.fn(async () => config.prs ?? []),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
-    runTriage: vi.fn(async () => config.triageStdout ?? ""),
+    runTriage: vi.fn(async () => {
+      if (config.triageThrows !== undefined) {
+        throw new Error(config.triageThrows);
+      }
+      return config.triageStdout ?? "";
+    }),
   };
   return { deps, maxOpen: () => maxOpen };
 }
@@ -386,6 +402,30 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.createPr).not.toHaveBeenCalled();
   });
 
+  it("an abort mid-queue still carries the PR the run already earned", async () => {
+    // gh-1 fixes and opens a PR; gh-2 trips the stale-baseline preflight. That
+    // PR is real, human-reviewable work — the abort must not swallow it.
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
+      staleBaselineFor: "gh-2",
+    });
+
+    const error = await runQueue(queueRunInput(), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/gh-2/);
+    expect(aborted.summary.prUrls).toEqual(["https://example/pr/fix/gh-1"]);
+    expect(aborted.summary.fixed).toEqual(["gh-1"]);
+    // attempted stays the honest total, and every attempt is accounted for
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(aborted.summary.failed.map(([id]) => id)).toEqual(["gh-2"]);
+    // gh-3 was admitted but never reached — no third sandbox was opened
+    expect(deps.createPr).toHaveBeenCalledTimes(1);
+    // and that partial summary is printable, PR line included
+    expect(formatSummary(aborted.summary)).toContain("PR: https://example/pr/fix/gh-1");
+  });
+
   it("admits the first cap issues deterministically without triage, never calling the model", async () => {
     const { deps } = makeQueueDeps({
       issues: [1, 2, 3, 4, 5].map(queueIssue),
@@ -402,15 +442,40 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
-  it("under an under-cap queue, triage is not invoked even with the flag set", async () => {
+  it("defers a file-overlapping issue below the cap — the flag, not the cap, is the opt-in", async () => {
+    // cap 3, two eligible issues: the cap forces no choice, but both fixes
+    // touch src/api.py, so admitting each would produce conflicting PRs.
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
-      triageStdout: '<triage>{"scores":{"gh-1":1,"gh-2":2},"files":{}}</triage>',
+      triageStdout:
+        '<triage>{"scores":{"gh-1":3,"gh-2":3},"files":{"gh-1":["src/api.py"],"gh-2":["src/api.py"]}}</triage>',
     });
 
     const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
 
-    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(deps.runTriage).toHaveBeenCalledTimes(1);
+    expect(summary.attempted).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([["gh-2", "file overlap with gh-1"]]);
+    expect(deps.createPr).toHaveBeenCalledTimes(1);
+  });
+
+  it("buys no model call for a single eligible issue — it can outrank and overlap nobody", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      triageStdout: '<triage>{"scores":{"gh-1":5},"files":{}}</triage>',
+    });
+
+    const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
+
+    expect(deps.runTriage).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["gh-1"]);
+  });
+
+  it("never calls the model when --triage is absent, however large the queue", async () => {
+    const { deps } = makeQueueDeps({ issues: [1, 2, 3, 4].map(queueIssue) });
+
+    await runQueue(queueRunInput({ cap: 2, triage: false }), deps);
+
     expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
@@ -445,6 +510,38 @@ describe("runQueue (WI-2 T4)", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("degrades — and still cleans loop/triage — when the triage run itself throws", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [1, 2, 3, 4, 5].map(queueIssue),
+        triageThrows: "docker: no such image",
+      });
+
+      const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
+
+      // the queue keeps its issues: a failed optimization is not a failed run
+      expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+      expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("docker: no such image"));
+      expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/triage");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("blocks the degrade warning when the triage failure would leak an env value", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [1, 2, 3].map(queueIssue),
+      triageThrows: "auth rejected token sk-live-secret",
+    });
+    deps.env.ANTHROPIC_API_KEY = "sk-live-secret";
+
+    await expect(runQueue(queueRunInput({ cap: 2, triage: true }), deps)).rejects.toThrow(
+      /ANTHROPIC_API_KEY/,
+    );
   });
 });
 
