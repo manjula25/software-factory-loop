@@ -5,6 +5,7 @@
  * only if execution produced them — a doc claim that fails to run never does.
  *
  * Usage: npx tsx scripts/onboard.ts <repoDir> [--install <cmd>] [--test <cmd>]
+ *                                                 [--single-test <cmd>]
  *
  * The install/test commands default to the pip-editable convention; override
  * them for repos that install differently (filtered requirements files,
@@ -23,6 +24,7 @@ function optValue(flag: string): string | undefined {
 
 const INSTALL_CMD = optValue("--install") ?? 'pip install -e ".[test]"';
 const TEST_CMD = optValue("--test") ?? "pytest -q";
+const SINGLE_TEST_CMD = optValue("--single-test") ?? "pytest -q {test}";
 
 async function main(): Promise<void> {
   const repoDir = resolve(process.argv[2] ?? ".");
@@ -56,7 +58,7 @@ async function main(): Promise<void> {
       language: "python",
       installCmd: INSTALL_CMD,
       testCmd: TEST_CMD,
-      singleTestCmd: "pytest -q {test}",
+      singleTestCmd: SINGLE_TEST_CMD,
       baselineFailures,
       expectedDurationSec: durationSec,
     };
