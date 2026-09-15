@@ -1,50 +1,85 @@
 # WI-2 Verification Record
 
+Refreshed 2026-09-15 after the second review pass (findings 4–7). It supersedes the
+record made at `ecbaed8`; the superseded content is in this file's git history.
+
 ## Candidate identity
 
 - Branch: `worktree-wi-2` (worktree `.claude/worktrees/wi-2`)
-- HEAD: `ecbaed8a0079779ac6a302999e68b9d01ffaa902` (`ecbaed8`)
-- Commit range vs `main`: 9 commits (`44f9d10`…`ecbaed8`), ancestry verified (`git merge-base --is-ancestor main HEAD`, exit 0)
-- Working tree: clean (`git status --porcelain` empty) at verification time
-- **Post-evidence source change, disclosed:** the three live runs were gathered at
-  `cdc6439`. `ecbaed8` applies the two review findings (typed `failureKind` on the
-  stale-baseline return, simplified `degraded` boolean) — `git diff cdc6439..ecbaed8`
-  touches only `src/loop.ts` and `src/queue.ts`, both changes behavior-preserving by
-  construction and covered by the existing unit suite (the harness-abort test exercises
-  the typed field; the degrade test the simplified boolean), which was re-run green
-  against `ecbaed8`. The live runs were not repeated: their purpose (end-to-end
-  acquisition/dedup/admission/PR behavior) is unaffected by a failure-classification
-  field the runs' happy paths never hit; see non-claims.
+- HEAD: `86c381d7ba48c67014e7c21f96e59ea16f38d266` (`86c381d`)
+- Commit range vs `main`: 14 commits (`44f9d10`…`86c381d`), ancestry verified
+  (`git merge-base --is-ancestor main HEAD`, exit 0)
+- Working tree: clean at verification time apart from this file
+- Source commits since the previous record: `c29bb06` (review findings 4–7 + triage
+  coverage) and `86c381d` (CLAUDE.md / workflow.md staleness, documentation only)
+
+### Post-evidence source change — disclosed, and larger than last time
+
+The three live runs in `docs/work/WI-2/evidence/` were gathered at `cdc6439` and **have
+not been repeated against this candidate.** Last time that gap was defensible because the
+intervening commit only added a typed field. It is a bigger gap now: `c29bb06` changes
+four behaviors the live runs touch or could touch.
+
+| Change | Effect on what the runs observed |
+|---|---|
+| `gh pr list` now passes `--limit 100` (was gh's silent 30) | None observable — the fixtures repo has 3 open PRs, well inside both bounds. The defect this fixes cannot appear at that scale. |
+| Dedup token match is now case-insensitive and fully escaped | None observable — every fixtures PR body writes the id lowercase as `gh-N`, which matched before and matches now. |
+| `--triage` gate moved from `eligible > cap` to `eligible > 1` | **None in run (c)**, which had 2 eligible against cap 1 — triage fired under both gates. But the newly reachable case (triage below the cap) has **no live datapoint at all.** |
+| Harness abort now raises `QueueAbortedError` carrying the partial summary | Not exercised — no live run hit a stale baseline. |
+
+The runs therefore remain accurate about acquisition, dedup, capped admission, sequential
+execution and PR opening, and are stale as *executions*. The claim below is scoped to
+match.
 
 ## The claim, stated exactly
 
-WI-2 (queue ingestion) is implemented per `docs/work/WI-2/specification.md` FR-001–FR-006:
-open issues are acquired (bounded, label-filterable), deduplicated against open PRs and
-stale branches, admitted under a validated cap (deterministic by default, `--triage`
-opt-in with Zod-validated output and file-overlap deferral), run sequentially through the
-WI-1 per-issue path, and summarized honestly at end of run. The unit suite and typecheck
-pass, and three live runs against `manjula25/loop-fixtures-py` exhibit the specified
-behavior end to end.
+WI-2 (queue ingestion) is implemented per `docs/work/WI-2/specification.md` FR-001–FR-006,
+and the seven findings from the two review passes are fixed. The unit suite (72 tests) and
+typecheck pass fresh at `86c381d`. The end-to-end behavior of acquisition, dedup, capped
+admission, sequential runs and PR opening was observed live at `cdc6439`; **no live run
+has been executed against this candidate**, and the triage-below-cap path introduced here
+is unit-proven only.
 
 ## Evidence
 
-### Broad (unit) — `npm test`, fresh, exit 0 (2026-09-15 14:19 at `cdc6439`; re-run 14:31 at `ecbaed8`)
+### Broad (unit) — `npm test`, fresh at `86c381d`, exit 0 (2026-09-15 15:05)
 
 ```
  Test Files  8 passed (8)
-      Tests  59 passed (59)
-   Duration  1.35s
+      Tests  72 passed (72)
+   Duration  1.19s
 ```
 
-38 pre-existing WI-1 tests + 21 new (T1: 3, T2: 3, T3: 6, T4: 9, including the
-sequential-ordering, harness-abort, deferral, degrade, override-dedup, and cap-validation
-cases). No skips, no warnings.
+Exit code confirmed separately (`npm test >/dev/null; echo $?` → `0`). 59 → 72: thirteen
+new cases covering the second review pass —
 
-### Static — `npm run typecheck`, fresh, exit 0 (both `cdc6439` and `ecbaed8`)
+- open-PR page bound is explicit and never narrower than the issue page (finding 4)
+- abort mid-queue carries the PR already earned, and its summary is printable (finding 5)
+- file-overlap deferral below the cap; single eligible issue buys no model call; no model
+  call without the flag (finding 6)
+- case-insensitive id match; regex metacharacter in an id treated as literal (finding 7)
+- triage run that throws degrades and still cleans `loop/triage`; its degrade warning is
+  blocked when it would leak an env value
+- `buildTriagePrompt`: first-line-only listing, no attached log reaching the prompt, block
+  shape, and a round-trip against `parseTriageOutput` (this function previously had **no
+  test at all**)
+- `triageRunOptions()`: `maxIterations: 1` and a branch that is never a `fix/*` branch
+
+Each of these was confirmed to **fail against the pre-fix code** before being accepted —
+the escaping pair, the abort-carries-PR case, and the triage-degrade pair were each re-run
+against a temporarily reverted source and observed red. No skips, no warnings.
+
+### Static — `npm run typecheck`, fresh at `86c381d`, exit 0
 
 `tsc --noEmit`, no output.
 
-### Runtime/external — three live runs, full logs in `docs/work/WI-2/evidence/`
+### Secrets guard over emitted artifacts — scripted scan, exit 0, re-run at `86c381d`
+
+Both values in `.env` checked against all three evidence logs: none present. (The summary,
+the degrade warning — newly guarded in `c29bb06` — and PR bodies also pass
+`assertNoSecrets` in code; this scan covers the artifacts on disk.)
+
+### Runtime/external — three live runs at `cdc6439`, full logs in `docs/work/WI-2/evidence/`
 
 | Run | Command | Observed (from the log) |
 |---|---|---|
@@ -52,57 +87,68 @@ cases). No skips, no warnings.
 | (b) cap-forcing deterministic | `… --max-issues 1` | gh-1 admitted (ascending), fixed, PR #8 opened; `NOT ADMITTED gh-2: cap`, `NOT ADMITTED gh-3: cap`; exit 0 |
 | (c) cap-forcing triage | `… --max-issues 1 --triage` | triage pass ran live (`loop/triage` branch, log drained); scores `gh-2: 4, gh-3: 2` with disjoint files; top-ranked gh-2 processed to PR #9; gh-1 skipped-duplicate (PR #8); `NOT ADMITTED gh-3: cap`; `loop/triage` deleted afterwards; no degrade warning — output was schema-valid |
 
-External state after (c), checked 2026-09-15: PRs #8 (`fix/gh-1`) and #9 (`fix/gh-2`) OPEN
-awaiting human review; issues 1–3 still open; no leftover `loop/*` branches; local
-branches `fix/gh-1`, `fix/gh-2` correspond to the open PRs (in-flight, correctly kept).
+External state after (c), checked 2026-09-15: PRs #8 (`fix/gh-1`) and #9 (`fix/gh-2`) were
+OPEN awaiting human review and have since been reviewed and merged by the owner; issues
+1–3 still open; no leftover `loop/*` branches.
 
-### Secrets guard over emitted artifacts — scripted scan, exit 0
+## Outstanding before merge — the recommended live run
 
-Every value in `.env` checked against all three evidence logs: none present. (The summary
-and PR bodies also pass `assertNoSecrets` in code; this scan covers the artifacts on disk.)
+One run would close the largest gap in this record: **`--triage` with two eligible issues
+below the cap**, expected to fire the scoring pass and defer one issue with
+`NOT ADMITTED <id>: file overlap with <id>`. That path is the behavior change in finding 6
+and has never executed live. It needs the fixtures repo seeded with two issues whose fixes
+touch the same file, and it costs one model call plus one fix run.
+
+Recommendation: run it before merge, or merge with the non-claim below standing and record
+it against the next work item. This is the owner's call — it is API spend and it opens a
+PR on the fixtures repo.
 
 ## Prior unknowns — reconciled
 
-- **T5 fixtures-state decision** (deferred to execution in the ticket): CLOSED — chose
-  "close PRs #5/#6/#7 unmerged + delete their `fix/gh-*` branches" (bugs stay on `main`,
-  issues stay valid); executed with owner authorization 2026-09-15, before runs (b)/(c).
+- **T5 fixtures-state decision**: CLOSED as recorded previously — PRs #5/#6/#7 closed
+  unmerged and their branches deleted, with owner authorization, before runs (b)/(c).
 - **Whether live triage returns schema-valid output through the proxy**: CLOSED — run (c)
-  produced a valid `<triage>` block (scores + files); the degrade path remains
-  unit-proven only (see non-claims).
-- **Dependency-deferral live behavior**: NOT exercised — the two eligible issues in run
-  (c) reported disjoint files, so no deferral fired live (see non-claims). Unit-proven in
-  T3/T4 tests.
+  produced a valid `<triage>` block.
+- **Dependency-deferral live behavior**: STILL NOT exercised — run (c)'s two eligible
+  issues reported disjoint files. Unit-proven in T3/T4 and now below the cap too.
 
 ## Remaining risks
 
 - Merge-time conflicts between sequential same-module fixes remain accepted without
-  `--triage` (decision 10, amended): the deterministic default has no file knowledge.
-- One live datapoint each for triage validity and cap-forcing; model behavior may vary
-  run to run. The degrade path guarantees a safe fallback either way.
+  `--triage`: the deterministic default has no file knowledge.
+- One live datapoint each for triage validity and cap-forcing; model behavior may vary run
+  to run. The degrade path guarantees a safe fallback either way — and now covers a triage
+  run that throws, not only one that returns garbage.
+- `--triage` now costs a model call at any queue size above one eligible issue, where it
+  previously cost nothing below the cap. That is the intended trade (the flag is the
+  opt-in) but it is a real spend change; `docs/agents/workflow.md` states it.
 - `--issue N` override with a stale fix branch deletes the branch and retries from clean
-  main — correct per decision 11, but untested live this work item (unit-proven in T2).
+  main — unit-proven in T2, untested live this work item.
 
 ## Non-claims
 
-- No claim that **the live runs exercised `ecbaed8`** — they ran at `cdc6439`; the
-  subsequent fix commit adds a typed failure-classification field and simplifies a
-  redundant boolean, both unit-proven, and neither alters the happy paths the runs
-  observed.
+- No claim that **any live run exercised this candidate.** The runs executed at `cdc6439`;
+  the table above states change-by-change why their observations still stand and where
+  they do not reach.
+- No claim that **triage below the cap works live** — it is unit-proven only, and it is the
+  behavior change of finding 6. See "Outstanding before merge".
+- No claim that **file-overlap deferral fired live** — unit-proven only, at any queue size.
+- No claim that the **degraded triage path fires live**, in either form (unusable output or
+  a throwing run) — unit-proven only.
+- No claim that the **abort path with a partial summary has run live** — no live run hit a
+  stale baseline.
+- No claim that the **`--limit 100` PR page has been exercised at scale** — the fixtures
+  repo has 3 open PRs. The bound is pinned by a unit test, not by a large-repo run.
 - No claim of **triage ranking quality** — the prompt is a cheap heuristic; FR-003
   explicitly disclaims this.
-- No claim that the **degraded triage path fires live** — it is proven under unit stubs
-  only; run (c) received valid output.
-- No claim that **file-overlap deferral fired live** — run (c)'s issues were disjoint;
-  deferral is unit-proven only.
-- No claim about **run duration or cost** (PRD User Story 11's "cost spent" stays
-  deferred), and none about parallelism (future work item).
+- No claim about **run duration or cost**, and none about parallelism (future work item).
 - No client repo was touched (confidentiality gate, constraint 3) — all live evidence is
   against the seeded fixtures repo.
-- PRs #8/#9 are open, not merged — human merge is out of the harness's authority
-  (constraint 1).
+- The harness merged nothing (constraint 1) — PRs #8/#9 were merged by the owner.
 
 ## Approval of artifacts
 
 - Specification: approved 2026-09-15 (owner), amended same day for decisions 14–15
-  (dependency deferral, Zod validation) with the owner's direction recorded in
-  `harness-prd-v2.md` and the carve-out PRD.
+  (dependency deferral, Zod validation).
+- PRD decision 2 amended again 2026-09-15 (owner, this pass): the `--triage` flag, not the
+  cap, is the opt-in for file-overlap deferral.
