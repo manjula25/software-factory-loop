@@ -1,0 +1,9 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /Users/manju/Documents/loop-fixtures-py --provider claude-via-proxy
+
+Run summary — attempted: 0 (fixed: 0, failed: 0) | skipped-duplicate: 3 | not-admitted: 0
+[{"headRefName":"fix/gh-1","number":7},{"headRefName":"fix/gh-3","number":6},{"headRefName":"fix/gh-2","number":5}]
+  fix/gh-1
+  fix/gh-2
+  fix/gh-3
