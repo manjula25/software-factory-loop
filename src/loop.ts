@@ -97,6 +97,12 @@ export interface LoopOutcome {
   readonly prUrl?: string;
   /** Set when the gate failed — a failed run is a valid diagnostic outcome. */
   readonly failure?: string;
+  /**
+   * Set when the failure is repo/harness-wide (stale baseline profile and the
+   * like) rather than this issue's: a queue must abort, not grind through
+   * every remaining issue hitting the same wall.
+   */
+  readonly failureKind?: "harness";
   readonly newFailures?: readonly string[];
 }
 
@@ -254,7 +260,11 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     await deps.deleteBranch(input.repoDir, preBranch);
   }
   if (baselineProblem) {
-    return { branch, failure: `Aborted before the fix run — ${baselineProblem}.` };
+    return {
+      branch,
+      failure: `Aborted before the fix run — ${baselineProblem}.`,
+      failureKind: "harness",
+    };
   }
 
   const fix = await deps.runFixRun({
@@ -420,7 +430,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
     // issue identically — that is a harness-level failure, not this issue's.
-    if (outcome.failure?.startsWith("Aborted before the fix run") === true) {
+    if (outcome.failureKind === "harness") {
       throw new Error(`Queue aborted — ${issue.id}: ${outcome.failure}`);
     }
     failed.push([issue.id, outcome.failure ?? "unknown failure"]);

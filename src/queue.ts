@@ -272,6 +272,6 @@ export function admitIssues(input: AdmitInput): AdmitResult {
   return {
     admitted,
     notAdmitted,
-    degraded: input.triageUnusable === true || (input.triage !== undefined && !useTriage),
+    degraded: input.triageUnusable === true,
   };
 }
