@@ -6,10 +6,22 @@
 
 import { execFileSync } from "node:child_process";
 import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
+import { fixBranch } from "./loop.js";
+import type { LoopDeps } from "./loop.js";
+
+export interface OpenPr {
+  readonly headRefName: string;
+  readonly body: string;
+}
 
 export interface QueueDeps {
   /** Runs `gh` with JSON output; throws on a non-zero exit. */
   ghJson(args: string[], cwd: string): string;
+  listOpenPrs(repoDir: string): Promise<OpenPr[]>;
+  /** Local and remote `fix/*` branch names that exist right now. */
+  listFixBranches(repoDir: string): Promise<string[]>;
+  /** `git push origin --delete`; resolves even if the branch is absent. */
+  deleteRemoteBranch(repoDir: string, branch: string): Promise<void>;
 }
 
 /** Named outcome for a failed queue-listing call — distinct from an empty queue. */
@@ -73,4 +85,61 @@ export async function listOpenIssues(
 /** Real `gh` wiring used by the CLI; tests inject their own `ghJson`. */
 export function realGhJson(args: string[], cwd: string): string {
   return execFileSync("gh", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+export interface SplitResult {
+  /** Deduped queue: in-order issues eligible for admission and retry. */
+  readonly eligible: NormalizedIssue[];
+  /** Ids of issues an open PR already covers — skipped, costing nothing. */
+  readonly skippedDuplicate: string[];
+  /** Stale `fix/<id>` branches deleted (no open PR owns them). */
+  readonly staleBranchesDeleted: string[];
+}
+
+/**
+ * Splits the normalized queue into eligible / skipped-duplicate, deleting
+ * stale `fix/<id>` branches along the way. An issue is in flight when an
+ * open PR's head branch is its fix branch or its body references the issue
+ * by exact id token (`gh-1` never matches `gh-11`). Local stale-branch
+ * deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
+ */
+export async function splitQueue(
+  deps: QueueDeps & Pick<LoopDeps, "deleteBranch">,
+  repoDir: string,
+  issues: readonly NormalizedIssue[],
+): Promise<SplitResult> {
+  let prs: OpenPr[];
+  let branches: string[];
+  try {
+    prs = await deps.listOpenPrs(repoDir);
+    branches = await deps.listFixBranches(repoDir);
+  } catch (error) {
+    throw new QueueAcquisitionError(
+      `listing open PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const eligible: NormalizedIssue[] = [];
+  const skippedDuplicate: string[] = [];
+  const staleBranchesDeleted: string[] = [];
+
+  for (const issue of issues) {
+    const branch = fixBranch(issue);
+    const token = new RegExp(`\\b${issue.id.replace(/[-]/g, "\\-")}\\b`);
+    const inFlight = prs.some(
+      (pr) => pr.headRefName === branch || token.test(pr.body),
+    );
+    if (inFlight) {
+      skippedDuplicate.push(issue.id);
+      continue;
+    }
+    if (branches.includes(branch)) {
+      await deps.deleteBranch(repoDir, branch);
+      await deps.deleteRemoteBranch(repoDir, branch);
+      staleBranchesDeleted.push(branch);
+    }
+    eligible.push(issue);
+  }
+
+  return { eligible, skippedDuplicate, staleBranchesDeleted };
 }

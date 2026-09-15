@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { listOpenIssues, QueueAcquisitionError, type QueueDeps } from "./queue.js";
+import {
+  listOpenIssues,
+  QueueAcquisitionError,
+  splitQueue,
+  type QueueDeps,
+} from "./queue.js";
+import type { NormalizedIssue } from "./issues.js";
+import type { LoopDeps } from "./loop.js";
 
-function makeDeps(overrides: Partial<QueueDeps> = {}): QueueDeps {
+type SplitDeps = QueueDeps & Pick<LoopDeps, "deleteBranch">;
+
+function makeDeps(overrides: Partial<SplitDeps> = {}): SplitDeps {
   return {
     ghJson: () => "[]",
+    listOpenPrs: async () => [],
+    listFixBranches: async () => [],
+    deleteRemoteBranch: async () => {},
+    deleteBranch: async () => {},
     ...overrides,
   };
+}
+
+function issue(n: number): NormalizedIssue {
+  return { id: `gh-${n}`, description: `# issue ${n}`, sourceType: "github-issue" };
 }
 
 describe("queue acquisition (WI-2 T1)", () => {
@@ -60,5 +77,63 @@ describe("queue acquisition (WI-2 T1)", () => {
         repo: "owner/name",
       }),
     ).rejects.toBeInstanceOf(QueueAcquisitionError);
+  });
+});
+
+describe("dedup and stale-branch handling (WI-2 T2)", () => {
+  it("skips issues with an open PR, deletes stale branches, keeps the rest eligible", async () => {
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listOpenPrs: async () => [{ headRefName: "fix/gh-1", body: "" }],
+      listFixBranches: async () => ["fix/gh-1", "fix/gh-2"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1), issue(2), issue(3)]);
+
+    expect(result.skippedDuplicate).toEqual(["gh-1"]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-2", "gh-3"]);
+    expect(localDeleted).toEqual(["fix/gh-2"]);
+    expect(remoteDeleted).toEqual(["fix/gh-2"]);
+  });
+
+  it("matches issue ids as exact tokens — gh-1 never matches a body mentioning gh-11", async () => {
+    const deps = makeDeps({
+      listOpenPrs: async () => [{ headRefName: "feature/other", body: "see gh-11 also" }],
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1)]);
+
+    expect(result.skippedDuplicate).toEqual([]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-1"]);
+  });
+
+  it("aborts with QueueAcquisitionError on a PR-listing failure, deleting nothing", async () => {
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listOpenPrs: async () => {
+        throw new Error("gh pr list exited 1");
+      },
+      listFixBranches: async () => ["fix/gh-2"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    await expect(splitQueue(deps, "/repo", [issue(2)])).rejects.toBeInstanceOf(
+      QueueAcquisitionError,
+    );
+    expect(localDeleted).toEqual([]);
+    expect(remoteDeleted).toEqual([]);
   });
 });
