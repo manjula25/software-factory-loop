@@ -146,3 +146,32 @@ export async function createFixSandbox(input: FixSandboxInput): Promise<FixSandb
 export function mergeBack(): MergeToHeadBranchStrategy {
   return { type: "merge-to-head" };
 }
+
+export interface TriageRunInput {
+  /** Host repo directory the run anchors to. */
+  readonly cwd: string;
+  /** Scoring prompt (already secrets-guarded by the caller). */
+  readonly prompt: string;
+  readonly imageName: string;
+  readonly agent: AgentSpec;
+  /** Env injected into the sandbox (never echoed anywhere). */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/**
+ * One bounded scoring pass for queue triage (WI-2 T3): maxIterations 1, a
+ * throwaway `loop/triage` branch, stdout returned for `<triage>` extraction.
+ * The caller deletes the branch afterwards.
+ */
+export async function runTriage(input: TriageRunInput): Promise<string> {
+  const result = await run({
+    cwd: input.cwd,
+    prompt: input.prompt,
+    name: "triage",
+    agent: agentProvider(input.agent),
+    sandbox: sandboxProvider(input.imageName, input.env),
+    maxIterations: 1,
+    branchStrategy: { type: "branch", branch: "loop/triage" } satisfies NamedBranchStrategy,
+  });
+  return result.stdout;
+}
