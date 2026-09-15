@@ -108,7 +108,10 @@ grilling* → domain-modeling*
 
 Plans, verification records, review notes and delivery summaries are written to
 `docs/work/{WORK_ITEM}/`. That directory holds **evidence, never requirements**, and is created
-when a work item actually starts, not before.
+when a work item actually starts, not before. One exception: the planning-chain inputs
+(`prd.md` carve-outs and `slices.md`) also live there — they are traceability artifacts
+derived from `harness-prd-v2.md`, not new product requirements, and the PRD still wins on
+any disagreement.
 
 ## Self-learning
 
