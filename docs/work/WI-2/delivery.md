@@ -96,19 +96,20 @@ choice. Verdict re-affirmed for `ecbaed8` in the review follow-up section.
 
 ## Requested external actions
 
-None confirmed yet. Prepared options (NOT executed):
-
-1. Push local `main` (`847ba3b`) to `origin/main` so the PR diff shows exactly the 11 WI-2
-   commits.
-2. Push `worktree-wi-2` and open a PR `worktree-wi-2` → `main` on `manjula25/software-factory-loop`.
-3. Optionally comment on / close harness repo Issue #3 (WI-2 tracker mirror) after merge —
-   tracker writes need explicit authority per `docs/agents/issue-tracker.md`.
+Owner authorized actions 1 and 2 on 2026-09-15 ("do 1 and 2"): push main, push the branch,
+open the PR.
 
 ## Executed external actions and observed results
 
-None this step. (Prior authorized external actions during the work item — fixtures PR/branch
-cleanup, live-run PRs #8/#9 — are recorded in `verification.md` and the evidence logs.)
+1. `git push origin main` — observed `5aa7a42..847ba3b main -> main` (2026-09-15).
+2. `git push -u origin worktree-wi-2` — observed `[new branch] worktree-wi-2`, tracking set.
+3. `gh pr create --base main --head worktree-wi-2` — observed:
+   **https://github.com/manjula25/software-factory-loop/pull/4**; read back via
+   `gh pr view 4`: OPEN, base `main`, head `worktree-wi-2`, 12 commits (the 11 WI-2 commits
+   plus this delivery record's own commit).
 
 ## Pending actions
 
-Awaiting owner authorization for any of the prepared options above.
+- Human review and merge of PR #4 (the harness never merges — constraint 1).
+- Optional, on explicit authority: closing harness repo Issue #3 (WI-2 tracker mirror) after
+  merge, per `docs/agents/issue-tracker.md`.
