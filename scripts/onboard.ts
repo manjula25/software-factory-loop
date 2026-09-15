@@ -4,15 +4,25 @@
  * `.loop-harness/profile.json` into the target repo. Facts enter the profile
  * only if execution produced them — a doc claim that fails to run never does.
  *
- * Usage: npx tsx scripts/onboard.ts <repoDir>
+ * Usage: npx tsx scripts/onboard.ts <repoDir> [--install <cmd>] [--test <cmd>]
+ *
+ * The install/test commands default to the pip-editable convention; override
+ * them for repos that install differently (filtered requirements files,
+ * non-packaged source trees, …). Whatever is recorded here is what the loop
+ * re-runs in every sandbox.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createFixSandbox } from "../src/sandcastle-adapter.js";
 import { parsePytestFailures } from "../src/verify.js";
 
-const INSTALL_CMD = 'pip install -e ".[test]"';
-const TEST_CMD = "pytest -q";
+function optValue(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i !== -1 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined;
+}
+
+const INSTALL_CMD = optValue("--install") ?? 'pip install -e ".[test]"';
+const TEST_CMD = optValue("--test") ?? "pytest -q";
 
 async function main(): Promise<void> {
   const repoDir = resolve(process.argv[2] ?? ".");
