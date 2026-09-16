@@ -113,3 +113,65 @@ open the PR.
 - Human review and merge of PR #4 (the harness never merges — constraint 1).
 - Optional, on explicit authority: closing harness repo Issue #3 (WI-2 tracker mirror) after
   merge, per `docs/agents/issue-tracker.md`.
+
+---
+
+# Delivery — WI-2 trial tail (2026-09-16)
+
+## Work item
+WI-2 (queue ingestion) — post-merge tail: onboard command overrides + magvation
+real-project trial evidence.
+
+## Summary
+Two small onboard flags (`--install`, `--test` in `e7560d0`; `--single-test` in
+`3290e2d`) that let non-pip-editable target repos be onboarded, plus the full evidence
+record of the first real-project trial: three fork issues processed end-to-end
+(smoke run gh-1 → PR #4; queue run gh-2/gh-3 → PRs #5/#6 on the magvation fork, nothing
+merged), onboarding baseline, run summaries, and the two second-machine setup gaps.
+
+## Plan artifacts
+`handoff-magvation-trial-2026-09-15.md` (input), `magvation-trial-2026-09-16.md`
+(evidence record), `evidence/magvation-run-{smoke-gh-1,queue-gh2-gh3}.log`.
+
+## Verification
+`npm test` 72/72 exit 0 and `npm run typecheck` clean, fresh at `488a672` (2026-09-16).
+Trial-run evidence and non-claims: `magvation-trial-2026-09-16.md`; unit/evidence
+verification for the merged WI-2 range: `verification.md`.
+
+## Evidence boundary
+"Fixed" verdicts for the three magvation issues are the harness's own fresh-sandbox
+verification runs recorded in the trial logs; the fix PR contents are unreviewed by a
+human. No claim is made that the fixes are the right root-cause fixes.
+
+## Non-claims
+Profile-staleness abort and Docker-hang paths unexercised in the trial; `--triage`
+unexercised against a real repo; the any-language claim rests on Python only.
+
+## Remaining risks
+Adjacent observations from the incremental review (silent fallback on a valueless
+onboard flag; positional argv) — recorded, non-blocking.
+
+## Review status
+Incremental review (`origin/main..a567b40`, plus docs-only `488a672`): **no blocking
+findings**; specification-fidelity axis honestly unverified for the flags (no FR).
+`review.md` § "Incremental review".
+
+## Branch and base
+`worktree-wi-2` → `main` (harness repo `manjula25/software-factory-loop`).
+
+## Commit range
+`883adaf..488a672` (6 commits: `e7560d0`, `3290e2d`, `f30c745`, `a567b40`, `488a672`
++ merge).
+
+## Requested external actions
+Owner explicitly requested (2026-09-16): push branch, open PR, merge.
+
+## Executed external actions and observed results
+- Push `worktree-wi-2-trial:worktree-wi-2` → `f30c745..488a672`, fast-forward, OK.
+- PR **#5** opened: `WI-2 tail: onboard command overrides + magvation real-project trial evidence`.
+- PR #5 merged (merge commit) at 2026-09-16T15:05:20Z; `origin/main` = `83f120e`
+  ("Merge pull request #5 from manjula25/worktree-wi-2"), verified by fetch.
+
+## Pending actions
+None for WI-2. Target-repo PRs #4/#5/#6 (magvation fork) await human review and merge —
+deliberately outside this harness's authority.
