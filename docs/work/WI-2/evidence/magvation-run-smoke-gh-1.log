@@ -1,0 +1,20 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/magvation-hayapp-backend-internal --provider claude-via-proxy --max-issues 1
+
+[gh-1] Started on branch fix/gh-1
+  tail -f /home/bitcot/Documents/projects/magvation-hayapp-backend-internal/.sandcastle/logs/fix-gh-1-gh-1.log
+remote: 
+remote: Create a pull request for 'fix/gh-1' on GitHub by visiting:        
+remote:      https://github.com/manjula25/magvation-hayapp-backend-internal/pull/new/fix/gh-1        
+remote: 
+To https://github.com/manjula25/magvation-hayapp-backend-internal.git
+ * [new branch]      fix/gh-1 -> fix/gh-1
+branch 'fix/gh-1' set up to track 'origin/fix/gh-1'.
+Warning: 2 uncommitted changes
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 0 | not-admitted: 2
+PR: https://github.com/manjula25/magvation-hayapp-backend-internal/pull/4
+NOT ADMITTED gh-2: cap
+NOT ADMITTED gh-3: cap
+
+[exited with code 0]

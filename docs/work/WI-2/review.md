@@ -127,3 +127,57 @@ Re-verification at `ecbaed8`: `npm test` 59/59 exit 0, `npm run typecheck` clean
 the delta diff — no axis is affected by a typed discriminator and a simplified
 boolean. Verdict stands for `ecbaed8`; candidate ready for
 `finishing-a-development-branch` upon owner authorization.
+
+---
+
+## Incremental review — trial tail (`origin/main..a567b40`, 2026-09-16)
+
+Candidate: `worktree-wi-2-trial` @ `a567b40` (4 commits: `e7560d0` onboard
+`--install`/`--test`, `3290e2d` `--single-test`, `f30c745` handoff doc, `a567b40`
+trial evidence). Fixed point: `origin/main` @ `883adaf` (PR #4's original range already
+merged). Ancestry verified (`git merge-base --is-ancestor`, exit 0); range non-empty.
+
+**Changed-path accounting (6 files, +280/−4, all inspected):**
+
+| Path | Axis relevance |
+|---|---|
+| `scripts/onboard.ts` (+20/−4) | code — the only source change |
+| `docs/work/WI-2/handoff-magvation-trial-2026-09-15.md` | evidence/planning docs |
+| `docs/work/WI-2/magvation-trial-2026-09-16.md` | evidence record (this trial) |
+| `docs/work/WI-2/evidence/magvation-run-{smoke-gh-1,queue-gh2-gh3}.log` | raw run summaries |
+| `docs/work/WI-2/verification.md` (+5) | pointer to the trial record |
+
+**Axis verdicts:**
+
+- **Repository standards — pass.** `optValue` matches the script's existing
+  plain-argv idiom; header comment updated to document the flags; typecheck clean;
+  72/72 unit tests fresh at `a567b40`.
+- **Specification fidelity — unverified (no FR).** The flags were trial-driven
+  enablers, not a specced FR; the WI-2 specification says nothing about them.
+  Documented honestly in the handoff and trial record instead. The PRD's
+  run-don't-trust rule is preserved: an overridden install/test command still lands
+  in the profile only by executing successfully — the flags override the *choice* of
+  command, not the execution gate.
+- **Evidence and risk integrity — pass.** The two evidence logs are verbatim run
+  summaries; a secret-pattern scan of the full range diff (`token|secret|api key|
+  password|gho_|sk-`) matches nothing. magvation is a confidentiality-cleared repo
+  (2026-09-15), and its name already appears in merged docs. The trial record states
+  explicit non-claims (harness-own verification evidence, no human review of PR
+  content, unexercised paths).
+- **Unnecessary complexity — pass.** Three `?? default` lines and one 3-line helper;
+  no abstraction added.
+
+**Adjacent observations (non-blocking):**
+
+1. A flag passed without a value (e.g. `--install` as the last arg) silently falls
+   back to the default rather than erroring; the recorded profile shows the command
+   actually used, so the failure is visible after the fact but not at input time.
+2. Flags are positional (`argv[2]` must be the repo dir) per the usage line; a flag
+   first would be misread as the repo dir. Pre-existing parsing style, documented.
+3. The evidence logs live in `docs/` rather than being summarized — deliberate
+   (durable output references per the verification skill), same convention as
+   `evidence/run-a..d.log`.
+
+**Verdict: no blocking findings.** Ready for `finishing-a-development-branch` with
+owner authorization (given: push `a567b40` to `origin/worktree-wi-2`, open PR for the
+4-commit tail vs `main`, merge on approval).
