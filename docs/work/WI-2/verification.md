@@ -1,5 +1,10 @@
 # WI-2 Verification Record
 
+> 2026-09-16: the magvation real-project trial (live queue loop against a real client repo,
+> issues gh-1/gh-2/gh-3 → PRs #4/#5/#6 on the fork) is recorded separately in
+> `magvation-trial-2026-09-16.md`. This file remains the verification record for the WI-2
+> code itself.
+
 Refreshed 2026-09-15 after the second review pass (findings 4–7), then again the same day
 with a fourth live run closing the one gap that pass left open (triage below the cap). It
 supersedes the record made at `ecbaed8`; the superseded content is in this file's git

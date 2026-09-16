@@ -1,5 +1,11 @@
 # Handoff — WI-2 real-project trial (magvation), 2026-09-15 (final)
 
+> **RESOLVED 2026-09-16** — trial completed on the second machine: onboarding green, smoke
+> run (gh-1 → PR #4) and queue run (gh-2 → PR #5, gh-3 → PR #6) all fixed+verified, nothing
+> merged. Evidence: `magvation-trial-2026-09-16.md`. Two machine-setup gaps found on the way
+> (`gh repo set-default` for fork-vs-upstream issue tracking, `gh auth setup-git` for plain
+> git) are documented there.
+
 Purpose: continue the software-factory-loop POC trial against the magvation repo on another
 machine. Onboarding on the original machine SUCCEEDED (pass 3) after two failed attempts;
 the loop itself has not been started.
