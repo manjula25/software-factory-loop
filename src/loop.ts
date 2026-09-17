@@ -16,7 +16,13 @@ import {
 } from "./attachments.js";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import { loadEnv, readEnvFile } from "./env.js";
-import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
+import {
+  normalizeGitHubIssue,
+  parsePlainList,
+  parseSpecDoc,
+  type GitHubIssueInput,
+  type NormalizedIssue,
+} from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
   TRIAGE_BRANCH,
@@ -453,6 +459,13 @@ export interface QueueRunInput {
   readonly label?: string;
   readonly cap: number;
   readonly triage: boolean;
+  /**
+   * WI-3 (FR-007): a pre-parsed queue from `--spec-doc` / `--plain-list`.
+   * When present it REPLACES GitHub acquisition — `ghJson` is never called.
+   */
+  readonly sourceIssues?: readonly NormalizedIssue[];
+  /** Label for the run summary, e.g. `spec-doc (docs/spec.md)`. */
+  readonly sourceName?: string;
 }
 
 export interface QueueSummary {
@@ -465,6 +478,8 @@ export interface QueueSummary {
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
   readonly attachmentFailures: [string, string][];
   readonly prUrls: string[];
+  /** Source label (WI-3 FR-007) — set only for non-GitHub queue sources. */
+  readonly source?: string;
 }
 
 /**
@@ -490,10 +505,14 @@ export class QueueAbortedError extends Error {
  * holds the partial run — the caller prints both that and the abort reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
-  const issues = await listOpenIssues(deps, {
-    repo: input.ghRepo,
-    ...(input.label !== undefined ? { label: input.label } : {}),
-  });
+  // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
+  // dedup, triage, the cap, and the loop itself are identical from here on.
+  const issues = input.sourceIssues !== undefined
+    ? [...input.sourceIssues]
+    : await listOpenIssues(deps, {
+        repo: input.ghRepo,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+      });
   const split = await splitQueue(deps, input.repoDir, issues);
 
   // The flag is the opt-in, so triage runs at any queue size — its file-overlap
@@ -552,6 +571,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
     attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
+    ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
   for (const issue of admission.admitted) {
@@ -587,6 +607,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
 
 export function formatSummary(summary: QueueSummary): string {
   return [
+    ...(summary.source !== undefined ? [`source: ${summary.source}`] : []),
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
@@ -602,6 +623,57 @@ export function parseCap(raw: string): number {
     throw new Error(`--max-issues must be an integer >= 1 (got "${raw}")`);
   }
   return n;
+}
+
+/** A source-selection problem (combined flags, missing/unreadable file) — WI-3. */
+export class SourceSelectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SourceSelectionError";
+  }
+}
+
+export interface SourceSelection {
+  /** The pre-parsed queue — replaces GitHub acquisition entirely (FR-007). */
+  readonly issues: readonly NormalizedIssue[];
+  /** Summary label, e.g. `spec-doc (docs/spec.md)`. */
+  readonly sourceName: string;
+}
+
+/**
+ * `--spec-doc <path>` / `--plain-list <path>` (WI-3, FR-007): read and parse
+ * the named issue source at startup. Returns `undefined` when neither flag is
+ * given (the GitHub default). Parse errors from the normalizers
+ * (`SpecDocParseError`, `PlainListParseError`) propagate verbatim; everything
+ * else about the selection is a `SourceSelectionError` — all thrown before any
+ * worktree or sandbox work.
+ */
+export function parseSourceArgs(argv: readonly string[]): SourceSelection | undefined {
+  const specAt = argv.indexOf("--spec-doc");
+  const listAt = argv.indexOf("--plain-list");
+  if (specAt === -1 && listAt === -1) {
+    return undefined;
+  }
+  if (specAt !== -1 && listAt !== -1) {
+    throw new SourceSelectionError(
+      "--spec-doc and --plain-list: sources cannot be combined — pick one issue source",
+    );
+  }
+  const flag = specAt !== -1 ? "spec-doc" : "plain-list";
+  const path = specAt !== -1 ? argv[specAt + 1] : argv[listAt! + 1];
+  if (path === undefined || path.startsWith("--")) {
+    throw new SourceSelectionError(`missing --${flag} <path>`);
+  }
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    throw new SourceSelectionError(
+      `cannot read --${flag} file "${path}": ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const issues = flag === "spec-doc" ? parseSpecDoc(text) : parsePlainList(text);
+  return { issues, sourceName: `${flag} (${path})` };
 }
 
 export type OverrideOutcome =
@@ -627,7 +699,10 @@ export async function runOverrideIssue(
 // ---------------------------------------------------------------------------
 // CLI entry (WI-2: queue mode is the default; --issue N is the override):
 // npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
-//                [--max-issues <n>] [--triage] --provider <name>
+//                [--max-issues <n>] [--triage]
+//                [--spec-doc <path> | --plain-list <path>]  (WI-3: replaces
+//                GitHub issue acquisition with a pre-parsed source)
+//                --provider <name>
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -650,6 +725,9 @@ async function main(): Promise<void> {
   const cap = parseCap(optFlag("max-issues") ?? "3");
   const label = optFlag("label");
   const triage = args.includes("--triage");
+  // WI-3 (FR-007): validated and parsed before any env load, clone, worktree,
+  // or sandbox — a bad source costs nothing.
+  const source = parseSourceArgs(args);
 
   const env = loadEnv(process.cwd());
   const agent = resolveProvider(providerName, env, modelOverride);
@@ -772,7 +850,19 @@ async function main(): Promise<void> {
   try {
     emit(
       await runQueue(
-        { ghRepo, repoDir, imageName, agent, profile, ...(label !== undefined ? { label } : {}), cap, triage },
+        {
+          ghRepo,
+          repoDir,
+          imageName,
+          agent,
+          profile,
+          ...(label !== undefined ? { label } : {}),
+          cap,
+          triage,
+          ...(source !== undefined
+            ? { sourceIssues: source.issues, sourceName: source.sourceName }
+            : {}),
+        },
         allDeps,
       ),
     );

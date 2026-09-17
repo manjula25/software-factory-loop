@@ -161,6 +161,40 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
     expect(result.eligible.map((i) => i.id)).toEqual(["spec-1.2"]);
   });
 
+  it("PARITY PIN (WI-3 T5): the dedup is source-agnostic over a mixed queue — spec ids skip on a PR-body mention, stale list branches are deleted and retried", async () => {
+    // Pins current production behavior: splitQueue dedups by id token and
+    // fix/<id> branch, whatever prefix the id carries. Zero production change
+    // in this file is the point — if this test forces one, that is a plan
+    // deviation.
+    const mixed: NormalizedIssue[] = [
+      { id: "gh-1", description: "# gh one", sourceType: "github-issue" },
+      { id: "spec-camera-json", description: "# camera JSON", sourceType: "spec-doc" },
+      { id: "list-stale-pin", description: "stale pin after restart", sourceType: "plain-list" },
+    ];
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listOpenPrs: async () => [
+        { headRefName: "feature/other", body: "this PR already covers spec-camera-json" },
+      ],
+      listFixBranches: async () => ["fix/list-stale-pin"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", mixed);
+
+    expect(result.skippedDuplicate).toEqual(["spec-camera-json"]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-1", "list-stale-pin"]);
+    expect(result.staleBranchesDeleted).toEqual(["fix/list-stale-pin"]);
+    expect(localDeleted).toEqual(["fix/list-stale-pin"]);
+    expect(remoteDeleted).toEqual(["fix/list-stale-pin"]);
+  });
+
   it("aborts with QueueAcquisitionError on a PR-listing failure, deleting nothing", async () => {
     const localDeleted: string[] = [];
     const remoteDeleted: string[] = [];

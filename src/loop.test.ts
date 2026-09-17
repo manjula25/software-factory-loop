@@ -1,17 +1,20 @@
 import { mkdtemp } from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { assertNoSecrets } from "./assert-no-secrets.js";
+import { PlainListParseError, SpecDocParseError } from "./issues.js";
 import {
   LOOP_IDENTITY,
   QueueAbortedError,
+  SourceSelectionError,
   buildFixPrompt,
   buildPrBody,
   fixBranch,
   formatSummary,
   parseCap,
+  parseSourceArgs,
   reproTestPath,
   runOverrideIssue,
   runQueue,
@@ -599,6 +602,137 @@ describe("parseCap (--max-issues validation, WI-2 T4)", () => {
     expect(() => parseCap("0")).toThrow(/--max-issues/);
     expect(() => parseCap("-2")).toThrow(/--max-issues/);
     expect(() => parseCap("many")).toThrow(/--max-issues/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-3 T5: --spec-doc / --plain-list source selection (FR-007) — acquisition
+// is replaced by a preset queue, and the summary names the source.
+// ---------------------------------------------------------------------------
+
+const specIssues: NormalizedIssue[] = [
+  { id: "spec-camera-json", description: "# camera JSON", sourceType: "spec-doc" },
+  { id: "spec-cache-flush", description: "# cache flush", sourceType: "spec-doc" },
+];
+const listIssues: NormalizedIssue[] = [
+  { id: "list-stale-pin", description: "stale pin after restart", sourceType: "plain-list" },
+];
+
+describe("runQueue with a preset source (WI-3 T5, FR-007)", () => {
+  it("replaces GitHub acquisition entirely — ghJson is never called — and the summary names a spec-doc source", async () => {
+    const { deps } = makeQueueDeps({ issues: specIssues });
+
+    const summary = await runQueue(
+      queueRunInput({ sourceIssues: specIssues, sourceName: "spec-doc (docs/spec.md)" }),
+      deps,
+    );
+
+    expect(deps.ghJson).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["spec-camera-json", "spec-cache-flush"]);
+    expect(summary.fixed).toEqual(["spec-camera-json", "spec-cache-flush"]);
+    expect(formatSummary(summary)).toContain("source: spec-doc (docs/spec.md)");
+  });
+
+  it("labels a plain-list source run the same way", async () => {
+    const { deps } = makeQueueDeps({ issues: listIssues });
+
+    const summary = await runQueue(
+      queueRunInput({ sourceIssues: listIssues, sourceName: "plain-list (issues.txt)" }),
+      deps,
+    );
+
+    expect(deps.ghJson).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["list-stale-pin"]);
+    expect(formatSummary(summary)).toContain("source: plain-list (issues.txt)");
+  });
+
+  it("keeps the default GitHub path and summary shape when no source is given", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.ghJson).toHaveBeenCalledTimes(1);
+    expect(summary.source).toBeUndefined();
+    const text = formatSummary(summary);
+    expect(text.split("\n")[0]).toMatch(/^Run summary — /);
+    expect(text).not.toContain("source:");
+  });
+});
+
+describe("parseSourceArgs (--spec-doc / --plain-list selection, WI-3 T5)", () => {
+  it("returns undefined when neither flag is given — the GitHub default", () => {
+    expect(parseSourceArgs(["--repo", "owner/name", "--provider", "claude-code"])).toBeUndefined();
+  });
+
+  it("reads and parses a --spec-doc file, naming the source for the summary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-spec-"));
+    try {
+      const path = join(dir, "spec.md");
+      writeFileSync(path, "## Camera JSON\n\ncamera returns invalid json\n");
+
+      expect(parseSourceArgs(["--spec-doc", path])).toEqual({
+        issues: [
+          expect.objectContaining({ id: "spec-camera-json", sourceType: "spec-doc" }),
+        ],
+        sourceName: `spec-doc (${path})`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads and parses a --plain-list file, naming the source for the summary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-list-"));
+    try {
+      const path = join(dir, "issues.txt");
+      writeFileSync(path, "stale pin after restart | logs/pin.log\n");
+
+      expect(parseSourceArgs(["--plain-list", path])).toEqual({
+        issues: [
+          expect.objectContaining({
+            id: "list-stale-pin-after-restart",
+            sourceType: "plain-list",
+            attachedLog: "logs/pin.log",
+          }),
+        ],
+        sourceName: `plain-list (${path})`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("both flags together → startup error: sources cannot be combined", () => {
+    expect(() => parseSourceArgs(["--spec-doc", "a.md", "--plain-list", "b.txt"])).toThrow(
+      /sources cannot be combined/,
+    );
+  });
+
+  it("a flag with no path value is a startup error naming the flag", () => {
+    expect(() => parseSourceArgs(["--spec-doc"])).toThrow(/--spec-doc/);
+    expect(() => parseSourceArgs(["--plain-list", "--provider"])).toThrow(/--plain-list/);
+  });
+
+  it("an unreadable file → named error naming the path, thrown before any sandbox or worktree work", () => {
+    const missing = join(tmpdir(), "loop-t5-no-such-source-file.md");
+    const call = (): unknown => parseSourceArgs(["--spec-doc", missing]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(missing);
+  });
+
+  it("surfaces SpecDocParseError and PlainListParseError verbatim — not swallowed or re-wrapped", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-parse-"));
+    try {
+      const specPath = join(dir, "no-headings.md");
+      writeFileSync(specPath, "just prose, no section headings\n");
+      expect(() => parseSourceArgs(["--spec-doc", specPath])).toThrow(SpecDocParseError);
+
+      const listPath = join(dir, "comments-only.txt");
+      writeFileSync(listPath, "# only a comment line\n");
+      expect(() => parseSourceArgs(["--plain-list", listPath])).toThrow(PlainListParseError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
