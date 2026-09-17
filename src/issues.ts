@@ -42,3 +42,56 @@ export function normalizeGitHubIssue(issue: GitHubIssueInput): NormalizedIssue {
     ...(issue.url ? { url: issue.url } : {}),
   };
 }
+
+/** Lowercase, non-alphanumerics to `-`, collapsed and trimmed (shared slug seam). */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** A spec doc whose content has no `## ` section headings cannot yield issues. */
+export class SpecDocParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SpecDocParseError";
+  }
+}
+
+/**
+ * Parse a spec document into one `NormalizedIssue` per `## ` section (WI-3,
+ * FR-005). Sections carry the heading text verbatim until the next `## `; a
+ * `log: <path-or-url>` line inside a section binds `attachedLog` to that
+ * section only. Spec docs have no source URL.
+ */
+export function parseSpecDoc(text: string): NormalizedIssue[] {
+  const headings = [...text.matchAll(/^## (.+)$/gm)];
+  if (headings.length === 0) {
+    throw new SpecDocParseError(
+      "spec doc has no '## ' section headings — nothing to normalize into issues",
+    );
+  }
+  const seen = new Map<string, number>();
+  return headings.map((match, index) => {
+    const title = match[1];
+    const bodyStart = (match.index ?? 0) + match[0].length;
+    const bodyEnd =
+      index + 1 < headings.length
+        ? (headings[index + 1].index ?? text.length)
+        : text.length;
+    const body = text.slice(bodyStart, bodyEnd).trim();
+
+    const logMatch = body.match(/^log:\s*(\S+)\s*$/m);
+    const slug = slugify(title);
+    const count = (seen.get(slug) ?? 0) + 1;
+    seen.set(slug, count);
+
+    return {
+      id: count === 1 ? `spec-${slug}` : `spec-${slug}-${count}`,
+      description: `# ${title}\n\n${body}`.trim(),
+      ...(logMatch ? { attachedLog: logMatch[1] } : {}),
+      sourceType: "spec-doc" as const,
+    };
+  });
+}
