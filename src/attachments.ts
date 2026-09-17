@@ -146,10 +146,11 @@ export async function fetchAndStageAttachment(input: {
       const bytes = new Uint8Array(await response.arrayBuffer());
       mkdirSync(dirname(absolutePath), { recursive: true });
       writeFileSync(absolutePath, bytes);
-      // Staged bytes are inputs, never deliverables: the `.gitignore` keeps a
-      // repo-wide `git add -A` in the fix worktree from committing a client
-      // log onto the fix branch (and into the PR). Idempotent — same content
-      // rewritten on every successful stage.
+      // Staged bytes are inputs, never deliverables: the `.gitignore` guards
+      // the host working tree immediately and travels with the `.loop-harness`
+      // directory copy into the fix worktree, so a repo-wide `git add -A` on
+      // either side cannot stage them. Idempotent — same content rewritten on
+      // every successful stage.
       writeFileSync(join(dirname(absolutePath), ".gitignore"), "*\n");
       return {
         url: input.url,

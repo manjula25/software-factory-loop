@@ -656,9 +656,36 @@ describe("attachments in the loop (WI-3 T2)", () => {
       // the run completed: the guarded prompt (excerpt included) passed assertNoSecrets
       expect(outcome.prUrl).toBeTruthy();
       const fixInput = deps.runFixRun.mock.calls[0]![0] as { prompt: string; copyToWorktree?: readonly string[] };
-      expect(fixInput.copyToWorktree).toEqual([".loop-harness/attachments/gh-1/aaaa"]);
+      // T2c: the single top-level directory, not per-file stagedPaths —
+      // Sandcastle's copyToWorktree cp -R creates no dest parents.
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
       expect(fixInput.prompt).toContain("log line 1"); // excerpt head inlined
       expect(fixInput.prompt).toContain(".loop-harness/attachments/gh-1/aaaa"); // in-sandbox path
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stages one copyToWorktree entry even when multiple attachments stage (T2c)", async () => {
+    const secondUrl = "https://github.com/user-attachments/assets/bbbb";
+    const issueWithTwoAttachments: NormalizedIssue = {
+      ...issue,
+      description: `${issue.description}\n\nUploaded log: ${ATTACHMENT_URL}\nUploaded trace: ${secondUrl}`,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t2c-"));
+    try {
+      const deps = makeDeps();
+      const outcome = await runSingleIssue(
+        { issue: issueWithTwoAttachments, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy();
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { copyToWorktree?: readonly string[] };
+      // One directory entry covers every staged file — never one entry per file.
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
     } finally {
       vi.unstubAllGlobals();
       rmSync(repoDir, { recursive: true, force: true });

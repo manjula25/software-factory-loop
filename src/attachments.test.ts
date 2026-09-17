@@ -133,7 +133,7 @@ describe("fetchAndStageAttachment (T2, FR-003)", () => {
     }
   });
 
-  it("stages a .gitignore (`*` + newline) beside the bytes so a worktree-wide `git add -A` cannot stage them", async () => {
+  it("stages a .gitignore (`*` + newline) beside the bytes so a `git add -A` cannot stage them here or in the worktree the directory copy feeds", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("client log line\n")));
     const repoDir = await mkdtemp(join(tmpdir(), "loop-attachments-"));
     try {

@@ -357,7 +357,14 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     agent: input.agent,
     branch,
     name: input.issue.id,
-    ...(staged.length > 0 ? { copyToWorktree: staged.map((a) => a.stagedPath) } : {}),
+    // Copy the single top-level `.loop-harness` directory, never per-file
+    // stagedPaths: Sandcastle's copyToWorktree runs `cp -R` without creating
+    // dest parent directories, so a nested path like
+    // `.loop-harness/attachments/gh-1/aaaa` fails in a fresh worktree. The
+    // directory copy also carries the staging `.gitignore` (and the
+    // machine-local profile) into the worktree; the prompt's
+    // never-commit-anything-under-`.loop-harness/` rule is the paired defense.
+    ...(staged.length > 0 ? { copyToWorktree: [".loop-harness"] } : {}),
   });
 
   // A failed run must not leave its fix branch behind — the next run would
