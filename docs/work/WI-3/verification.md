@@ -52,3 +52,20 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `d230413`; checkpoint accepted 2026-09-17.
 - Non-claims: git-level ignore effect not exercised live (content pinned exactly);
   end-to-end "log stays out of a real PR" evidence belongs to T6.
+
+## T2c — directory-level sandbox delivery — candidate `898e7e3`
+
+- Baseline at `a3f5b41` (T2b accepted): typecheck 0; 102 tests green.
+- RED (leaf, preserved): the 2 re-pinned `copyToWorktree` expectations failed
+  (code still passed per-file nested stagedPaths).
+- Focused GREEN at candidate (controller re-verified fresh): 55/55 targeted;
+  typecheck 0; `npm test` 103/103 (102 + 1 new multi-attachment single-entry pin).
+- Specification review: **PASS**, zero blocking (adjacent: profile.json
+  prompt-only defense; cross-issue staged bytes in one worktree — both queued).
+- Code-quality review: **APPROVED**, zero critical/important; three minor
+  follow-ups (plural-premise assertion; existing-dest cp comment; `.loop-harness`
+  literal constant). Reviewer re-verified the cp -R semantics empirically and
+  confirmed Sandcastle worktrees live under `.sandcastle/` — no copy recursion.
+- Both verdicts apply to `898e7e3`; checkpoint accepted 2026-09-17.
+- Non-claims: no Docker/live copy executed here — the cp behavior is dist-verified
+  plus host-probed; live end-to-end delivery evidence belongs to T6.

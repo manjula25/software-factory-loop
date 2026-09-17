@@ -132,4 +132,47 @@ Fix: pass the top-level `.loop-harness` directory in `copyToWorktree` instead of
 per-file paths — the dest parent (worktree root) exists, and the whole dir travels,
 bringing the `.gitignore` (and the machine-local profile) with it; prompt rule still
 forbids committing anything under `.loop-harness/`. Also corrects the overstated
-comment/test naming from T2b. Full mini review cycle on its own candidate.
+comment/test naming from T2b.
+
+**T2c dispatch record.** Size XS-S (2 code lines + comments + pinned test) · risk
+medium (runtime-critical delivery path, but behavior is fully pinned at the vitest
+seam) · time budget 20m · tool budget ~15 calls · evidence boundary: vitest seam
+only — no Docker, no network; the actual cp behavior is controller-verified dist
+evidence, not re-proven here · fixed point: `a3f5b41` (typecheck 0, 102 tests).
+Intended candidate: 4 files (`src/loop.ts`, `src/loop.test.ts`, `src/attachments.ts`
+comment, `src/attachments.test.ts` test name), one commit. RED = re-pinned
+`copyToWorktree` expectations fail on current code (incl. a new multi-attachment
+single-entry pin); GREEN = `[".loop-harness"]` passed through. Full mini review
+cycle (spec then quality) on the resulting candidate identity.
+
+**T2c checkpoint.** Candidate `898e7e3` (leaf, ~15 tool calls, no deviations).
+RED: 2 tests failed on the re-pinned `copyToWorktree` expectations (per-file list
+received). GREEN (controller re-verified fresh): focused 55/55, `npm test` 103/103,
+typecheck 0. Reviews (sequential, identity `898e7e3`):
+- Specification review: **PASS**, zero blocking — FR-003 in-sandbox path preserved
+  by the directory copy, nothing-staged → nothing copied still pinned, gate/degrade
+  untouched, scope exactly the 4 authorized files.
+- Code-quality review: **APPROVED**, zero critical/important. Directed scrutiny
+  confirmed: `cp -R` claim re-verified against dist + empirical probes (nested
+  paths fail; top-level dir lands correctly); Sandcastle worktrees live under
+  `.sandcastle/worktrees/`, NOT inside `.loop-harness` — no recursion/quadratic-copy
+  hazard; copy bounded (fresh pruned worktree per run).
+- Checkpoint accepted 2026-09-17 on `898e7e3`.
+
+**T2c follow-up queue (all minor, recorded by the quality review).**
+1. Multi-attachment test doesn't pin its plural premise — `["​.loop-harness"]` is
+   true for ≥1 attachment; add `toHaveBeenCalledTimes(2)` + both-URLs assertion or
+   on-disk check for both staged files. Fold into whichever task next touches
+   `src/loop.test.ts` attachment tests.
+2. `cp -R` existing-dest nesting (`<wt>/.loop-harness/.loop-harness`) is
+   unreachable today (onboarding never commits `.loop-harness`; fix branches are
+   re-forked from main) — one comment sentence at `src/loop.ts:360` should own the
+   assumption. Same fold-in opportunity.
+3. `.loop-harness` literal hardcoded in ≥4 places (`src/attachments.ts:130`,
+   `src/loop.ts:367`, `src/loop.ts:683`, `src/loop.ts:217`) — extract a
+   `LOOP_HARNESS_DIR` constant opportunistically.
+4. (spec review) `.loop-harness/profile.json` rides the directory copy and is
+   prompt-only defended (no secrets in it today); a future `.loop-harness/.gitignore`
+   would mechanically ignore the whole dir on both sides. Also: one issue's
+   worktree receives other issues' staged bytes from the same repoDir (same repo,
+   same clearance, gitignored) — note in T6 evidence.
