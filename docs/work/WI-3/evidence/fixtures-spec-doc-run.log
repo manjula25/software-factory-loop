@@ -1,0 +1,22 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --spec-doc docs/work/WI-3/evidence/fixtures-spec-doc.md --provider claude-via-proxy
+
+[spec-titlecase-returns-all-caps-instead-of-title-case] Started on branch fix/spec-titlecase-returns-all-caps-instead-of-title-case
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-spec-titlecase-returns-all-caps-instead-of-title-case-spec-titlecase-returns-all-caps-instead-of-title-case.log
+
+Run succeeded but worktree has uncommitted changes at /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-spec-titlecase-returns-all-caps-instead-of-title-case
+  To review: cd /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-spec-titlecase-returns-all-caps-instead-of-title-case
+  To clean up: git worktree remove --force /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-spec-titlecase-returns-all-caps-instead-of-title-case
+Reusing worktree at /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-spec-titlecase-returns-all-caps-instead-of-title-case (branch 'fix/spec-titlecase-returns-all-caps-instead-of-title-case') — worktree has uncommitted changes
+remote: 
+remote: Create a pull request for 'fix/spec-titlecase-returns-all-caps-instead-of-title-case' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/spec-titlecase-returns-all-caps-instead-of-title-case        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/spec-titlecase-returns-all-caps-instead-of-title-case -> fix/spec-titlecase-returns-all-caps-instead-of-title-case
+branch 'fix/spec-titlecase-returns-all-caps-instead-of-title-case' set up to track 'origin/fix/spec-titlecase-returns-all-caps-instead-of-title-case'.
+Warning: 1 uncommitted change
+source: spec-doc (docs/work/WI-3/evidence/fixtures-spec-doc.md)
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/13

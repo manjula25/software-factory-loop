@@ -1,0 +1,20 @@
+$ npm run loop -- --repo /home/bitcot/Documents/projects/loop-fixtures-py --issue 3 --provider claude-via-proxy
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --issue 3 --provider claude-via-proxy
+
+Loop finished without a PR — Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run (recorded but not failing: tests/test_textops.py::TestWordCount::test_empty_string, tests/test_textops.py::TestWordCount::test_whitespace_runs; failing but not recorded: none). Re-run onboarding..
+
+(exit 1)
+
+---
+[Recorder note, 2026-09-17] Verbatim capture of the first attempt, saved before the
+retry reused the same output path. Notable: the attachment WAS fetched and staged
+before the abort (384 bytes at .loop-harness/attachments/gh-3/loopfix-issue3-session.log),
+so FR-003 fetch-before-preflight is evidenced even by the aborted attempt.
+Root cause of the abort: fixtures main had moved (PR #11 merged the gh-10 word_count
+fix on 2026-09-15) while the profile still recorded those two tests as baseline
+failures. Remediation (harness-prescribed): re-ran `npx tsx scripts/onboard.ts
+<fixtures> --confidentiality-cleared` — Docker-only, zero LLM API spend; new baseline
+= 1 failure (TestTitlecase::test_capitalizes_each_word). The successful retry is in
+fixtures-attachment-gh-3.log.

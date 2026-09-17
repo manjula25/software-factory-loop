@@ -1,0 +1,5 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --issue 3 --provider claude-via-proxy
+
+Loop finished without a PR — /home/bitcot/Documents/projects/loop-fixtures-py: issue references 1 attachment(s), but the repo is not cleared for third-party AI APIs. Either clear the repo (re-run onboarding with --confidentiality-cleared) or drop the attachment from the issue.
