@@ -659,8 +659,21 @@ export function parseSourceArgs(argv: readonly string[]): SourceSelection | unde
       "--spec-doc and --plain-list: sources cannot be combined — pick one issue source",
     );
   }
+  // A preset source replaces GitHub acquisition entirely, so the GitHub-only
+  // flags would be silently ignored (T5 review: loud, never silent).
+  if (argv.includes("--issue")) {
+    throw new SourceSelectionError(
+      "--issue cannot be combined with --spec-doc/--plain-list — the source file replaces GitHub acquisition",
+    );
+  }
+  if (argv.includes("--label")) {
+    throw new SourceSelectionError(
+      "--label cannot be combined with --spec-doc/--plain-list — labels only filter GitHub acquisition",
+    );
+  }
   const flag = specAt !== -1 ? "spec-doc" : "plain-list";
-  const path = specAt !== -1 ? argv[specAt + 1] : argv[listAt! + 1];
+  const at = specAt !== -1 ? specAt : listAt;
+  const path = argv[at + 1];
   if (path === undefined || path.startsWith("--")) {
     throw new SourceSelectionError(`missing --${flag} <path>`);
   }
@@ -703,6 +716,8 @@ export async function runOverrideIssue(
 //                [--spec-doc <path> | --plain-list <path>]  (WI-3: replaces
 //                GitHub issue acquisition with a pre-parsed source)
 //                --provider <name>
+// --issue and --label are GitHub-source-only: combining either with
+// --spec-doc/--plain-list is a startup error (WI-3 T5b).
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {

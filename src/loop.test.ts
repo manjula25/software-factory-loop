@@ -713,6 +713,35 @@ describe("parseSourceArgs (--spec-doc / --plain-list selection, WI-3 T5)", () =>
     expect(() => parseSourceArgs(["--plain-list", "--provider"])).toThrow(/--plain-list/);
   });
 
+  it("`--issue` combined with a source flag is a startup error naming both flags", () => {
+    const realistic = [
+      "--repo",
+      "owner/name",
+      "--spec-doc",
+      "a.md",
+      "--issue",
+      "3",
+      "--provider",
+      "claude-code",
+    ];
+    expect(() => parseSourceArgs(realistic)).toThrow(
+      /--issue cannot be combined with --spec-doc\/--plain-list/,
+    );
+    const call = (): unknown => parseSourceArgs(["--plain-list", "b.txt", "--issue", "3"]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(/--issue cannot be combined/);
+  });
+
+  it("`--label` combined with a source flag is a startup error naming both flags", () => {
+    const call = (): unknown =>
+      parseSourceArgs(["--repo", "owner/name", "--label", "bug", "--plain-list", "b.txt"]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(/--label cannot be combined with --spec-doc\/--plain-list/);
+    expect(() => parseSourceArgs(["--spec-doc", "a.md", "--label", "bug"])).toThrow(
+      /--label cannot be combined/,
+    );
+  });
+
   it("an unreadable file → named error naming the path, thrown before any sandbox or worktree work", () => {
     const missing = join(tmpdir(), "loop-t5-no-such-source-file.md");
     const call = (): unknown => parseSourceArgs(["--spec-doc", missing]);
