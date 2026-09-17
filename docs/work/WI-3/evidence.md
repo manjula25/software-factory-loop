@@ -36,8 +36,9 @@ closes, or edits a PR.**
   the retained regression test `tests/fixed-issues/test_gh_3.py`. PR opened:
   https://github.com/manjula25/loop-fixtures-py/pull/12
 - PR-body confidentiality check: PASS — the body contains only issue link, RED reproduction
-  output, and verification summary; **no attachment content and not even the attachment URL**
-  (grep for `user-attachments|loopfix-issue3-session|32143084` = 0 matches).
+  output, and verification summary; **no attachment URL or filename appears**
+  (grep for `user-attachments|loopfix-issue3-session|32143084` = 0 matches; content absence
+  is inferred from the body containing nothing beyond the elements listed).
 - Log: `evidence/fixtures-attachment-gh-3.log` (verbatim run output).
 - Observed, non-blocking: CLI printed `Run succeeded but worktree has uncommitted changes …`
   and a final `Warning: 1 uncommitted change`. Inspected: the only uncommitted entry in the fix
@@ -69,5 +70,6 @@ closes, or edits a PR.**
 
 ## Spend
 
-Live fix runs spent: **3 total** (step 2 attempt 1 aborted pre-fix with no LLM spend; step 2
-attempt 2; step 3). Within the cap. Step 1 and the onboarding re-run spent nothing.
+Live fix runs: **3 total — 2 with LLM spend** (step 2 attempt 1 aborted pre-fix with no LLM
+spend; step 2 attempt 2; step 3). Within the cap. Step 1 and the onboarding re-run spent
+nothing.

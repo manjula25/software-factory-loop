@@ -355,3 +355,79 @@ Reviews (sequential, identity `c12749e`):
   Mutation-reasoning confirmed both tests fail if their rejection is removed;
   `at` cleanup traced behavior-identical.
 - Checkpoint accepted 2026-09-17 on `c12749e`.
+
+## Task 6 — T6: Live evidence runs (FR-002/FR-003/FR-008, pipeline integration)
+
+**Dispatch record.** Size M (pipeline integration; zero source changes) · risk
+medium-high (real API spend, real PRs on manjula25/loop-fixtures-py) · time
+budget 120m · tool budget ~40 calls · evidence boundary: live Docker + live
+network + real PRs, hard-capped at 3 live fix runs, PRs never merged · fixed
+point: `ec3e7f0` (typecheck 0, 126 tests).
+
+**Controller-verified preconditions.** Image `sandcastle-loop:latest` present;
+fixtures clone at `/home/bitcot/Documents/projects/loop-fixtures-py` (clean,
+remote manjula25/loop-fixtures-py); profile exists with `confidentialityCleared`
+ABSENT (the exact precondition step 1 needs — no temporary edit required);
+provider env keys present (values never read into evidence). Issue 3 carries a
+real `user-attachments` log link. Safety rails in the brief: never merge/close
+PRs; no bitcot-repo git; no blind retries (one retry max, then report); env
+values never echoed; attachment evidence records byte size only, never content;
+PR body checked for absence of attachment content.
+
+**T6 result (candidate `080b90f`).** All three steps PASS:
+1. Gate refusal — exact `ConfidentialityGateError` message, exit 1, zero spend,
+   no fetch, no sandbox (profile was already uncleared — no edit needed).
+2. Live attachment — 384 bytes staged under
+   `<fixtures>/.loop-harness/attachments/gh-3/`, fix commit `6aea681`,
+   **PR #12** on `fix/gh-3`; PR body checked clean (0 matches for
+   attachment URL/content). One pre-fix abort (zero LLM spend): stale profile
+   after fixtures main moved (PR #11 merged the gh-10 fix) — remediated via the
+   harness's own prescribed re-onboarding (`--confidentiality-cleared`).
+3. Spec-doc end-to-end — `source: spec-doc (...)` in summary, fixed: 1,
+   **PR #13** on `fix/spec-titlecase-…`; PR body clean.
+
+Both PRs OPEN, awaiting human review — never merged by the harness.
+
+**T6 observed deviations (recorded, none blocking).**
+- Worktree needed the untracked `.env` copied from the main checkout (chmod
+  600, never echoed, uncommitted) — environment artifact of running the CLI
+  from the worktree.
+- Cross-source dedup non-interaction: the spec-doc run was NOT deduped against
+  open PR #12 for the same underlying bug — ids differ by design (dedup is by
+  issue/branch identity). A human should merge one of #12/#13 and close the
+  other; recorded in evidence.md.
+- **`.loop-harness/.loop-harness/` nested untracked dir in the fix worktree**
+  (the CLI's cleanliness check warned about it). Corroborates the T2c quality
+  review's minor 2 (`cp -R` existing-dest nesting) as REACHABLE, not
+  unreachable — controller re-read the dist: copyToWorktree fires once per
+  `run()` at worktree creation, so the second copy's origin is not statically
+  obvious. Delivery itself worked (fix agent saw the log; fix landed). Queued
+  for a `diagnosing-bugs` pass before any next live-run milestone.
+
+**T6 follow-up queue.**
+1. Diagnose the nested `.loop-harness/.loop-harness/` artifact (double-copy or
+   dest-exists path); until then expect the harmless cleanliness warning on
+   attachment runs.
+2. Cross-source duplicate PRs (#12/#13, same bug) — product-level question for
+   a future grilling: dedup by bug identity vs by issue id.
+
+**T6 reviews + checkpoint.** Reviews (sequential, identity `080b90f`):
+- Specification review: **PASS**, zero blocking — live read-only cross-checks
+  of PRs #12/#13 (OPEN, never merged), fix commit `6aea681`, staged 384-byte
+  attachments, PR-body cleanliness; deviations recorded honestly; constraints
+  honored.
+- Code-quality review: **APPROVED**, zero critical/important — log fidelity
+  authenticated by source cross-checks (incl. the genuine "Re-run onboarding.."
+  double period traced to `src/loop.ts:343+354`); confidentiality sweep clean;
+  evidence.md audit-sufficient. Three wording/fidelity minors.
+- Checkpoint accepted 2026-09-17 on `080b90f`.
+
+**Post-checkpoint amendment (controller, non-behavioral docs wording).** The
+three quality minors applied to the evidence artifacts after checkpoint
+acceptance: recorder annotations (`$` command line, `(exit 1)`) moved below
+the `---` delimiter in the attempt-1 log; evidence.md spend line now reads
+"3 total — 2 with LLM spend"; the PR-body check wording distinguishes the
+grep-proven URL/filename absence from the inferred content absence. Applied as
+a docs-only follow-up commit rather than a candidate change + full review
+rerun — the branch-level `code-review` gate ahead covers these files; recorded
+here so the amendment is visible.

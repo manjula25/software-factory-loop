@@ -135,3 +135,27 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `c12749e`; checkpoint accepted 2026-09-17.
 - Non-claims: error-precedence when `--repo` is also missing (pre-existing
   ordering, out of scope).
+
+## Task 6 (T6) — live evidence runs — candidate `080b90f`
+
+- Baseline at `ec3e7f0` (T5b accepted): typecheck 0; 126 tests green.
+- Step 1 gate refusal (FR-002): PASS — exact ConfidentialityGateError message,
+  exit 1, zero spend, no fetch, no sandbox. Log preserved verbatim.
+- Step 2 live attachment (FR-003): PASS — 384 bytes staged (content never
+  recorded), fix commit `6aea681` on `fix/gh-3` with retained regression test,
+  PR #12 opened (OPEN, unmerged); PR body free of attachment URL/content.
+  One pre-fix abort (zero LLM spend) from a stale profile — remediated via
+  harness-prescribed re-onboarding; abort log preserved.
+- Step 3 spec-doc end-to-end (FR-008): PASS — `source: spec-doc (...)` in the
+  verbatim summary, fixed: 1, PR #13 on `fix/spec-titlecase-…`; PR body clean.
+- Specification review: **PASS**, zero blocking (live read-only cross-checks
+  of PRs, commit, staged files; deviations recorded honestly).
+- Code-quality review: **APPROVED**, zero critical/important (log fidelity
+  source-authenticated; confidentiality sweep clean; three wording minors).
+- Both verdicts apply to `080b90f`; checkpoint accepted 2026-09-17. A
+  post-checkpoint docs-only amendment applied the three wording minors
+  (recorded in implementation-notes; covered by the branch-level review gates).
+- Non-claims: excerpt-in-prompt is unit-seam evidence + indirect live
+  corroboration (correct fix matching the attachment-described symptom);
+  `.loop-harness/.loop-harness/` nesting artifact undiagnosed (follow-up
+  queued); PRs #12/#13 await human review — the harness never merges.
