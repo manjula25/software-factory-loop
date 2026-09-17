@@ -878,3 +878,91 @@ describe("attachments in the loop (WI-3 T2)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-3 T7 (two-axis review fix): the plain-list normalizer moves the
+// `| <value>` suffix out of the description into attachedLog — the discovery
+// scan must include it, or the URL reaches the prompt ungated and unfetched.
+// ---------------------------------------------------------------------------
+
+const PLAIN_LIST_URL = "https://github.com/user-attachments/assets/cccc";
+const PLAIN_LIST_BODY = Array.from({ length: 3 }, (_, i) => `pin log ${i + 1}`).join("\n");
+const plainListAttachmentIssue: NormalizedIssue = {
+  id: "list-login-fails",
+  description: "login fails after restart", // no URL here — it lives in the suffix
+  attachedLog: PLAIN_LIST_URL,
+  sourceType: "plain-list",
+};
+
+describe("plain-list suffix attachments join discovery (WI-3 T7)", () => {
+  it("gates an uncleared plain-list issue whose attachment URL lives in the `| <value>` suffix — zero spend, no PR", async () => {
+    const deps = makeDeps();
+
+    const outcome = await runSingleIssue(
+      { issue: plainListAttachmentIssue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, // uncleared
+      deps,
+    );
+
+    expect(outcome.prUrl).toBeUndefined();
+    expect(outcome.failure).toContain("clear the repo");
+    expect(outcome.failureKind).toBeUndefined(); // issue-level: the queue continues
+    expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // zero API spend
+    expect(deps.createPr).not.toHaveBeenCalled();
+  });
+
+  it("fetches and stages the suffix URL when cleared — excerpt in the prompt, staged path in the sandbox", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(PLAIN_LIST_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t7-"));
+    try {
+      const deps = makeDeps({
+        preflight: issueSandbox(plainListAttachmentIssue, BASELINE_SUITE),
+        sandbox: issueSandbox(plainListAttachmentIssue, SUITE_AFTER_FIX),
+      });
+
+      const outcome = await runSingleIssue(
+        { issue: plainListAttachmentIssue, repoDir, imageName: "sandcastle-loop", agent, profile: { ...profile, confidentialityCleared: true } },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy();
+      expect(fetch).toHaveBeenCalledWith(PLAIN_LIST_URL, expect.anything());
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { prompt: string; copyToWorktree?: readonly string[] };
+      expect(fixInput.prompt).toContain("pin log 1"); // excerpt inlined
+      expect(fixInput.prompt).toContain(".loop-harness/attachments/list-login-fails/cccc");
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  // PIN (expected green now): FR-001's scan for GitHub issues reads the
+  // description only — attachedLog is fenced log content, deliberately unscanned.
+  it("PIN: a GitHub attachedLog (fenced log content) carrying a URL is still not discovered", async () => {
+    const fetchSpy = vi.fn(async () => new Response("should never be fetched"));
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const githubLogUrlIssue: NormalizedIssue = {
+        id: "gh-42",
+        description: "# crash on export", // no URL in the description
+        attachedLog: `trace: ${ATTACHMENT_URL}`,
+        sourceType: "github-issue",
+      };
+      const deps = makeDeps({
+        preflight: issueSandbox(githubLogUrlIssue, BASELINE_SUITE),
+        sandbox: issueSandbox(githubLogUrlIssue, SUITE_AFTER_FIX),
+      });
+
+      const outcome = await runSingleIssue(
+        { issue: githubLogUrlIssue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, // uncleared
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy(); // no gate refusal: nothing was discovered
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

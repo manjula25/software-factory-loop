@@ -280,7 +280,19 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   // never spends a container or an API call on an attachment-carrying issue.
   // The refusal is issue-level (no failureKind): the queue continues, because
   // attachment-free issues in the same repo are governed by the WI-1/WI-2 seam.
-  const attachmentUrls = discoverAttachmentUrls(input.issue.description);
+  //
+  // Scan input: the description, extended with the plain-list `| <value>`
+  // suffix — the plain-list normalizer moves it out of the description into
+  // attachedLog, so a description-only scan would let that URL reach the
+  // prompt ungated (and never fetch it when cleared). The other sources stay
+  // description-only: a spec-doc `log:` URL already stays in the description
+  // (scanning its attachedLog too would double-discover the same URL), and a
+  // GitHub issue's attachedLog is fenced log content, which FR-001
+  // deliberately does not scan.
+  const scanText = input.issue.sourceType === "plain-list" && input.issue.attachedLog !== undefined
+    ? `${input.issue.description}\n${input.issue.attachedLog}`
+    : input.issue.description;
+  const attachmentUrls = discoverAttachmentUrls(scanText);
   try {
     assertClearedForAttachments(input.profile, attachmentUrls, input.repoDir);
   } catch (error) {
