@@ -59,3 +59,58 @@ plan scopes those cases to Task 2's `loop.test.ts`.
   FR-001 criterion — record only.
 - Revisit `TRAILING_PUNCTUATION` only if a real user-attachment URL ever ends in a
   stripped character (asset IDs today do not).
+
+## Task 2 — T2: Attachment fetch, delivery, loud degrade (FR-003, FR-004; FR-002 wired)
+
+**Dispatch record.** Size M-L · risk medium (core `runSingleIssue` path + `QueueSummary`
+shape) · time budget 60m (used ~11m leaf) · evidence boundary: vitest seam with
+`vi.stubGlobal("fetch")`; no Docker/network/CLI · fixed point: 87 tests + typecheck 0 at
+`bfde1f5`/`2f740b7` · intended candidate: 5 files, commit per plan.
+
+**Candidate identity.** `e5523d9` — leaf's five files, no controller amendments needed
+(both leaf-flagged judgment calls accepted after direct inspection, below).
+
+**TDD evidence.** RED: `npx vitest run src/attachments.test.ts src/loop.test.ts` →
+exactly the 12 new cases failed (39 pre-existing passed); preserved in leaf report.
+One wrong-reason RED (callback-style `mkdtemp` import) fixed in the test before the
+final RED run. GREEN: same command 51/51. Focused verification at candidate:
+typecheck 0; `npm test` 10 files / 99 tests.
+
+**Controller inspection findings.** Gate refusal sits before `assertNoSecrets`/preflight
+(zero spend, no `failureKind` → queue continues); per-URL failure isolation; excerpt
+rides the existing prompt guard; `copyToWorktree` conditional; fetch-failure `reason`
+strings never emitted (only the URL).
+
+**Leaf deviations accepted by controller.**
+1. `buildAttachmentExcerpt(content, stagedPath)` — the pinned separator names the
+   full-file path, so the path parameter is required; plan's "(no parameter)" meant no
+   line-count parameter (ponytail rec 3's intent).
+2. Manual 3xx re-fetch in `fetchAndStageAttachment` (cap 5 hops) — inert under real
+   `fetch` (native follow never surfaces 3xx); exists so FR-003's hop-level no-auth
+   criterion is observable under a stub. No headers are set on any hop either way.
+3. Environment artifact: leaf symlinked worktree `node_modules` → main checkout's
+   (gitignored; resolution would find the parent's anyway — harmless).
+
+**Reviews (sequential, identity `e5523d9`).**
+- Specification review: **PASS** — zero blocking; adjacent: excerpt head/tail overlap
+  for 21–40-line content, trailing-newline line count, extension-less basenames from
+  asset-id URLs (identical basenames would overwrite — spec silent), lossy excerpt
+  decode (bytes on disk unaffected).
+- Code-quality review: **APPROVED** — zero critical. Two important adjacent findings:
+  1. **Attachment bytes could ride the PR**: staged bytes land in the fix worktree and
+     the prompt says "Commit everything" — an agent resolving that as `git add -A`
+     commits the client log onto `fix/<id>` and pushes it to GitHub. A third-party
+     transmission the AI-API clearance doesn't cover. Follow-up: gitignore
+     `.loop-harness/attachments/` at onboarding and/or tighten the prompt's commit
+     instruction. Queued as **T2b** (see below), recommended before T6's live runs.
+  2. `new URL(input.url)` sits outside the try in `fetchAndStageAttachment` — latent
+     contract disagreement ("Never throws"); unreachable via discovery's regex.
+- Minor: exactly-20-lines-with-trailing-newline doesn't pass verbatim (honest degraded
+  output, full file always staged).
+
+**Checkpoint accepted** — both sequential reviews on identity `e5523d9`.
+
+**T2b follow-up (proposed, owner decision pending).** One small commit-cycle task:
+tighten the fix-prompt commit instruction to name `.loop-harness/` as never-committed,
+move `new URL` inside the try, and write a `.loop-harness/attachments/.gitignore`
+(`*`) at staging time. Full mini review cycle (spec + quality) on its own candidate.
