@@ -1,3 +1,7 @@
+import { mkdtemp } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import {
@@ -580,5 +584,92 @@ describe("parseCap (--max-issues validation, WI-2 T4)", () => {
     expect(() => parseCap("0")).toThrow(/--max-issues/);
     expect(() => parseCap("-2")).toThrow(/--max-issues/);
     expect(() => parseCap("many")).toThrow(/--max-issues/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-3 T2: attachment fetch, sandbox delivery, loud degrade (FR-003/FR-004).
+// LoopDeps gains no new member — fetching is intercepted via the global fetch.
+// ---------------------------------------------------------------------------
+
+const ATTACHMENT_URL = "https://github.com/user-attachments/assets/aaaa";
+const ATTACHMENT_BODY = Array.from({ length: 5 }, (_, i) => `log line ${i + 1}`).join("\n");
+
+describe("attachments in the loop (WI-3 T2)", () => {
+  const issueWithAttachment: NormalizedIssue = {
+    ...issue,
+    description: `${issue.description}\n\nUploaded log: ${ATTACHMENT_URL}`,
+  };
+  const clearedProfile: ProjectProfile = { ...profile, confidentialityCleared: true };
+
+  it("refuses an uncleared issue with an attachment before any sandbox or agent spend (FR-002)", async () => {
+    const deps = makeDeps();
+    const outcome = await runSingleIssue(
+      { issue: issueWithAttachment, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.prUrl).toBeUndefined();
+    expect(outcome.branch).toBe("fix/gh-1");
+    expect(outcome.failure).toContain("clear the repo"); // the gate's own message
+    expect(outcome.failureKind).toBeUndefined(); // issue-level: the queue continues
+    expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // zero API spend
+  });
+
+  it("gate refusal is issue-level — the queue continues with issues that carry no attachments", async () => {
+    const { deps } = makeQueueDeps({ issues: [issueWithAttachment, queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ profile }), deps); // uncleared profile
+
+    expect(summary.failed).toHaveLength(1);
+    expect(summary.failed[0]![0]).toBe("gh-1");
+    expect(summary.failed[0]![1]).toContain("clear the repo");
+    expect(summary.fixed).toEqual(["gh-2"]); // the attachment-free issue still ran
+  });
+
+  it("delivers a cleared attachment into the sandbox and inlines the excerpt (FR-003)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t2-"));
+    try {
+      const deps = makeDeps();
+      const outcome = await runSingleIssue(
+        { issue: issueWithAttachment, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      // the run completed: the guarded prompt (excerpt included) passed assertNoSecrets
+      expect(outcome.prUrl).toBeTruthy();
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { prompt: string; copyToWorktree?: readonly string[] };
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness/attachments/gh-1/aaaa"]);
+      expect(fixInput.prompt).toContain("log line 1"); // excerpt head inlined
+      expect(fixInput.prompt).toContain(".loop-harness/attachments/gh-1/aaaa"); // in-sandbox path
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("degrades loudly on a failed fetch: the run proceeds and summary + PR body name the URL (FR-004)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("gone", { status: 404 })));
+    try {
+      const { deps } = makeQueueDeps({ issues: [issueWithAttachment] });
+
+      const summary = await runQueue(queueRunInput({ profile: clearedProfile }), deps);
+
+      expect(summary.fixed).toEqual(["gh-1"]); // the issue still ran and fixed
+      expect(formatSummary(summary)).toContain(`ATTACHMENT FAILED gh-1: ${ATTACHMENT_URL}`);
+      const body = (deps.createPr.mock.calls[0]![0] as unknown as { body: string }).body;
+      expect(body).toContain(`attachment fetch failed: ${ATTACHMENT_URL}`);
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as unknown as {
+        prompt: string;
+        copyToWorktree?: readonly string[];
+      };
+      expect(fixInput.prompt).toContain("expected but unavailable");
+      expect(fixInput.prompt).toContain(ATTACHMENT_URL);
+      expect(fixInput.copyToWorktree).toBeUndefined(); // nothing staged, nothing copied
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

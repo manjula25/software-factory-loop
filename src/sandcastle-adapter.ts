@@ -89,6 +89,8 @@ export interface FixRunInput {
   readonly baseBranch?: string;
   /** Optional name for the run, used as a log prefix. */
   readonly name?: string;
+  /** Repo-relative paths copied into the worktree before the run (attachments). */
+  readonly copyToWorktree?: readonly string[];
 }
 
 /** Run one AFK fix iteration in a Docker sandbox, commits landing on `branch`. */
@@ -104,6 +106,7 @@ export async function runFixRun(input: FixRunInput): Promise<FixRunOutcome> {
       branch: input.branch,
       ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     } satisfies NamedBranchStrategy,
+    ...(input.copyToWorktree ? { copyToWorktree: [...input.copyToWorktree] } : {}),
   });
   return {
     stdout: result.stdout,

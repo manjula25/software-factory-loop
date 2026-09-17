@@ -7,6 +7,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  assertClearedForAttachments,
+  ConfidentialityGateError,
+  discoverAttachmentUrls,
+  fetchAndStageAttachment,
+  type StagedAttachment,
+} from "./attachments.js";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import { loadEnv, readEnvFile } from "./env.js";
 import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
@@ -68,6 +75,7 @@ export interface LoopDeps {
     agent: AgentSpec;
     branch: string;
     name?: string;
+    copyToWorktree?: readonly string[];
   }): Promise<{ stdout: string; commits: readonly { sha: string }[]; branch: string }>;
   createFixSandbox(input: {
     cwd: string;
@@ -112,6 +120,11 @@ export interface LoopOutcome {
    */
   readonly failureKind?: "harness";
   readonly newFailures?: readonly string[];
+  /**
+   * Attachment URLs whose fetch failed (FR-004) — an input-quality note, never
+   * a verification failure. Recorded loudly wherever the issue is reported.
+   */
+  readonly attachmentFailures?: readonly string[];
 }
 
 /** Deterministic home for the reproduction test (constraint 4: it stays in the suite). */
@@ -155,13 +168,38 @@ function extractEvidence(stdout: string, tag: "red" | "green"): string {
   return stdout.slice(start + open.length, end).trim();
 }
 
-export function buildFixPrompt(issue: NormalizedIssue, profile: ProjectProfile): string {
+/** Attachment material for the fix prompt (FR-003/FR-004): excerpts + misses. */
+export interface PromptAttachments {
+  readonly staged: readonly StagedAttachment[];
+  readonly failedUrls: readonly string[];
+}
+
+function buildAttachmentSection(attachments: PromptAttachments): string {
+  if (attachments.staged.length === 0 && attachments.failedUrls.length === 0) {
+    return "";
+  }
+  return `\n## Attachments from the issue report\n\n${[
+    ...attachments.staged.map(
+      (a) =>
+        `Full file fetched into the repo at \`${a.stagedPath}\` (read the rest there):\n\n\`\`\`\n${a.excerpt}\n\`\`\``,
+    ),
+    ...attachments.failedUrls.map(
+      (url) => `- attachment expected but unavailable: ${url} (attachment fetch failed)`,
+    ),
+  ].join("\n\n")}\n`;
+}
+
+export function buildFixPrompt(
+  issue: NormalizedIssue,
+  profile: ProjectProfile,
+  attachments?: PromptAttachments,
+): string {
   return `You are fixing one reported issue in this repository.
 
 ## The issue (${issue.id})
 
 ${issue.description}
-${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.attachedLog}\n\`\`\`\n` : ""}
+${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.attachedLog}\n\`\`\`\n` : ""}${attachments ? buildAttachmentSection(attachments) : ""}
 ## How to work in this repo (recorded at onboarding — use these exact commands)
 
 - install: ${profile.installCmd}
@@ -198,8 +236,12 @@ export function buildPrBody(
   redEvidence: string,
   greenEvidence: string,
   verification: { passed: boolean; newFailures: readonly string[] },
+  attachmentFailures?: readonly string[],
 ): string {
   const symptomLine = `Symptom mapping: issue ${issue.id} reported "${issue.description.split("\n")[0].replace(/^#\s*/, "")}" — reproduced by \`${reproTestPath(issue)}\` failing exactly that way, now passing.`;
+  const attachmentNote = (attachmentFailures ?? []).length > 0
+    ? `\n${attachmentFailures!.map((url) => `attachment fetch failed: ${url}`).join("\n")}\n`
+    : "";
   return `Automated fix for issue ${issue.id}${issue.url ? ` (${issue.url})` : ""}.
 
 The reproduction test is retained in the suite at \`${reproTestPath(issue)}\`.
@@ -215,7 +257,7 @@ ${redEvidence}
 \`\`\`
 ${greenEvidence}
 \`\`\`
-
+${attachmentNote}
 ${symptomLine}
 
 Independent verification in a fresh sandbox: reproduction test passed; full-suite diff versus
@@ -226,9 +268,41 @@ A human reviews and merges this — please judge whether the reproduced symptom 
 
 export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): Promise<LoopOutcome> {
   const branch = fixBranch(input.issue);
-  const prompt = buildFixPrompt(input.issue, input.profile);
 
-  // FR-003: everything we emit is checked before it leaves the harness.
+  // FR-002: the gate refuses BEFORE the preflight sandbox — an uncleared repo
+  // never spends a container or an API call on an attachment-carrying issue.
+  // The refusal is issue-level (no failureKind): the queue continues, because
+  // attachment-free issues in the same repo are governed by the WI-1/WI-2 seam.
+  const attachmentUrls = discoverAttachmentUrls(input.issue.description);
+  try {
+    assertClearedForAttachments(input.profile, attachmentUrls, input.repoDir);
+  } catch (error) {
+    if (!(error instanceof ConfidentialityGateError)) {
+      throw error;
+    }
+    return { branch, failure: error.message };
+  }
+  // FR-003/FR-004: fetch what the report uploaded. A failed URL never blocks
+  // the others and never blocks the issue — it is recorded loudly instead.
+  const staged: StagedAttachment[] = [];
+  const attachmentFailures: string[] = [];
+  for (const url of attachmentUrls) {
+    const result = await fetchAndStageAttachment({
+      url,
+      repoDir: input.repoDir,
+      issueId: input.issue.id,
+    });
+    if ("failed" in result) {
+      attachmentFailures.push(result.failed);
+    } else {
+      staged.push(result);
+    }
+  }
+
+  const prompt = buildFixPrompt(input.issue, input.profile, { staged, failedUrls: attachmentFailures });
+
+  // FR-003: everything we emit is checked before it leaves the harness. The
+  // excerpt sits inside the prompt, so it is guarded with no new wiring.
   assertNoSecrets([prompt], deps.env);
 
   // Baseline preflight (FR-104 staleness rule): the recorded baseline must
@@ -282,13 +356,19 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     agent: input.agent,
     branch,
     name: input.issue.id,
+    ...(staged.length > 0 ? { copyToWorktree: staged.map((a) => a.stagedPath) } : {}),
   });
 
   // A failed run must not leave its fix branch behind — the next run would
   // trip over it (attempt-5/6 lesson).
   const fail = async (reason: string, newFailures?: readonly string[]): Promise<LoopOutcome> => {
     await deps.deleteBranch(input.repoDir, branch);
-    return { branch, failure: reason, ...(newFailures ? { newFailures } : {}) };
+    return {
+      branch,
+      failure: reason,
+      ...(newFailures ? { newFailures } : {}),
+      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    };
   };
 
   if (fix.commits.length === 0) {
@@ -333,11 +413,15 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     }
 
     const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-    const body = buildPrBody(input.issue, redEvidence, greenEvidence, verification);
+    const body = buildPrBody(input.issue, redEvidence, greenEvidence, verification, attachmentFailures);
     assertNoSecrets([title, body], deps.env);
 
     const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-    return { branch, prUrl: pr.url };
+    return {
+      branch,
+      prUrl: pr.url,
+      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    };
   } finally {
     await sandbox.close();
   }
@@ -370,6 +454,8 @@ export interface QueueSummary {
   readonly skippedDuplicate: string[];
   /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
   readonly notAdmitted: [string, string][];
+  /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
+  readonly attachmentFailures: [string, string][];
   readonly prUrls: string[];
 }
 
@@ -448,6 +534,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const attempted: string[] = [];
   const fixed: string[] = [];
   const failed: [string, string][] = [];
+  const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
@@ -455,6 +542,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     failed: [...failed],
     skippedDuplicate: split.skippedDuplicate,
     notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
   });
 
@@ -470,6 +558,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       deps,
     );
     attempted.push(issue.id);
+    for (const url of outcome.attachmentFailures ?? []) {
+      attachmentFailures.push([issue.id, url]);
+    }
     if (outcome.prUrl) {
       fixed.push(issue.id);
       prUrls.push(outcome.prUrl);
@@ -491,6 +582,7 @@ export function formatSummary(summary: QueueSummary): string {
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
+    ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
     ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
   ].join("\n");
 }
