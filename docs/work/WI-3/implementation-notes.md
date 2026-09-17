@@ -230,3 +230,54 @@ logic). GREEN: focused 8/8; controller re-verified fresh: typecheck 0,
    unnecessary `as const` at line 94 — cosmetic.
 8. (quality) `slugify` JSDoc should state ASCII-only + may-return-empty before
    T4 feeds it arbitrary user lines (both feed recorded gaps 1/4).
+
+## Task 4 — T4: Plain-list normalizer (FR-006)
+
+**Dispatch record.** Size S-M (2 files, additive) · risk low (pure functions; no
+wiring until T5) · time budget 30m · tool budget ~15 calls · evidence boundary:
+vitest unit seam only · fixed point: `e5eb378` (typecheck 0, 108 tests).
+Intended candidate: `src/issues.ts` + `src/issues.test.ts` (`PlainListParseError`,
+`parsePlainList`), one commit. Brief = plan Task 4 verbatim, plus two
+controller-directed doc amendments folded in from the T3 review record (follow-ups
+5 and 8: the `NormalizedIssue.attachedLog` interface comment now covers all three
+sources; `slugify` JSDoc states ASCII-only / may-return-empty).
+
+**Candidate identity.** `edbe2cb` — leaf's two files incl. both authorized doc
+amendments; no controller amendments. One leaf self-correction pre-RED (fixture
+value contained a space the single-token suffix regex cannot bind; fixed the
+fixture, not the regex — correct call, the regex is the plan-pinned contract).
+
+**TDD evidence.** RED: 5 new cases failed on missing exports. GREEN: focused
+13/13; controller re-verified fresh: typecheck 0, `npm test` 113/113 (108 + 5).
+
+**Reviews (sequential, identity `edbe2cb`).**
+- Specification review: **PASS**, zero blocking — loud-failure semantics pinned
+  with `expect.unreachable`; opaque suffix pinned with URL + Windows-path
+  fixtures; scope clean (existing code byte-identical apart from the two
+  authorized doc amendments).
+- Code-quality review: **APPROVED**, zero critical/important. Slice-index
+  correctness verified; duplication judgment: copy-with-two-call-sites is right
+  per the ponytail ladder. Four minors → follow-up queue.
+
+**Checkpoint accepted** — both sequential reviews on identity `edbe2cb`
+(2026-09-17).
+
+**T4 follow-up queue (adjacent, not silent scope).**
+1. (quality, minor) Spacing asymmetry: `foo |  ./logs/a.log` (two spaces after
+   pipe) passes both the trailing-pipe guard and the exact-single-space suffix
+   regex silently — single-token value, only delimiter spacing differs.
+   Possible `\s+\|\s+(\S+)$` relaxation or grilling on whether exact-single-space
+   is contract.
+2. (quality, minor) `PlainListParseError` JSDoc covers only the empty-input
+   throw site, not the trailing-pipe one.
+3. (quality, advisory for T5/FR-007) Slug/suffix id ambiguity compounding T3
+   follow-up 1: `list-foo-bar-2` is produced both by a duplicate line and by a
+   distinct "Foo Bar 2" line — cross-run dedup can false-positive; slug output
+   can never contain `--`, so a `--2` separator would be collision-proof if T5
+   finds this bites.
+4. (quality, nit) First T4 test name says "GitHub-issue entry shape" — the
+   shape is the shared `NormalizedIssue`.
+5. (spec) Multi-word suffix values (`foo | bar baz`) fall through silently —
+   in-contract (spec disclaims quoting), noted for real-world field reports.
+6. (spec) Empty-slug ids (`list-`, `list--2`) in-contract; odd-looking branch
+   names downstream.

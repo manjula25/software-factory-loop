@@ -85,3 +85,20 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `352cbb9`; checkpoint accepted 2026-09-17.
 - Non-claims: `parseSpecDoc` not yet wired into any source-selection path
   (Task 5); no file I/O (takes text; reading is T5's job); no Docker.
+
+## Task 4 (T4) — plain-list normalizer — candidate `edbe2cb`
+
+- Baseline at `e5eb378` (T3 accepted): typecheck 0; 108 tests green.
+- RED (leaf, preserved): 5 new cases failed on missing exports
+  (`parsePlainList` not a function; `PlainListParseError` undefined).
+- Focused GREEN at candidate (controller re-verified fresh): 13/13 in
+  `src/issues.test.ts`; typecheck 0; `npm test` 10 files / 113 tests.
+- Specification review: **PASS**, zero blocking (adjacent: no literal
+  cross-normalizer comparison — defensible, vacuous for plain lists;
+  multi-word suffix fallthrough; empty-slug ids; guard position).
+- Code-quality review: **APPROVED**, zero critical/important (four minors:
+  delimiter-spacing asymmetry; error-class JSDoc; slug/suffix ambiguity
+  advisory for T5; test-name nit — queued).
+- Both verdicts apply to `edbe2cb`; checkpoint accepted 2026-09-17.
+- Non-claims: `parsePlainList` not yet wired into any source-selection path
+  (Task 5); no file I/O; no Docker.
