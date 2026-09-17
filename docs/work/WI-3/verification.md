@@ -102,3 +102,20 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `edbe2cb`; checkpoint accepted 2026-09-17.
 - Non-claims: `parsePlainList` not yet wired into any source-selection path
   (Task 5); no file I/O; no Docker.
+
+## Task 5 (T5) — source selection + queue parity — candidate `322bc00`
+
+- Baseline at `25c3ce8` (T4 accepted): typecheck 0; 113 tests green.
+- RED (leaf, preserved): 8 failed on missing exports/behavior; 2 passed
+  immediately as expected (queue parity pin against untouched `src/queue.ts`;
+  GitHub-default guard).
+- Focused GREEN at candidate (controller re-verified fresh): 63/63 across
+  `src/loop.test.ts` + `src/queue.test.ts`; typecheck 0; `npm test` 124/124.
+- Specification review: **PASS**, zero blocking (adjacent: `--`-path rejection;
+  repeated-flag first-wins; T6 owns pipeline evidence).
+- Code-quality review: **APPROVED**, zero critical/important (four minors:
+  `--issue`+source and `--label`+source silent-ignore → promoted to T5b;
+  no-op `!` assertion; CLI-reachable parse-error message note — queued).
+- Both verdicts apply to `322bc00`; checkpoint accepted 2026-09-17.
+- Non-claims: no live CLI execution, no Docker, no real file reads beyond test
+  fixtures; `--issue`/`--label` combination handling deferred to T5b.

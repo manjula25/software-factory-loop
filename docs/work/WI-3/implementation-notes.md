@@ -281,3 +281,62 @@ fixture, not the regex — correct call, the regex is the plan-pinned contract).
    in-contract (spec disclaims quoting), noted for real-world field reports.
 6. (spec) Empty-slug ids (`list-`, `list--2`) in-contract; odd-looking branch
    names downstream.
+
+## Task 5 — T5: Source selection + queue parity (FR-007, FR-008)
+
+**Dispatch record.** Size M (2 src edits expected in `src/loop.ts` only + 2 test
+files) · risk medium (touches `runQueue`/`main()` wiring; `src/queue.ts`
+explicitly expected to need ZERO production change — leaf instructed to stop and
+report rather than touch it) · time budget 45m · tool budget ~20 calls ·
+evidence boundary: vitest seam only — no Docker, no network, no live CLI run ·
+fixed point: `25c3ce8` (typecheck 0, 113 tests). Brief = plan Task 5 verbatim;
+the queue parity case is explicitly framed as a pin (expected-green against
+current `src/queue.ts:138` dedup), not a RED case. Carried advisories in scope
+of judgment (not mandatory): T4 follow-up 3 / T3 follow-up 1 slug-suffix id
+ambiguity — if T5's dedup tests surface it as a real false-positive, report,
+don't fix.
+
+**Candidate identity.** `322bc00` — leaf's three files (src/queue.ts untouched,
+as required); one recorded deviation: `parseSourceArgs` runs before env load /
+clone (plan said after profile load) — strictly earlier, spec-review judged
+stricter-not-weaker.
+
+**TDD evidence.** RED: 8 failed on missing exports/behavior (parseSourceArgs
+suite + acquisition-replacement suite); 2 passed immediately as expected —
+the queue parity pin and the GitHub-default guard. GREEN: focused 63/63;
+controller re-verified fresh: typecheck 0, `npm test` 124/124 (113 + 11).
+
+**Reviews (sequential, identity `322bc00`).**
+- Specification review: **PASS**, zero blocking — parity pinned end-to-end
+  (ghJson never called + downstream chain ran over spec/list ids); every FR-008
+  error case pinned; GitHub default byte-identical; empty-source chain safe
+  (parsers throw before an empty array can exist).
+- Code-quality review: **APPROVED**, zero critical/important. Error-message
+  hygiene traced clean (fs errors carry errno+path only; parse runs before env
+  exists in scope; summary sourceName flows through `emit` → assertNoSecrets).
+  Parity pin confirmed to exercise production `splitQueue`. Four minors →
+  follow-up queue; findings 1–2 promoted to **T5b** (below).
+
+**Checkpoint accepted** — both sequential reviews on identity `322bc00`
+(2026-09-17).
+
+**T5 follow-up queue (adjacent).**
+1. (quality, → **T5b**) `--issue N` + a source flag: source silently ignored on
+   the override path. Fix: reject the combination (mirrors "sources cannot be
+   combined").
+2. (quality, → **T5b**) `--label` + a source flag: label only feeds the skipped
+   GitHub acquisition — silently ignored. Fix: reject the combination.
+3. (quality, minor) No-op `listAt!` non-null assertion in `parseSourceArgs` —
+   `const at = specAt !== -1 ? specAt : listAt` removes it.
+4. (quality, note) `PlainListParseError` malformed-entry message interpolates
+   one operator file line, now CLI-reachable — local console only, no
+   confidentiality breach; T6 should know it exists.
+5. (spec) `--`-prefixed path values rejected as missing-value (defensible);
+   repeated flag first-wins (implementation detail).
+
+**T5b follow-up (controller-initiated, pre-T6).** Findings 1–2 are
+silent-ignore combinations an operator can type in good faith — the exact
+silent-degradation class FR-008 exists to prevent — and T6's live runs drive
+this CLI directly. Small task: reject `--issue`+source and `--label`+source
+with `SourceSelectionError` (loud, named), plus tests; fold in finding 3
+(assertion cleanup) opportunistically. Full mini review cycle.
