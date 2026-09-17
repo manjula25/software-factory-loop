@@ -50,6 +50,12 @@ export interface ProjectProfile {
   /** Failures a clean checkout already has — the repo is born red. */
   readonly baselineFailures: readonly string[];
   readonly expectedDurationSec: number;
+  /**
+   * Human assertion from onboarding (`--confidentiality-cleared`): Bitcot's
+   * policy permits sending this repo's data to a third-party AI API. Absent
+   * means not cleared — attachment URLs then trip the confidentiality gate.
+   */
+  readonly confidentialityCleared?: boolean;
 }
 
 /** Seam the loop runs on — the adapter plus PR creation, stubbed in tests. */

@@ -28,6 +28,8 @@ ingestion) are implemented in `src/`, under vitest, with a committed Docker sand
 | `src/queue.ts` | Acquisition, dedup against open PRs and stale branches, capped admission, triage parsing |
 | `src/sandcastle-adapter.ts` | The **only** file permitted to import `@ai-hero/sandcastle` — a boundary test enforces this |
 | `src/issues.ts`, `src/verify.ts` | Issue normalization; the verification gate over fresh-sandbox output |
+| `src/attachments.ts` | Attachment-URL discovery in issue bodies and the `confidentialityCleared` gate (WI-3) |
+| `src/onboard-profile.ts` | Onboarding argv parsing + project-profile shaping, incl. the clearance flag (WI-3) |
 | `src/assert-no-secrets.ts`, `src/env.ts` | The confidentiality seam every emitted string passes through |
 
 There is still **no lint step** — do not invent one. The authoritative command list lives in
