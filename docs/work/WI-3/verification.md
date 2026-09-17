@@ -159,3 +159,63 @@ names the candidate identity the evidence applies to.
   corroboration (correct fix matching the attachment-described symptom);
   `.loop-harness/.loop-harness/` nesting artifact undiagnosed (follow-up
   queued); PRs #12/#13 await human review — the harness never merges.
+
+## WI-3 completion verification — final branch state `da1af05` (2026-09-17)
+
+**Claim under test.** WI-3's eight FRs (attachment fetching FR-001–004,
+non-GitHub sources FR-005–008) are implemented and evidenced on branch
+`worktree-wi-3`; all nine checkpoints (T1, T2, T2b, T2c, T3, T4, T5, T5b, T6)
+passed sequential spec + quality reviews on pinned identities; the branch is
+green and clean.
+
+**Fresh proving commands (run 2026-09-17 against exactly `da1af05`).**
+- `git rev-parse HEAD` → `da1af05…`; `git status --short` → empty (clean
+  tree); branch `worktree-wi-3`.
+- `git log --oneline bacb85a..HEAD` → 19 commits: 9 code/evidence checkpoints
+  each followed by its evidence commit — every checkpoint's reviewed identity
+  is in the chain (bfde1f5, e5523d9, d230413, 898e7e3, 352cbb9, edbe2cb,
+  322bc00, c12749e, 080b90f).
+- `git diff --name-only bacb85a..HEAD` → 20 files, all accounted for:
+  `src/attachments.{ts,test.ts}`, `src/issues.{ts,test.ts}`,
+  `src/loop.{ts,test.ts}`, `src/onboard-profile.{ts,test.ts}`,
+  `src/queue.test.ts`, `src/sandcastle-adapter.ts`, `scripts/onboard.ts`,
+  `CLAUDE.md` (module-table rows, per its same-PR rule), and
+  `docs/work/WI-3/*` evidence. Nothing under `.loop-harness/`, no `.env`,
+  no stray paths.
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 126 tests passed, exit 0 (baseline at branch point:
+  72 tests — net +54 permanent reproduction/pinning tests).
+- `gh pr list --repo manjula25/loop-fixtures-py --state open` → #12
+  (`fix/gh-3`) and #13 (`fix/spec-titlecase-…`) both OPEN, `mergedAt: null` —
+  external evidence that the never-auto-merge constraint held through the live
+  runs.
+
+**Evidence classification.** Unit (vitest, 126 tests) + runtime (three live
+Docker runs in T6, logs preserved) + external read-only (PR states, re-checked
+fresh above) + human (pending: review/merge of PRs #12/#13 — outside harness
+authority by design).
+
+**Prior unknowns — reconciliation.**
+- CLOSED: copyToWorktree nested-path failure (T2c: dist-verified, fixed,
+  live-run corroborated); staging `.gitignore` never reaching the worktree
+  (T2c directory copy — live run clean); attachment bytes riding the PR (T2b
+  guardrail + T6 live PR-body greps = 0 matches on both PRs).
+- DEFERRED with effect and owner (all recorded in implementation-notes
+  follow-up queues): `.loop-harness/.loop-harness/` worktree artifact —
+  harmless untracked-dir warning, owner: `diagnosing-bugs` pass before the
+  next live-run milestone; slug/suffix id collision (`spec-foo-2` ambiguity)
+  — owner: grilling before FR-007 dedup is relied on across sources;
+  delimiter-spacing asymmetry, excerpt overlap 21–40 lines, trailing-newline
+  count, extension-less basenames, empty-slug ids — cosmetic/in-contract,
+  owner: recorded follow-ups.
+
+**Remaining risks.** None material to the claim. The two open fixtures PRs
+(#12/#13) fix the same bug from two sources — a human must merge one and
+close the other; until then the fixtures repo carries a duplicate fix.
+
+**Non-claims.** No live run against any client repo (fixtures are synthetic,
+operator-owned); no plain-list live run (FR-006 is unit-pinned; its selection
+path is identical to the spec-doc path live-proven in T6); no measurement of
+provider cost in currency (run counts only); excerpt-in-prompt verified at the
+unit seam, not from live prompt capture (prompt content is never recorded by
+design).
