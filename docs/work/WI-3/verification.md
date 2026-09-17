@@ -69,3 +69,19 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `898e7e3`; checkpoint accepted 2026-09-17.
 - Non-claims: no Docker/live copy executed here — the cp behavior is dist-verified
   plus host-probed; live end-to-end delivery evidence belongs to T6.
+
+## Task 3 (T3) — spec-doc normalizer — candidate `352cbb9`
+
+- Baseline at `6be392a` (T2c accepted): typecheck 0; 103 tests green.
+- RED (leaf, preserved): 5 new cases failed on missing exports (`parseSpecDoc`
+  not a function; `slugify`/`SpecDocParseError` undefined) — not assertion logic.
+- Focused GREEN at candidate (controller re-verified fresh): 8/8 in
+  `src/issues.test.ts`; typecheck 0; `npm test` 10 files / 108 tests.
+- Specification review: **PASS**, zero blocking (adjacent: slug/suffix id
+  collision; `## ` in fences; preamble dropped; empty-slug edge — queued).
+- Code-quality review: **APPROVED**, zero critical/important (three minors:
+  stale `attachedLog` interface doc — folded into T4; lax `log:` regex docs;
+  dead `??` fallbacks / `as const` — queued).
+- Both verdicts apply to `352cbb9`; checkpoint accepted 2026-09-17.
+- Non-claims: `parseSpecDoc` not yet wired into any source-selection path
+  (Task 5); no file I/O (takes text; reading is T5's job); no Docker.

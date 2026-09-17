@@ -176,3 +176,57 @@ typecheck 0. Reviews (sequential, identity `898e7e3`):
    would mechanically ignore the whole dir on both sides. Also: one issue's
    worktree receives other issues' staged bytes from the same repoDir (same repo,
    same clearance, gitignored) — note in T6 evidence.
+
+## Task 3 — T3: Spec-doc normalizer (FR-005)
+
+**Dispatch record.** Size S-M (2 files, additive to `src/issues.ts`) · risk low
+(new pure functions; no loop/queue wiring until T5) · time budget 30m · tool
+budget ~15 calls · evidence boundary: vitest unit seam only — no file I/O, no
+Docker, no CLI · fixed point: `6be392a` (typecheck 0, 103 tests). Intended
+candidate: `src/issues.ts` + `src/issues.test.ts` (`slugify`, `SpecDocParseError`,
+`parseSpecDoc`), one commit. Brief = plan Task 3 verbatim plus
+style/type-alignment instructions (`NormalizedIssue` shape, title-prefix parity
+with `normalizeGitHubIssue` at `src/issues.ts:39`).
+
+**Candidate identity.** `352cbb9` — leaf's two files, no controller amendments.
+One RED-to-GREEN iteration inside the leaf (body slice began with the heading's
+trailing newline → double blank line vs the GitHub shape; fixed by `.trim()` on
+the sliced body — edges only, interior verbatim, pinned by exact-equality tests).
+
+**TDD evidence.** RED: 5 new cases failed on missing exports (not assertion
+logic). GREEN: focused 8/8; controller re-verified fresh: typecheck 0,
+`npm test` 108/108 (103 + 5).
+
+**Reviews (sequential, identity `352cbb9`).**
+- Specification review: **PASS**, zero blocking — shape parity verified
+  field-by-field against a live `normalizeGitHubIssue` entry (incl. `url` key
+  absence via `in` checks); `###`-only non-match verified empirically; collision
+  counter extends mechanically to `-3`; scope purely additive.
+- Code-quality review: **APPROVED**, zero critical/important. Test strength
+  confirmed (no wrong-reason greens; property-omission pinned via `in`);
+  `matchAll` stateless per call; `.trim()` honestly exercised. Three minors →
+  follow-up queue.
+
+**Checkpoint accepted** — both sequential reviews on identity `352cbb9`
+(2026-09-17).
+
+**T3 follow-up queue (adjacent, not silent scope).**
+1. (spec) Slug/suffix id collision: `## Foo`, `## Foo`, `## Foo 2` → two
+   `spec-foo-2` ids. Spec-level gap in FR-005's literal scheme; resolve before
+   FR-007 dedup consumes these ids in T5 (grilling note if it matters).
+2. (spec) `## ` inside a fenced code block splits sections (regex has no fence
+   awareness); plan prescribes the regex, spec non-claims say fences are
+   description text — tension recorded.
+3. (spec) Non-`log:` preamble before the first `##` is silently dropped (only the
+   `log:` preamble ignore is pinned).
+4. (spec) All-non-alphanumeric title → empty slug → id `spec-`.
+5. (quality, minor) `NormalizedIssue.attachedLog` interface doc still says
+   "largest fenced block" — true only for github issues now. One-line fix folded
+   into T4's brief (same file).
+6. (quality, minor) `log:` regex `\s*` spans newlines (path on next line binds)
+   and first-wins silently across multiple `log:` lines — benign; either document
+   "first `log:` line wins" + pin, or tighten to same-line.
+7. (quality, minor) Dead `??` fallbacks at `src/issues.ts:78,81` and
+   unnecessary `as const` at line 94 — cosmetic.
+8. (quality) `slugify` JSDoc should state ASCII-only + may-return-empty before
+   T4 feeds it arbitrary user lines (both feed recorded gaps 1/4).
