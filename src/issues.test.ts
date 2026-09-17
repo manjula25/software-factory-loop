@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeGitHubIssue,
+  parsePlainList,
   parseSpecDoc,
+  PlainListParseError,
   slugify,
   SpecDocParseError,
 } from "./issues.js";
@@ -171,5 +173,78 @@ describe("spec-doc normalization (WI-3, FR-005)", () => {
     expect(verbatim.description).toBe(
       "# Verbatim section\n\nBody line 1.\nBody line 2 with   odd   spacing.\n\nlog: ./logs/v.txt",
     );
+  });
+});
+
+describe("plain-list normalization (WI-3, FR-006)", () => {
+  const threeEntryList = [
+    "# Known issues from the field",
+    "",
+    "Camera JSON overwrite | ./logs/b.log",
+    "# interjected comment",
+    "Export hangs on empty timeline | https://github.com/user-attachments/assets/y",
+    "Docs typo",
+  ].join("\n");
+
+  it("normalizes each entry line to the GitHub-issue entry shape", () => {
+    const entries = parsePlainList(threeEntryList);
+    expect(entries).toHaveLength(3);
+
+    const [camera, exportHangs, docsTypo] = entries;
+    expect(camera.id).toBe("list-camera-json-overwrite");
+    expect(camera.description).toBe("Camera JSON overwrite");
+    expect(camera.attachedLog).toBe("./logs/b.log");
+    expect(camera.sourceType).toBe("plain-list");
+    expect("url" in camera).toBe(false);
+
+    expect(exportHangs.id).toBe("list-export-hangs-on-empty-timeline");
+    expect(exportHangs.description).toBe("Export hangs on empty timeline");
+    expect(exportHangs.attachedLog).toBe("https://github.com/user-attachments/assets/y");
+    expect("url" in exportHangs).toBe(false);
+
+    // Present-iff-bound: an entry line without a `| ` suffix has no attachedLog.
+    expect(docsTypo.id).toBe("list-docs-typo");
+    expect(docsTypo.description).toBe("Docs typo");
+    expect("attachedLog" in docsTypo).toBe(false);
+    expect("url" in docsTypo).toBe(false);
+  });
+
+  it("slugifies entry text and disambiguates duplicate lines with a counter", () => {
+    const entries = parsePlainList("Camera JSON overwrite\n\nCamera JSON overwrite\n");
+    expect(entries.map((e) => e.id)).toEqual([
+      "list-camera-json-overwrite",
+      "list-camera-json-overwrite-2",
+    ]);
+  });
+
+  it("throws PlainListParseError on comments-only and empty text", () => {
+    for (const text of ["# only a comment\n\n# another one\n", "", "   \n\n"]) {
+      try {
+        parsePlainList(text);
+        expect.unreachable("expected PlainListParseError");
+      } catch (err) {
+        expect(err).toBeInstanceOf(PlainListParseError);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as PlainListParseError).name).toBe("PlainListParseError");
+        expect((err as Error).message).toContain("plain list");
+      }
+    }
+  });
+
+  it("throws PlainListParseError on a trailing pipe with no value — never silently drops it", () => {
+    try {
+      parsePlainList("good entry\nDocs typo |");
+      expect.unreachable("expected PlainListParseError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(PlainListParseError);
+      expect((err as Error).message).toContain("Docs typo |");
+    }
+  });
+
+  it("strips the | suffix from the description and keeps the value verbatim in attachedLog", () => {
+    // Opaque single-token value: a Windows path — no scheme, no existence check.
+    const [entry] = parsePlainList("Windows path log | C:\\logs\\win.txt");
+    expect(entry.description).toBe("Windows path log");
+    expect(entry.attachedLog).toBe("C:\\logs\\win.txt");
   });
 });
