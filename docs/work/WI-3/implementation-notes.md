@@ -110,7 +110,26 @@ strings never emitted (only the URL).
 
 **Checkpoint accepted** — both sequential reviews on identity `e5523d9`.
 
-**T2b follow-up (proposed, owner decision pending).** One small commit-cycle task:
-tighten the fix-prompt commit instruction to name `.loop-harness/` as never-committed,
-move `new URL` inside the try, and write a `.loop-harness/attachments/.gitignore`
-(`*`) at staging time. Full mini review cycle (spec + quality) on its own candidate.
+**T2b follow-up (owner approved 2026-09-17, "do it now").** Tighten the fix-prompt
+commit instruction to name `.loop-harness/` as never-committed, move `new URL` inside
+the try, and write a `.loop-harness/attachments/<id>/.gitignore` (`*`) at staging
+time. Dispatched size S / risk low / 20m budget (used ~30m).
+
+- RED: 3 new cases failed as predicted (ENOENT .gitignore; malformed-URL throw; old
+  prompt text). GREEN: 54/54 targeted, 102/102 full, typecheck 0.
+- Candidate `d230413`; spec review **PASS**, quality review **APPROVED** — both on
+  `d230413`; checkpoint accepted 2026-09-17. Evidence in `verification.md`.
+
+**T2c follow-up (controller-initiated, runtime-blocking for T6).** The T2b quality
+review flagged two attachment-delivery issues the controller verified against the
+pinned `@ai-hero/sandcastle@0.12.0` dist (`chunk-VOG34SRF.js`, `copyToWorktree`):
+1. `cp -R src dest` creates no dest parent directories — our nested stagedPaths
+   (`.loop-harness/attachments/<id>/<file>`) would fail the fix run at copy time.
+2. The staging `.gitignore` never reached the fix worktree (only explicit stagedPaths
+   were copied), so the in-worktree defense was prompt-only.
+
+Fix: pass the top-level `.loop-harness` directory in `copyToWorktree` instead of
+per-file paths — the dest parent (worktree root) exists, and the whole dir travels,
+bringing the `.gitignore` (and the machine-local profile) with it; prompt rule still
+forbids committing anything under `.loop-harness/`. Also corrects the overstated
+comment/test naming from T2b. Full mini review cycle on its own candidate.

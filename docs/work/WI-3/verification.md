@@ -34,3 +34,21 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `e5523d9`; checkpoint accepted 2026-09-17.
 - Non-claims: no live fetch, no Docker, no CLI (Task 6); real-fetch 3xx inertness is
   reasoned (native follow), not executed.
+
+## T2b — confidentiality guardrail — candidate `d230413`
+
+- Baseline at `733303c` (T2 accepted): typecheck 0; 99 tests green.
+- RED (leaf, preserved): exactly the 3 new cases failed (ENOENT on .gitignore,
+  malformed-URL throw, prompt still "Commit everything").
+- Focused GREEN at candidate: 54/54 targeted; typecheck 0; `npm test` 102/102.
+- Specification review: **PASS**, zero blocking (adjacent: `git add -f` bypass with
+  prompt as paired defense — accepted; no `!.gitignore` negation — intended).
+- Code-quality review: **APPROVED**, zero critical; one important adjacent finding
+  (the .gitignore never reaches the fix worktree — copyToWorktree lists explicit
+  stagedPaths only) and one unverified runtime concern: Sandcastle's copyToWorktree
+  `cp -R` creates no dest parents → nested stagedPaths may fail the fix run.
+  Controller verified the cp claim against the pinned dist and confirmed it real.
+  Both folded into **T2c** (see implementation notes).
+- Both verdicts apply to `d230413`; checkpoint accepted 2026-09-17.
+- Non-claims: git-level ignore effect not exercised live (content pinned exactly);
+  end-to-end "log stays out of a real PR" evidence belongs to T6.
