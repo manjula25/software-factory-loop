@@ -133,6 +133,19 @@ describe("fetchAndStageAttachment (T2, FR-003)", () => {
     }
   });
 
+  it("stages a .gitignore (`*` + newline) beside the bytes so a worktree-wide `git add -A` cannot stage them", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("client log line\n")));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-attachments-"));
+    try {
+      const result = await fetchAndStageAttachment({ url: A, repoDir, issueId: "gh-3" });
+      expect(result).toMatchObject({ url: A });
+      const gitignore = await readFile(join(repoDir, ".loop-harness", "attachments", "gh-3", ".gitignore"), "utf8");
+      expect(gitignore).toBe("*\n");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("never sends an Authorization header on the initial request or any redirect hop", async () => {
     const redirectTarget = "https://objects.githubusercontent.com/assets/aaaa";
     const fetchStub = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
@@ -185,6 +198,17 @@ describe("fetchAndStageAttachment degrade (T2, FR-004)", () => {
       const result = await fetchAndStageAttachment({ url: A, repoDir, issueId: "gh-3" });
       expect(result).toMatchObject({ failed: A });
       expect((result as { reason: string }).reason).toContain("ENOTFOUND");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves to { failed, reason } — never throws — on a malformed URL", async () => {
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-attachments-"));
+    try {
+      const result = await fetchAndStageAttachment({ url: "not a url", repoDir, issueId: "gh-3" });
+      expect("failed" in result).toBe(true);
+      expect(result).toMatchObject({ failed: "not a url" });
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

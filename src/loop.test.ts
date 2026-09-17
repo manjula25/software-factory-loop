@@ -133,6 +133,21 @@ describe("buildFixPrompt (FR-005, FR-103)", () => {
     expect(prompt).toContain("<red-evidence>");
     expect(prompt).toContain("<green-evidence>");
   });
+
+  it("with staged attachments, instructs the agent to commit only the fix and test — never anything under .loop-harness/", () => {
+    const prompt = buildFixPrompt(issue, profile, {
+      staged: [
+        {
+          url: "https://github.com/user-attachments/assets/aaaa",
+          stagedPath: ".loop-harness/attachments/gh-1/aaaa",
+          excerpt: "log line 1",
+        },
+      ],
+      failedUrls: [],
+    });
+    expect(prompt).toMatch(/commit only the fix and the reproduction test/i);
+    expect(prompt).toContain("`.loop-harness/`");
+  });
 });
 
 describe("runSingleIssue", () => {

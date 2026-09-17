@@ -123,10 +123,12 @@ export async function fetchAndStageAttachment(input: {
   readonly repoDir: string;
   readonly issueId: string;
 }): Promise<StagedAttachment | AttachmentFetchFailure> {
-  const fileName = basename(new URL(input.url).pathname);
-  const stagedPath = `.loop-harness/attachments/${input.issueId}/${fileName}`;
-  const absolutePath = join(input.repoDir, stagedPath);
   try {
+    // Inside the try on purpose: a malformed URL must degrade to a failure
+    // result like every other fetch error, per the "Never throws" contract.
+    const fileName = basename(new URL(input.url).pathname);
+    const stagedPath = `.loop-harness/attachments/${input.issueId}/${fileName}`;
+    const absolutePath = join(input.repoDir, stagedPath);
     let target = input.url;
     // A stubbed or manual 3xx surfaces here as a response, so redirects are
     // re-issued explicitly (real fetch follows them natively and never does).
@@ -144,6 +146,11 @@ export async function fetchAndStageAttachment(input: {
       const bytes = new Uint8Array(await response.arrayBuffer());
       mkdirSync(dirname(absolutePath), { recursive: true });
       writeFileSync(absolutePath, bytes);
+      // Staged bytes are inputs, never deliverables: the `.gitignore` keeps a
+      // repo-wide `git add -A` in the fix worktree from committing a client
+      // log onto the fix branch (and into the PR). Idempotent — same content
+      // rewritten on every successful stage.
+      writeFileSync(join(dirname(absolutePath), ".gitignore"), "*\n");
       return {
         url: input.url,
         stagedPath,

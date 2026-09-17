@@ -214,7 +214,8 @@ ${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.atta
    other open issues' symptoms).
 3. Re-run your reproduction test and the full suite. The suite has known pre-existing failures;
    your fix must clear yours without adding any new failure.
-4. Commit everything — fix and reproduction test together — with the machine identity:
+4. Commit only the fix and the reproduction test — never anything under \`.loop-harness/\` —
+   with the machine identity:
 
    git config user.name ${LOOP_IDENTITY.name}
    git config user.email ${LOOP_IDENTITY.email}
