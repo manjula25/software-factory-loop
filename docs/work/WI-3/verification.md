@@ -119,3 +119,19 @@ names the candidate identity the evidence applies to.
 - Both verdicts apply to `322bc00`; checkpoint accepted 2026-09-17.
 - Non-claims: no live CLI execution, no Docker, no real file reads beyond test
   fixtures; `--issue`/`--label` combination handling deferred to T5b.
+
+## T5b — reject `--issue`/`--label` + source flag — candidate `c12749e`
+
+- Baseline at `cc95f83` (T5 accepted): typecheck 0; 124 tests green.
+- RED (leaf, preserved): the 2 new combination tests failed (the `--label` one
+  via the silent-ignore fallthrough — ENOENT on the never-read file).
+- Focused GREEN at candidate (controller re-verified fresh): 45/45 in
+  `src/loop.test.ts`; typecheck 0; `npm test` 10 files / 126 tests.
+- Leaf also verified a realistic full-argv CLI invocation
+  (`--repo … --spec-doc a.md --issue 3 --provider …`) exits with the
+  SourceSelectionError.
+- Specification review: **PASS**, zero blocking. Code-quality review:
+  **APPROVED**, zero findings at every severity.
+- Both verdicts apply to `c12749e`; checkpoint accepted 2026-09-17.
+- Non-claims: error-precedence when `--repo` is also missing (pre-existing
+  ordering, out of scope).

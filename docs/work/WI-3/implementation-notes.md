@@ -340,3 +340,18 @@ silent-degradation class FR-008 exists to prevent — and T6's live runs drive
 this CLI directly. Small task: reject `--issue`+source and `--label`+source
 with `SourceSelectionError` (loud, named), plus tests; fold in finding 3
 (assertion cleanup) opportunistically. Full mini review cycle.
+
+**T5b checkpoint.** Candidate `c12749e` (leaf, ~14 tool calls, no deviations;
+checks landed inside `parseSourceArgs` — main() passes full argv, so no
+signature refactor needed; leaf confirmed a realistic full-argv CLI invocation
+exits with the error). RED: 2 new cases failed (the `--label` one failed via
+the silent-ignore fallthrough itself — ENOENT on the unread file). GREEN
+(controller re-verified fresh): focused 45/45, `npm test` 126/126, typecheck 0.
+Reviews (sequential, identity `c12749e`):
+- Specification review: **PASS**, zero blocking (adjacent: no-source-flag side
+  pinned only generically; error-precedence edge when `--issue` occupies the
+  path slot — both benign).
+- Code-quality review: **APPROVED**, zero findings at every severity.
+  Mutation-reasoning confirmed both tests fail if their rejection is removed;
+  `at` cleanup traced behavior-identical.
+- Checkpoint accepted 2026-09-17 on `c12749e`.
