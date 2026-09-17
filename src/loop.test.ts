@@ -1,13 +1,20 @@
+import { mkdtemp } from "node:fs/promises";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { assertNoSecrets } from "./assert-no-secrets.js";
+import { PlainListParseError, SpecDocParseError } from "./issues.js";
 import {
   LOOP_IDENTITY,
   QueueAbortedError,
+  SourceSelectionError,
   buildFixPrompt,
   buildPrBody,
   fixBranch,
   formatSummary,
   parseCap,
+  parseSourceArgs,
   reproTestPath,
   runOverrideIssue,
   runQueue,
@@ -128,6 +135,21 @@ describe("buildFixPrompt (FR-005, FR-103)", () => {
     expect(prompt).toContain(LOOP_IDENTITY.email);
     expect(prompt).toContain("<red-evidence>");
     expect(prompt).toContain("<green-evidence>");
+  });
+
+  it("with staged attachments, instructs the agent to commit only the fix and test — never anything under .loop-harness/", () => {
+    const prompt = buildFixPrompt(issue, profile, {
+      staged: [
+        {
+          url: "https://github.com/user-attachments/assets/aaaa",
+          stagedPath: ".loop-harness/attachments/gh-1/aaaa",
+          excerpt: "log line 1",
+        },
+      ],
+      failedUrls: [],
+    });
+    expect(prompt).toMatch(/commit only the fix and the reproduction test/i);
+    expect(prompt).toContain("`.loop-harness/`");
   });
 });
 
@@ -580,5 +602,367 @@ describe("parseCap (--max-issues validation, WI-2 T4)", () => {
     expect(() => parseCap("0")).toThrow(/--max-issues/);
     expect(() => parseCap("-2")).toThrow(/--max-issues/);
     expect(() => parseCap("many")).toThrow(/--max-issues/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-3 T5: --spec-doc / --plain-list source selection (FR-007) — acquisition
+// is replaced by a preset queue, and the summary names the source.
+// ---------------------------------------------------------------------------
+
+const specIssues: NormalizedIssue[] = [
+  { id: "spec-camera-json", description: "# camera JSON", sourceType: "spec-doc" },
+  { id: "spec-cache-flush", description: "# cache flush", sourceType: "spec-doc" },
+];
+const listIssues: NormalizedIssue[] = [
+  { id: "list-stale-pin", description: "stale pin after restart", sourceType: "plain-list" },
+];
+
+describe("runQueue with a preset source (WI-3 T5, FR-007)", () => {
+  it("replaces GitHub acquisition entirely — ghJson is never called — and the summary names a spec-doc source", async () => {
+    const { deps } = makeQueueDeps({ issues: specIssues });
+
+    const summary = await runQueue(
+      queueRunInput({ sourceIssues: specIssues, sourceName: "spec-doc (docs/spec.md)" }),
+      deps,
+    );
+
+    expect(deps.ghJson).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["spec-camera-json", "spec-cache-flush"]);
+    expect(summary.fixed).toEqual(["spec-camera-json", "spec-cache-flush"]);
+    expect(formatSummary(summary)).toContain("source: spec-doc (docs/spec.md)");
+  });
+
+  it("labels a plain-list source run the same way", async () => {
+    const { deps } = makeQueueDeps({ issues: listIssues });
+
+    const summary = await runQueue(
+      queueRunInput({ sourceIssues: listIssues, sourceName: "plain-list (issues.txt)" }),
+      deps,
+    );
+
+    expect(deps.ghJson).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["list-stale-pin"]);
+    expect(formatSummary(summary)).toContain("source: plain-list (issues.txt)");
+  });
+
+  it("keeps the default GitHub path and summary shape when no source is given", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.ghJson).toHaveBeenCalledTimes(1);
+    expect(summary.source).toBeUndefined();
+    const text = formatSummary(summary);
+    expect(text.split("\n")[0]).toMatch(/^Run summary — /);
+    expect(text).not.toContain("source:");
+  });
+});
+
+describe("parseSourceArgs (--spec-doc / --plain-list selection, WI-3 T5)", () => {
+  it("returns undefined when neither flag is given — the GitHub default", () => {
+    expect(parseSourceArgs(["--repo", "owner/name", "--provider", "claude-code"])).toBeUndefined();
+  });
+
+  it("reads and parses a --spec-doc file, naming the source for the summary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-spec-"));
+    try {
+      const path = join(dir, "spec.md");
+      writeFileSync(path, "## Camera JSON\n\ncamera returns invalid json\n");
+
+      expect(parseSourceArgs(["--spec-doc", path])).toEqual({
+        issues: [
+          expect.objectContaining({ id: "spec-camera-json", sourceType: "spec-doc" }),
+        ],
+        sourceName: `spec-doc (${path})`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads and parses a --plain-list file, naming the source for the summary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-list-"));
+    try {
+      const path = join(dir, "issues.txt");
+      writeFileSync(path, "stale pin after restart | logs/pin.log\n");
+
+      expect(parseSourceArgs(["--plain-list", path])).toEqual({
+        issues: [
+          expect.objectContaining({
+            id: "list-stale-pin-after-restart",
+            sourceType: "plain-list",
+            attachedLog: "logs/pin.log",
+          }),
+        ],
+        sourceName: `plain-list (${path})`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("both flags together → startup error: sources cannot be combined", () => {
+    expect(() => parseSourceArgs(["--spec-doc", "a.md", "--plain-list", "b.txt"])).toThrow(
+      /sources cannot be combined/,
+    );
+  });
+
+  it("a flag with no path value is a startup error naming the flag", () => {
+    expect(() => parseSourceArgs(["--spec-doc"])).toThrow(/--spec-doc/);
+    expect(() => parseSourceArgs(["--plain-list", "--provider"])).toThrow(/--plain-list/);
+  });
+
+  it("`--issue` combined with a source flag is a startup error naming both flags", () => {
+    const realistic = [
+      "--repo",
+      "owner/name",
+      "--spec-doc",
+      "a.md",
+      "--issue",
+      "3",
+      "--provider",
+      "claude-code",
+    ];
+    expect(() => parseSourceArgs(realistic)).toThrow(
+      /--issue cannot be combined with --spec-doc\/--plain-list/,
+    );
+    const call = (): unknown => parseSourceArgs(["--plain-list", "b.txt", "--issue", "3"]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(/--issue cannot be combined/);
+  });
+
+  it("`--label` combined with a source flag is a startup error naming both flags", () => {
+    const call = (): unknown =>
+      parseSourceArgs(["--repo", "owner/name", "--label", "bug", "--plain-list", "b.txt"]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(/--label cannot be combined with --spec-doc\/--plain-list/);
+    expect(() => parseSourceArgs(["--spec-doc", "a.md", "--label", "bug"])).toThrow(
+      /--label cannot be combined/,
+    );
+  });
+
+  it("an unreadable file → named error naming the path, thrown before any sandbox or worktree work", () => {
+    const missing = join(tmpdir(), "loop-t5-no-such-source-file.md");
+    const call = (): unknown => parseSourceArgs(["--spec-doc", missing]);
+    expect(call).toThrow(SourceSelectionError);
+    expect(call).toThrow(missing);
+  });
+
+  it("surfaces SpecDocParseError and PlainListParseError verbatim — not swallowed or re-wrapped", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loop-t5-parse-"));
+    try {
+      const specPath = join(dir, "no-headings.md");
+      writeFileSync(specPath, "just prose, no section headings\n");
+      expect(() => parseSourceArgs(["--spec-doc", specPath])).toThrow(SpecDocParseError);
+
+      const listPath = join(dir, "comments-only.txt");
+      writeFileSync(listPath, "# only a comment line\n");
+      expect(() => parseSourceArgs(["--plain-list", listPath])).toThrow(PlainListParseError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-3 T2: attachment fetch, sandbox delivery, loud degrade (FR-003/FR-004).
+// LoopDeps gains no new member — fetching is intercepted via the global fetch.
+// ---------------------------------------------------------------------------
+
+const ATTACHMENT_URL = "https://github.com/user-attachments/assets/aaaa";
+const ATTACHMENT_BODY = Array.from({ length: 5 }, (_, i) => `log line ${i + 1}`).join("\n");
+
+describe("attachments in the loop (WI-3 T2)", () => {
+  const issueWithAttachment: NormalizedIssue = {
+    ...issue,
+    description: `${issue.description}\n\nUploaded log: ${ATTACHMENT_URL}`,
+  };
+  const clearedProfile: ProjectProfile = { ...profile, confidentialityCleared: true };
+
+  it("refuses an uncleared issue with an attachment before any sandbox or agent spend (FR-002)", async () => {
+    const deps = makeDeps();
+    const outcome = await runSingleIssue(
+      { issue: issueWithAttachment, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.prUrl).toBeUndefined();
+    expect(outcome.branch).toBe("fix/gh-1");
+    expect(outcome.failure).toContain("clear the repo"); // the gate's own message
+    expect(outcome.failureKind).toBeUndefined(); // issue-level: the queue continues
+    expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // zero API spend
+  });
+
+  it("gate refusal is issue-level — the queue continues with issues that carry no attachments", async () => {
+    const { deps } = makeQueueDeps({ issues: [issueWithAttachment, queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ profile }), deps); // uncleared profile
+
+    expect(summary.failed).toHaveLength(1);
+    expect(summary.failed[0]![0]).toBe("gh-1");
+    expect(summary.failed[0]![1]).toContain("clear the repo");
+    expect(summary.fixed).toEqual(["gh-2"]); // the attachment-free issue still ran
+  });
+
+  it("delivers a cleared attachment into the sandbox and inlines the excerpt (FR-003)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t2-"));
+    try {
+      const deps = makeDeps();
+      const outcome = await runSingleIssue(
+        { issue: issueWithAttachment, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      // the run completed: the guarded prompt (excerpt included) passed assertNoSecrets
+      expect(outcome.prUrl).toBeTruthy();
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { prompt: string; copyToWorktree?: readonly string[] };
+      // T2c: the single top-level directory, not per-file stagedPaths —
+      // Sandcastle's copyToWorktree cp -R creates no dest parents.
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
+      expect(fixInput.prompt).toContain("log line 1"); // excerpt head inlined
+      expect(fixInput.prompt).toContain(".loop-harness/attachments/gh-1/aaaa"); // in-sandbox path
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stages one copyToWorktree entry even when multiple attachments stage (T2c)", async () => {
+    const secondUrl = "https://github.com/user-attachments/assets/bbbb";
+    const issueWithTwoAttachments: NormalizedIssue = {
+      ...issue,
+      description: `${issue.description}\n\nUploaded log: ${ATTACHMENT_URL}\nUploaded trace: ${secondUrl}`,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t2c-"));
+    try {
+      const deps = makeDeps();
+      const outcome = await runSingleIssue(
+        { issue: issueWithTwoAttachments, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy();
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { copyToWorktree?: readonly string[] };
+      // One directory entry covers every staged file — never one entry per file.
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("degrades loudly on a failed fetch: the run proceeds and summary + PR body name the URL (FR-004)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("gone", { status: 404 })));
+    try {
+      const { deps } = makeQueueDeps({ issues: [issueWithAttachment] });
+
+      const summary = await runQueue(queueRunInput({ profile: clearedProfile }), deps);
+
+      expect(summary.fixed).toEqual(["gh-1"]); // the issue still ran and fixed
+      expect(formatSummary(summary)).toContain(`ATTACHMENT FAILED gh-1: ${ATTACHMENT_URL}`);
+      const body = (deps.createPr.mock.calls[0]![0] as unknown as { body: string }).body;
+      expect(body).toContain(`attachment fetch failed: ${ATTACHMENT_URL}`);
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as unknown as {
+        prompt: string;
+        copyToWorktree?: readonly string[];
+      };
+      expect(fixInput.prompt).toContain("expected but unavailable");
+      expect(fixInput.prompt).toContain(ATTACHMENT_URL);
+      expect(fixInput.copyToWorktree).toBeUndefined(); // nothing staged, nothing copied
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-3 T7 (two-axis review fix): the plain-list normalizer moves the
+// `| <value>` suffix out of the description into attachedLog — the discovery
+// scan must include it, or the URL reaches the prompt ungated and unfetched.
+// ---------------------------------------------------------------------------
+
+const PLAIN_LIST_URL = "https://github.com/user-attachments/assets/cccc";
+const PLAIN_LIST_BODY = Array.from({ length: 3 }, (_, i) => `pin log ${i + 1}`).join("\n");
+const plainListAttachmentIssue: NormalizedIssue = {
+  id: "list-login-fails",
+  description: "login fails after restart", // no URL here — it lives in the suffix
+  attachedLog: PLAIN_LIST_URL,
+  sourceType: "plain-list",
+};
+
+describe("plain-list suffix attachments join discovery (WI-3 T7)", () => {
+  it("gates an uncleared plain-list issue whose attachment URL lives in the `| <value>` suffix — zero spend, no PR", async () => {
+    const deps = makeDeps();
+
+    const outcome = await runSingleIssue(
+      { issue: plainListAttachmentIssue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, // uncleared
+      deps,
+    );
+
+    expect(outcome.prUrl).toBeUndefined();
+    expect(outcome.failure).toContain("clear the repo");
+    expect(outcome.failureKind).toBeUndefined(); // issue-level: the queue continues
+    expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // zero API spend
+    expect(deps.createPr).not.toHaveBeenCalled();
+  });
+
+  it("fetches and stages the suffix URL when cleared — excerpt in the prompt, staged path in the sandbox", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(PLAIN_LIST_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-t7-"));
+    try {
+      const deps = makeDeps({
+        preflight: issueSandbox(plainListAttachmentIssue, BASELINE_SUITE),
+        sandbox: issueSandbox(plainListAttachmentIssue, SUITE_AFTER_FIX),
+      });
+
+      const outcome = await runSingleIssue(
+        { issue: plainListAttachmentIssue, repoDir, imageName: "sandcastle-loop", agent, profile: { ...profile, confidentialityCleared: true } },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy();
+      expect(fetch).toHaveBeenCalledWith(PLAIN_LIST_URL, expect.anything());
+      const fixInput = deps.runFixRun.mock.calls[0]![0] as { prompt: string; copyToWorktree?: readonly string[] };
+      expect(fixInput.prompt).toContain("pin log 1"); // excerpt inlined
+      expect(fixInput.prompt).toContain(".loop-harness/attachments/list-login-fails/cccc");
+      expect(fixInput.copyToWorktree).toEqual([".loop-harness"]);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  // PIN (expected green now): FR-001's scan for GitHub issues reads the
+  // description only — attachedLog is fenced log content, deliberately unscanned.
+  it("PIN: a GitHub attachedLog (fenced log content) carrying a URL is still not discovered", async () => {
+    const fetchSpy = vi.fn(async () => new Response("should never be fetched"));
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const githubLogUrlIssue: NormalizedIssue = {
+        id: "gh-42",
+        description: "# crash on export", // no URL in the description
+        attachedLog: `trace: ${ATTACHMENT_URL}`,
+        sourceType: "github-issue",
+      };
+      const deps = makeDeps({
+        preflight: issueSandbox(githubLogUrlIssue, BASELINE_SUITE),
+        sandbox: issueSandbox(githubLogUrlIssue, SUITE_AFTER_FIX),
+      });
+
+      const outcome = await runSingleIssue(
+        { issue: githubLogUrlIssue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, // uncleared
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeTruthy(); // no gate refusal: nothing was discovered
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

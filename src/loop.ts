@@ -7,9 +7,22 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  assertClearedForAttachments,
+  ConfidentialityGateError,
+  discoverAttachmentUrls,
+  fetchAndStageAttachment,
+  type StagedAttachment,
+} from "./attachments.js";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import { loadEnv, readEnvFile } from "./env.js";
-import { normalizeGitHubIssue, type GitHubIssueInput, type NormalizedIssue } from "./issues.js";
+import {
+  normalizeGitHubIssue,
+  parsePlainList,
+  parseSpecDoc,
+  type GitHubIssueInput,
+  type NormalizedIssue,
+} from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
   TRIAGE_BRANCH,
@@ -50,6 +63,12 @@ export interface ProjectProfile {
   /** Failures a clean checkout already has — the repo is born red. */
   readonly baselineFailures: readonly string[];
   readonly expectedDurationSec: number;
+  /**
+   * Human assertion from onboarding (`--confidentiality-cleared`): Bitcot's
+   * policy permits sending this repo's data to a third-party AI API. Absent
+   * means not cleared — attachment URLs then trip the confidentiality gate.
+   */
+  readonly confidentialityCleared?: boolean;
 }
 
 /** Seam the loop runs on — the adapter plus PR creation, stubbed in tests. */
@@ -62,6 +81,7 @@ export interface LoopDeps {
     agent: AgentSpec;
     branch: string;
     name?: string;
+    copyToWorktree?: readonly string[];
   }): Promise<{ stdout: string; commits: readonly { sha: string }[]; branch: string }>;
   createFixSandbox(input: {
     cwd: string;
@@ -106,6 +126,11 @@ export interface LoopOutcome {
    */
   readonly failureKind?: "harness";
   readonly newFailures?: readonly string[];
+  /**
+   * Attachment URLs whose fetch failed (FR-004) — an input-quality note, never
+   * a verification failure. Recorded loudly wherever the issue is reported.
+   */
+  readonly attachmentFailures?: readonly string[];
 }
 
 /** Deterministic home for the reproduction test (constraint 4: it stays in the suite). */
@@ -149,13 +174,38 @@ function extractEvidence(stdout: string, tag: "red" | "green"): string {
   return stdout.slice(start + open.length, end).trim();
 }
 
-export function buildFixPrompt(issue: NormalizedIssue, profile: ProjectProfile): string {
+/** Attachment material for the fix prompt (FR-003/FR-004): excerpts + misses. */
+export interface PromptAttachments {
+  readonly staged: readonly StagedAttachment[];
+  readonly failedUrls: readonly string[];
+}
+
+function buildAttachmentSection(attachments: PromptAttachments): string {
+  if (attachments.staged.length === 0 && attachments.failedUrls.length === 0) {
+    return "";
+  }
+  return `\n## Attachments from the issue report\n\n${[
+    ...attachments.staged.map(
+      (a) =>
+        `Full file fetched into the repo at \`${a.stagedPath}\` (read the rest there):\n\n\`\`\`\n${a.excerpt}\n\`\`\``,
+    ),
+    ...attachments.failedUrls.map(
+      (url) => `- attachment expected but unavailable: ${url} (attachment fetch failed)`,
+    ),
+  ].join("\n\n")}\n`;
+}
+
+export function buildFixPrompt(
+  issue: NormalizedIssue,
+  profile: ProjectProfile,
+  attachments?: PromptAttachments,
+): string {
   return `You are fixing one reported issue in this repository.
 
 ## The issue (${issue.id})
 
 ${issue.description}
-${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.attachedLog}\n\`\`\`\n` : ""}
+${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.attachedLog}\n\`\`\`\n` : ""}${attachments ? buildAttachmentSection(attachments) : ""}
 ## How to work in this repo (recorded at onboarding — use these exact commands)
 
 - install: ${profile.installCmd}
@@ -170,7 +220,8 @@ ${issue.attachedLog ? `\n## Attached log from the report\n\n\`\`\`\n${issue.atta
    other open issues' symptoms).
 3. Re-run your reproduction test and the full suite. The suite has known pre-existing failures;
    your fix must clear yours without adding any new failure.
-4. Commit everything — fix and reproduction test together — with the machine identity:
+4. Commit only the fix and the reproduction test — never anything under \`.loop-harness/\` —
+   with the machine identity:
 
    git config user.name ${LOOP_IDENTITY.name}
    git config user.email ${LOOP_IDENTITY.email}
@@ -192,8 +243,12 @@ export function buildPrBody(
   redEvidence: string,
   greenEvidence: string,
   verification: { passed: boolean; newFailures: readonly string[] },
+  attachmentFailures?: readonly string[],
 ): string {
   const symptomLine = `Symptom mapping: issue ${issue.id} reported "${issue.description.split("\n")[0].replace(/^#\s*/, "")}" — reproduced by \`${reproTestPath(issue)}\` failing exactly that way, now passing.`;
+  const attachmentNote = (attachmentFailures ?? []).length > 0
+    ? `\n${attachmentFailures!.map((url) => `attachment fetch failed: ${url}`).join("\n")}\n`
+    : "";
   return `Automated fix for issue ${issue.id}${issue.url ? ` (${issue.url})` : ""}.
 
 The reproduction test is retained in the suite at \`${reproTestPath(issue)}\`.
@@ -209,7 +264,7 @@ ${redEvidence}
 \`\`\`
 ${greenEvidence}
 \`\`\`
-
+${attachmentNote}
 ${symptomLine}
 
 Independent verification in a fresh sandbox: reproduction test passed; full-suite diff versus
@@ -220,9 +275,53 @@ A human reviews and merges this — please judge whether the reproduced symptom 
 
 export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): Promise<LoopOutcome> {
   const branch = fixBranch(input.issue);
-  const prompt = buildFixPrompt(input.issue, input.profile);
 
-  // FR-003: everything we emit is checked before it leaves the harness.
+  // FR-002: the gate refuses BEFORE the preflight sandbox — an uncleared repo
+  // never spends a container or an API call on an attachment-carrying issue.
+  // The refusal is issue-level (no failureKind): the queue continues, because
+  // attachment-free issues in the same repo are governed by the WI-1/WI-2 seam.
+  //
+  // Scan input: the description, extended with the plain-list `| <value>`
+  // suffix — the plain-list normalizer moves it out of the description into
+  // attachedLog, so a description-only scan would let that URL reach the
+  // prompt ungated (and never fetch it when cleared). The other sources stay
+  // description-only: a spec-doc `log:` URL already stays in the description
+  // (scanning its attachedLog too would double-discover the same URL), and a
+  // GitHub issue's attachedLog is fenced log content, which FR-001
+  // deliberately does not scan.
+  const scanText = input.issue.sourceType === "plain-list" && input.issue.attachedLog !== undefined
+    ? `${input.issue.description}\n${input.issue.attachedLog}`
+    : input.issue.description;
+  const attachmentUrls = discoverAttachmentUrls(scanText);
+  try {
+    assertClearedForAttachments(input.profile, attachmentUrls, input.repoDir);
+  } catch (error) {
+    if (!(error instanceof ConfidentialityGateError)) {
+      throw error;
+    }
+    return { branch, failure: error.message };
+  }
+  // FR-003/FR-004: fetch what the report uploaded. A failed URL never blocks
+  // the others and never blocks the issue — it is recorded loudly instead.
+  const staged: StagedAttachment[] = [];
+  const attachmentFailures: string[] = [];
+  for (const url of attachmentUrls) {
+    const result = await fetchAndStageAttachment({
+      url,
+      repoDir: input.repoDir,
+      issueId: input.issue.id,
+    });
+    if ("failed" in result) {
+      attachmentFailures.push(result.failed);
+    } else {
+      staged.push(result);
+    }
+  }
+
+  const prompt = buildFixPrompt(input.issue, input.profile, { staged, failedUrls: attachmentFailures });
+
+  // FR-003: everything we emit is checked before it leaves the harness. The
+  // excerpt sits inside the prompt, so it is guarded with no new wiring.
   assertNoSecrets([prompt], deps.env);
 
   // Baseline preflight (FR-104 staleness rule): the recorded baseline must
@@ -276,13 +375,26 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     agent: input.agent,
     branch,
     name: input.issue.id,
+    // Copy the single top-level `.loop-harness` directory, never per-file
+    // stagedPaths: Sandcastle's copyToWorktree runs `cp -R` without creating
+    // dest parent directories, so a nested path like
+    // `.loop-harness/attachments/gh-1/aaaa` fails in a fresh worktree. The
+    // directory copy also carries the staging `.gitignore` (and the
+    // machine-local profile) into the worktree; the prompt's
+    // never-commit-anything-under-`.loop-harness/` rule is the paired defense.
+    ...(staged.length > 0 ? { copyToWorktree: [".loop-harness"] } : {}),
   });
 
   // A failed run must not leave its fix branch behind — the next run would
   // trip over it (attempt-5/6 lesson).
   const fail = async (reason: string, newFailures?: readonly string[]): Promise<LoopOutcome> => {
     await deps.deleteBranch(input.repoDir, branch);
-    return { branch, failure: reason, ...(newFailures ? { newFailures } : {}) };
+    return {
+      branch,
+      failure: reason,
+      ...(newFailures ? { newFailures } : {}),
+      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    };
   };
 
   if (fix.commits.length === 0) {
@@ -327,11 +439,15 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     }
 
     const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-    const body = buildPrBody(input.issue, redEvidence, greenEvidence, verification);
+    const body = buildPrBody(input.issue, redEvidence, greenEvidence, verification, attachmentFailures);
     assertNoSecrets([title, body], deps.env);
 
     const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-    return { branch, prUrl: pr.url };
+    return {
+      branch,
+      prUrl: pr.url,
+      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    };
   } finally {
     await sandbox.close();
   }
@@ -355,6 +471,13 @@ export interface QueueRunInput {
   readonly label?: string;
   readonly cap: number;
   readonly triage: boolean;
+  /**
+   * WI-3 (FR-007): a pre-parsed queue from `--spec-doc` / `--plain-list`.
+   * When present it REPLACES GitHub acquisition — `ghJson` is never called.
+   */
+  readonly sourceIssues?: readonly NormalizedIssue[];
+  /** Label for the run summary, e.g. `spec-doc (docs/spec.md)`. */
+  readonly sourceName?: string;
 }
 
 export interface QueueSummary {
@@ -364,7 +487,11 @@ export interface QueueSummary {
   readonly skippedDuplicate: string[];
   /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
   readonly notAdmitted: [string, string][];
+  /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
+  readonly attachmentFailures: [string, string][];
   readonly prUrls: string[];
+  /** Source label (WI-3 FR-007) — set only for non-GitHub queue sources. */
+  readonly source?: string;
 }
 
 /**
@@ -390,10 +517,14 @@ export class QueueAbortedError extends Error {
  * holds the partial run — the caller prints both that and the abort reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
-  const issues = await listOpenIssues(deps, {
-    repo: input.ghRepo,
-    ...(input.label !== undefined ? { label: input.label } : {}),
-  });
+  // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
+  // dedup, triage, the cap, and the loop itself are identical from here on.
+  const issues = input.sourceIssues !== undefined
+    ? [...input.sourceIssues]
+    : await listOpenIssues(deps, {
+        repo: input.ghRepo,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+      });
   const split = await splitQueue(deps, input.repoDir, issues);
 
   // The flag is the opt-in, so triage runs at any queue size — its file-overlap
@@ -442,6 +573,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const attempted: string[] = [];
   const fixed: string[] = [];
   const failed: [string, string][] = [];
+  const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
@@ -449,7 +581,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     failed: [...failed],
     skippedDuplicate: split.skippedDuplicate,
     notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
+    ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
   for (const issue of admission.admitted) {
@@ -464,6 +598,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       deps,
     );
     attempted.push(issue.id);
+    for (const url of outcome.attachmentFailures ?? []) {
+      attachmentFailures.push([issue.id, url]);
+    }
     if (outcome.prUrl) {
       fixed.push(issue.id);
       prUrls.push(outcome.prUrl);
@@ -482,9 +619,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
 
 export function formatSummary(summary: QueueSummary): string {
   return [
+    ...(summary.source !== undefined ? [`source: ${summary.source}`] : []),
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
+    ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
     ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
   ].join("\n");
 }
@@ -496,6 +635,70 @@ export function parseCap(raw: string): number {
     throw new Error(`--max-issues must be an integer >= 1 (got "${raw}")`);
   }
   return n;
+}
+
+/** A source-selection problem (combined flags, missing/unreadable file) — WI-3. */
+export class SourceSelectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SourceSelectionError";
+  }
+}
+
+export interface SourceSelection {
+  /** The pre-parsed queue — replaces GitHub acquisition entirely (FR-007). */
+  readonly issues: readonly NormalizedIssue[];
+  /** Summary label, e.g. `spec-doc (docs/spec.md)`. */
+  readonly sourceName: string;
+}
+
+/**
+ * `--spec-doc <path>` / `--plain-list <path>` (WI-3, FR-007): read and parse
+ * the named issue source at startup. Returns `undefined` when neither flag is
+ * given (the GitHub default). Parse errors from the normalizers
+ * (`SpecDocParseError`, `PlainListParseError`) propagate verbatim; everything
+ * else about the selection is a `SourceSelectionError` — all thrown before any
+ * worktree or sandbox work.
+ */
+export function parseSourceArgs(argv: readonly string[]): SourceSelection | undefined {
+  const specAt = argv.indexOf("--spec-doc");
+  const listAt = argv.indexOf("--plain-list");
+  if (specAt === -1 && listAt === -1) {
+    return undefined;
+  }
+  if (specAt !== -1 && listAt !== -1) {
+    throw new SourceSelectionError(
+      "--spec-doc and --plain-list: sources cannot be combined — pick one issue source",
+    );
+  }
+  // A preset source replaces GitHub acquisition entirely, so the GitHub-only
+  // flags would be silently ignored (T5 review: loud, never silent).
+  if (argv.includes("--issue")) {
+    throw new SourceSelectionError(
+      "--issue cannot be combined with --spec-doc/--plain-list — the source file replaces GitHub acquisition",
+    );
+  }
+  if (argv.includes("--label")) {
+    throw new SourceSelectionError(
+      "--label cannot be combined with --spec-doc/--plain-list — labels only filter GitHub acquisition",
+    );
+  }
+  const flag = specAt !== -1 ? "spec-doc" : "plain-list";
+  const at = specAt !== -1 ? specAt : listAt;
+  const path = argv[at + 1];
+  if (path === undefined || path.startsWith("--")) {
+    throw new SourceSelectionError(`missing --${flag} <path>`);
+  }
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    throw new SourceSelectionError(
+      `cannot read --${flag} file "${path}": ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const issues = flag === "spec-doc" ? parseSpecDoc(text) : parsePlainList(text);
+  return { issues, sourceName: `${flag} (${path})` };
 }
 
 export type OverrideOutcome =
@@ -521,7 +724,12 @@ export async function runOverrideIssue(
 // ---------------------------------------------------------------------------
 // CLI entry (WI-2: queue mode is the default; --issue N is the override):
 // npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
-//                [--max-issues <n>] [--triage] --provider <name>
+//                [--max-issues <n>] [--triage]
+//                [--spec-doc <path> | --plain-list <path>]  (WI-3: replaces
+//                GitHub issue acquisition with a pre-parsed source)
+//                --provider <name>
+// --issue and --label are GitHub-source-only: combining either with
+// --spec-doc/--plain-list is a startup error (WI-3 T5b).
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -544,6 +752,9 @@ async function main(): Promise<void> {
   const cap = parseCap(optFlag("max-issues") ?? "3");
   const label = optFlag("label");
   const triage = args.includes("--triage");
+  // WI-3 (FR-007): validated and parsed before any env load, clone, worktree,
+  // or sandbox — a bad source costs nothing.
+  const source = parseSourceArgs(args);
 
   const env = loadEnv(process.cwd());
   const agent = resolveProvider(providerName, env, modelOverride);
@@ -666,7 +877,19 @@ async function main(): Promise<void> {
   try {
     emit(
       await runQueue(
-        { ghRepo, repoDir, imageName, agent, profile, ...(label !== undefined ? { label } : {}), cap, triage },
+        {
+          ghRepo,
+          repoDir,
+          imageName,
+          agent,
+          profile,
+          ...(label !== undefined ? { label } : {}),
+          cap,
+          triage,
+          ...(source !== undefined
+            ? { sourceIssues: source.issues, sourceName: source.sourceName }
+            : {}),
+        },
         allDeps,
       ),
     );

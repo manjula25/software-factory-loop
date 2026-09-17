@@ -1,0 +1,20 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --issue 3 --provider claude-via-proxy
+
+[gh-3] Started on branch fix/gh-3
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-3-gh-3.log
+
+Run succeeded but worktree has uncommitted changes at /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-gh-3
+  To review: cd /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-gh-3
+  To clean up: git worktree remove --force /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-gh-3
+Reusing worktree at /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/worktrees/fix-gh-3 (branch 'fix/gh-3') — worktree has uncommitted changes
+remote: 
+remote: Create a pull request for 'fix/gh-3' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-3        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-3 -> fix/gh-3
+branch 'fix/gh-3' set up to track 'origin/fix/gh-3'.
+Warning: 1 uncommitted change
+PR opened: https://github.com/manjula25/loop-fixtures-py/pull/12

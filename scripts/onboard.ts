@@ -6,6 +6,7 @@
  *
  * Usage: npx tsx scripts/onboard.ts <repoDir> [--install <cmd>] [--test <cmd>]
  *                                                 [--single-test <cmd>]
+ *                                                 [--confidentiality-cleared]
  *
  * The install/test commands default to the pip-editable convention; override
  * them for repos that install differently (filtered requirements files,
@@ -14,17 +15,9 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { onboardProfile } from "../src/onboard-profile.js";
 import { createFixSandbox } from "../src/sandcastle-adapter.js";
 import { parsePytestFailures } from "../src/verify.js";
-
-function optValue(flag: string): string | undefined {
-  const i = process.argv.indexOf(flag);
-  return i !== -1 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined;
-}
-
-const INSTALL_CMD = optValue("--install") ?? 'pip install -e ".[test]"';
-const TEST_CMD = optValue("--test") ?? "pytest -q";
-const SINGLE_TEST_CMD = optValue("--single-test") ?? "pytest -q {test}";
 
 async function main(): Promise<void> {
   const repoDir = resolve(process.argv[2] ?? ".");
@@ -37,12 +30,16 @@ async function main(): Promise<void> {
     imageName: "sandcastle-loop",
   });
   try {
-    const install = await sandbox.exec(INSTALL_CMD);
+    // Commands and profile come from the same argv, so what is recorded here
+    // is exactly what was executed.
+    const argv = process.argv.slice(2);
+    const pending = onboardProfile(argv, { baselineFailures: [], durationSec: 0 });
+    const install = await sandbox.exec(pending.installCmd);
     if (install.exitCode !== 0) {
       throw new Error(`install failed (${install.exitCode}): ${install.stderr.slice(-500)}`);
     }
 
-    const suite = await sandbox.exec(TEST_CMD);
+    const suite = await sandbox.exec(pending.testCmd);
     const durationSec = Math.round((Date.now() - startedAt) / 1000);
     const baselineFailures = parsePytestFailures(suite.stdout);
 
@@ -54,14 +51,7 @@ async function main(): Promise<void> {
       );
     }
 
-    const profile = {
-      language: "python",
-      installCmd: INSTALL_CMD,
-      testCmd: TEST_CMD,
-      singleTestCmd: SINGLE_TEST_CMD,
-      baselineFailures,
-      expectedDurationSec: durationSec,
-    };
+    const profile = onboardProfile(argv, { baselineFailures, durationSec });
     const profileDir = resolve(repoDir, ".loop-harness");
     mkdirSync(profileDir, { recursive: true });
     const profilePath = resolve(profileDir, "profile.json");
