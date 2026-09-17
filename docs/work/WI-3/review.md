@@ -122,3 +122,20 @@ implementation-notes.md. New items from this review to queue: argv-parsing
 triplication, slug-dedup counter duplication, `repoName`-vs-`repoDir` param mismatch,
 `pending` throwaway profile, `attachmentFailures!` idiom, "path half of
 path-or-url has no behavior" (grilling note).
+
+## Resolution (2026-09-17)
+
+Both blocking findings resolved by **T7, candidate `01b2b04`** (full checkpoint
+cycle: leaf TDD → controller inspection → sequential spec review PASS + quality
+review APPROVED on that identity; evidence in verification.md and
+implementation-notes.md):
+
+1. Gate/discovery fix — the plain-list `attachedLog` joins the discovery scan
+   (source-conditional, rationale-commented); uncleared+suffix-URL refusal and
+   cleared+suffix-URL fetch both pinned at the spend seam; GitHub/spec-doc
+   behavior pinned unchanged.
+2. workflow.md — the loop command row now documents `--spec-doc <path>` /
+   `--plain-list <path>` and their exclusivity rules, traced accurate against
+   `parseSourceArgs` by the spec review.
+
+Branch green at `01b2b04`: typecheck exit 0, 129/129 tests, clean tree.

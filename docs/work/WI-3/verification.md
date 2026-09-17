@@ -219,3 +219,47 @@ path is identical to the spec-doc path live-proven in T6); no measurement of
 provider cost in currency (run counts only); excerpt-in-prompt verified at the
 unit seam, not from live prompt capture (prompt content is never recorded by
 design).
+
+## Task 7 (T7) — code-review blocking fixes — candidate `01b2b04`
+
+- Baseline at `55657c4` (review record committed; code state identical to
+  `a604ffd`): typecheck 0; 126 tests green.
+- RED (leaf, preserved in report): gate-bypass test failed by sailing through
+  (full spend, no refusal); cleared-fetch test failed with `fetch` at 0 calls;
+  GitHub PIN green immediately as designed.
+- Focused GREEN at candidate (controller re-verified fresh):
+  `npx vitest run src/loop.test.ts` → 48/48; `npm run typecheck` exit 0;
+  `npm test` 10 files / 129 tests (126 + 3).
+- Specification review: **PASS**, zero blocking (adjacent: two comment-rationale
+  inaccuracies, queued; GitHub-fence URL seam noted as pre-existing).
+- Code-quality review: **APPROVED**, zero critical/important; reviewer re-ran
+  all three commands fresh and green.
+- Both verdicts apply to `01b2b04`; checkpoint accepted 2026-09-17.
+- Non-claims: no live plain-list run with a suffix URL (unit-pinned at the
+  outcome/spend seam; the gate and fetch paths are the same ones live-proven
+  in T6 for description URLs).
+
+## WI-3 completion verification — amendment for T7, final branch state `01b2b04` (2026-09-17)
+
+The completion verification above was recorded against `da1af05`. Since then
+the branch gained: the two-axis code-review record (`55657c4`,
+`docs/work/WI-3/review.md` — 2 blocking findings) and the T7 fix (`01b2b04`)
+resolving both. Proving commands re-run fresh against exactly `01b2b04`:
+
+- `git rev-parse HEAD` → `01b2b04…`; `git status --short` → empty (clean tree).
+- `git log --oneline bacb85a..HEAD` → 22 commits; every checkpoint identity in
+  the chain (…, `080b90f`) plus `55657c4` and `01b2b04`.
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 129 tests passed, exit 0.
+- Blocking finding 1 (plain-list gate bypass): CLOSED — spec + quality reviews
+  on `01b2b04`; uncleared+suffix-URL refusal and cleared+suffix-URL fetch both
+  pinned at the spend seam.
+- Blocking finding 2 (workflow.md command list): CLOSED — source flags and
+  exclusivity rules documented in the same PR (`01b2b04`), traced accurate
+  against `parseSourceArgs` by the spec review.
+- `gh pr list --repo manjula25/loop-fixtures-py --state open` → #12 and #13
+  both OPEN, `mergedAt: null` — never-auto-merge still holds.
+
+All prior non-claims and deferred follow-ups stand unchanged; two new minor
+follow-ups recorded in implementation-notes (comment-rationale wording,
+PIN prefix convention).

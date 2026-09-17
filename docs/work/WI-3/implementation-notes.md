@@ -431,3 +431,65 @@ grep-proven URL/filename absence from the inferred content absence. Applied as
 a docs-only follow-up commit rather than a candidate change + full review
 rerun — the branch-level `code-review` gate ahead covers these files; recorded
 here so the amendment is visible.
+
+## Task 7 — T7: code-review blocking fixes (gate bypass + workflow.md)
+
+**Origin.** The branch-level two-axis code review (`review.md`, commit `55657c4`)
+found two BLOCKING findings: (1) plain-list suffix attachment URLs escaped
+discovery → the FR-002 gate → FR-003 fetch, because `parsePlainList` moves the
+`| <value>` suffix into `attachedLog` while discovery scanned `description`
+only — yet `attachedLog` is inlined into the fix prompt, so an uncleared repo
+transmitted the URL to the third-party API with zero gate (controller-verified
+against src/loop.ts:283/285/208 before dispatch); (2) the authoritative command
+list in `docs/agents/workflow.md` lacked the `--spec-doc`/`--plain-list` flags
+(documented same-PR rule). User approved dispatch 2026-09-17.
+
+**Dispatch record.** Size S-M (2 src files + 1 docs row) · risk medium
+(confidentiality-gate path) · time budget 30m · tool budget ~15 calls ·
+evidence boundary: vitest seam only — no Docker, no network, no live CLI ·
+fixed point: `55657c4` (typecheck 0, 126 tests at `a604ffd`; docs-only since).
+Controller chose the fix shape: extend the discovery scan with `attachedLog`
+ONLY for `sourceType === "plain-list"` (spec-doc's `log:` URL already stays in
+the description; GitHub's attachedLog is fenced log content FR-001 deliberately
+does not scan).
+
+**Candidate identity.** `01b2b04` — leaf's three files, no controller
+amendments, no deviations.
+
+**TDD evidence.** RED (leaf, preserved in report): test 1 failed by sailing
+through the gate entirely (full sandbox + agent spend, no "clear the repo");
+test 2 failed with `fetch` at 0 calls; PIN test 3 (GitHub attachedLog URL not
+discovered) green immediately as designed. GREEN: focused 48/48; controller
+re-verified fresh: `npx vitest run src/loop.test.ts` 48/48, `npm run
+typecheck` exit 0, `npm test` 10 files / 129 tests (126 + 3).
+
+**Reviews (sequential, identity `01b2b04`).**
+- Specification review: **PASS**, zero blocking. FR-002 refusal + zero spend
+  pinned; FR-003 fetch/stage/excerpt/copyToWorktree pinned; FR-001 parity held
+  in spirit (every source's user-authored text scanned exactly once); scope
+  exactly the three allowed files; workflow.md row traced accurate against
+  `parseSourceArgs`. Adjacent: the loop.ts comment's GitHub rationale is
+  misleading at the real seam (`normalizeGitHubIssue` keeps fenced blocks in
+  the description, so URLs in real GitHub fences ARE scanned — the PIN test's
+  synthetic shape cannot arise from the real normalizer; behavior conservative,
+  gates more never less); the "double-discover" rationale is moot (`Set` dedup).
+- Code-quality review: **APPROVED**, zero critical/important. Reviewer re-ran
+  fresh: 48/48, typecheck 0, 129/129. Edge cases safe (empty attachedLog
+  unreachable via `\S+` suffix regex; unanchored URL regex matches at the join);
+  tests assert at the outcome/spend seam; ternary judged the honest shape;
+  repoDir-as-repoName confirmed pre-existing, nothing new.
+
+**Checkpoint accepted** — both sequential reviews on identity `01b2b04`
+(2026-09-17).
+
+**T7 follow-up queue.**
+1. (both reviews, minor) The scanText comment in src/loop.ts states two
+   inaccurate rationales (GitHub "deliberately unscanned" — real normalizer
+   keeps fences in the description so they ARE scanned; spec-doc
+   "double-discover" — `Set` dedups). Behavior correct and conservative;
+   reword in the next task that touches src/loop.ts.
+2. (quality, minor) `PIN:` prefix ordering vs `queue.test.ts`'s
+   `PARITY PIN (tag):` precedent — cosmetic.
+3. (spec, adjacent) URLs inside GitHub fenced log content reach the prompt as
+   plain description text even uncleared (pre-existing FR-001-approved seam);
+   conscious spec decision someday, not a regression.
