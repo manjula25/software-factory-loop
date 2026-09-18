@@ -114,3 +114,88 @@ line 136 documents the literal `-2` collision counter; the `--2` scheme
 supersedes it (this work item, T1 fix 2). A revision note is added to the
 spec text rather than rewriting history — WI-3 is merged; the note keeps the
 traceability chain honest.
+
+## Task 2 — T2: onboarding fresh-fork + green-repo acceptance (live-diagnosed)
+
+**How the third loose end (profile refresh) exposed two new defects.** The
+fixtures remediation proceeded: pulled main (PR #12 merge `d9f8c21`), then
+`git rm -r --cached .loop-harness` + `.gitignore` entry, committed `009a404`,
+pushed. The onboarding re-run then misbehaved twice, both reproduced live:
+
+1. **Stale base branch.** Onboarding creates a sandbox from a worktree of
+   branch `loop/onboard`, which is never deleted after a run; Sandcastle
+   reuses an existing branch rather than re-forking from HEAD. Today's re-run
+   tested yesterday's code (`loop/onboard` sat at `08e53d4`, pre-PR-12) and
+   recorded the already-fixed titlecase test as a baseline failure. Confirmed:
+   `git merge-base --is-ancestor d9f8c21 loop/onboard` failed; deleting the
+   branch changed the outcome.
+2. **Born-red assumption.** With a fresh fork, the suite is fully green (all
+   seeded bugs merged: gh-1, gh-2, gh-10, gh-3) — and
+   `scripts/onboard.ts:46-52` REFUSES: "expected a born-red suite, got exit 0
+   with 0 failures". A green target repo is legitimate; the guard's real
+   intent (detect a sandbox where the test command executed nothing) must be
+   an execution-evidence check instead.
+
+**Dispatch record.** Size S-M (3 files) · risk medium (onboarding feeds the
+baseline every verification gate trusts) · time budget 30m · tool budget
+~15 calls · evidence boundary: unit seam for the new
+`parseSuiteBaseline`/`SuiteDidNotRunError` helper; the script's branch-delete
+wiring and the end-to-end green onboarding verified live by the controller
+afterwards (Docker, zero LLM spend) · fixed point: `5e8ebb5` (typecheck 0,
+133 tests).
+
+**Brief summary.** (A) `src/onboard-profile.ts` gains
+`parseSuiteBaseline(exitCode, stdout): string[]` — moved pytest-failure
+parsing, throws `SuiteDidNotRunError` when stdout has no pytest summary line;
+green suite returns `[]`. (B) `scripts/onboard.ts` imports the helper,
+best-effort `git branch -D loop/onboard` before `createFixSandbox` (one-line
+comment owning the observed staleness), graceful 0-failure output.
+
+**Candidate identity.** `d60e041` — leaf's three files, no controller
+amendments. One accepted premise-level deviation: `parsePytestFailures`
+actually lives in `src/verify.ts` (not the script), so the helper imports it
+— zero duplication, `src/verify.ts` and its other callers untouched.
+
+**TDD evidence.** RED: 2 failed on missing exports (`parseSuiteBaseline` not
+a function; `SuiteDidNotRunError` undefined). GREEN (controller, fresh):
+`npx vitest run src/onboard-profile.test.ts` → 7/7; `npm run typecheck`
+exit 0; `npm test` 10 files / 137 tests (133 + 4).
+
+**Reviews (sequential, identity `d60e041`).**
+- Specification review: **PASS**, zero blocking. Fresh-fork delete covers the
+  observed bug; empty baseline verified SAFE downstream (every post-fix
+  failure counts as new — conservative; a later-red repo flags stale).
+  Adjacent: catch-all swallow could silently reintroduce staleness if a
+  preserved worktree holds the branch (downstream stale-profile preflight is
+  the loud net — T6 attempt 1 proved it); recommend narrowing the catch or
+  post-verifying deletion → queued. SUMMARY_TOKEN heuristics reviewed
+  (`-q`, mixed, pytest-8 banners, "no tests ran" correctly throws).
+- Code-quality review: **APPROVED**, zero critical/important. Conventions
+  held (named error with `name`, JSDoc, evidence-style comments); import
+  direction sensible, no cycle/middle-man; tests honest. Minor queued:
+  `deselected`-only runs throw SuiteDidNotRunError — arguably correct
+  (nothing executed); conscious decision on record here: ACCEPTED as
+  intended (a run that executes nothing must not produce a baseline).
+
+**Checkpoint accepted** — both sequential reviews on identity `d60e041`
+(2026-09-18).
+
+**Live end-to-end proof (controller, Docker, zero LLM spend).** Ran the fixed
+script from the wi-3b worktree against the fixtures repo:
+`suite exit: 0 / baseline failures (0) / profile written`. `loop/onboard`
+forked fresh at `009a404` (latest main — confirmed via merge-base); profile
+now records `baselineFailures: []`, `confidentialityCleared: true`. The third
+loose end (profile refresh) is CLOSED with the correct baseline.
+
+**WI-3b follow-up queue (additions).**
+4. (spec review) Narrow the `git branch -D loop/onboard` catch to
+   "branch not found", or `git rev-parse --verify` after the attempt and
+   throw if it survived — removes the one silent path back to stale-fork
+   behavior.
+5. (quality review, decided) `deselected`-only suite output throws
+   SuiteDidNotRunError — accepted as intended.
+6. (leaf adjacent) `scripts/preflight-check.ts` parses suite output with bare
+   `parsePytestFailures` (no execution-evidence guard) — same treatment when
+   next touched.
+7. (quality nit) node:fs / node:child_process import ordering in
+   scripts/onboard.ts vs loop.ts's alphabetical convention.

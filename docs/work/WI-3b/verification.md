@@ -36,3 +36,52 @@ Recorded here on completion; executed against
   the stale-profile condition noted after PR #12 merged.
 
 (Append observed outputs below after execution.)
+
+## Task 2 (T2) — onboarding fresh-fork + green-repo acceptance — candidate `d60e041`
+
+- Baseline at `5e8ebb5` (T1 accepted): typecheck 0; 133 tests green.
+- RED (leaf, preserved): 2 failed on missing exports. GREEN (controller,
+  fresh): 7/7 focused; typecheck 0; `npm test` 137/137 (133 + 4).
+- Specification review: **PASS**, zero blocking (empty-baseline downstream
+  safety verified; stale-catch residual queued with the downstream
+  stale-profile net noted). Code-quality review: **APPROVED**, zero
+  critical/important (deselected-only throw consciously accepted).
+- Both verdicts apply to `d60e041`; checkpoint accepted 2026-09-18.
+- Live proof (controller): onboarding re-run against the fixtures repo from
+  this worktree → `suite exit: 0`, `baseline failures (0)`, profile written;
+  `loop/onboard` forked fresh at `009a404`; profile =
+  `{ baselineFailures: [], confidentialityCleared: true, … }`.
+- Non-claims: branch-delete failure path (preserved worktree holding the
+  branch) not exercised live — unit/logic-reviewed only.
+
+## Fixtures repo remediation — observed results (executed 2026-09-18)
+
+- `git pull --ff-only` → `d9f8c21` (PR #12 merge present).
+- Untrack commit `009a404` pushed to `main`: `.loop-harness/profile.json`
+  deleted from the index, `.loop-harness/` added to `.gitignore`; working
+  tree clean afterwards (profile now untracked + ignored).
+- Onboarding attempts: (1) pre-fix code against stale `loop/onboard` →
+  recorded the already-fixed titlecase test as baseline (defect reproduced);
+  (2) pre-fix code after branch deletion → refused the green repo (defect
+  reproduced); (3) fixed code (`d60e041`) → clean green onboarding, correct
+  profile, fresh fork. Zero LLM spend in all three (Docker-only).
+
+## WI-3b completion verification — final branch state (2026-09-18)
+
+**Claim under test.** Both WI-3 follow-up fixes (nesting guard + slug
+separator) and the two live-diagnosed onboarding defects are implemented,
+reviewed, and — where the fix is observable without client data — proven
+live; the fixtures repo is remediated and its profile fresh.
+
+- `git rev-parse HEAD` and clean-tree check: recorded at delivery time (see
+  delivery.md).
+- `npm run typecheck` exit 0; `npm test` 10 files / 137 tests (baseline 129
+  at `f53be15`; net +8 permanent pins).
+- Nesting root cause: diagnosed from preserved artifacts + dist reading;
+  guard unit-pinned at the spend seam; instance remediated on fixtures
+  (`009a404`).
+- Profile refresh: closed with the CORRECT baseline (empty) — verified by
+  the live run above.
+- Non-claims: no live fix-run against a committed-`.loop-harness` repo was
+  performed to observe the guard firing (unit-pinned; the fixtures repo no
+  longer exhibits the condition — by design).
