@@ -411,3 +411,26 @@ auto-merges (constraint 1) — nothing in this work item merges anything
 outside the fixtures repo; verified in the T7 cleanup. Fix-run token usage
 is not precisely metered by the POC. Cloud sandboxes are unclaimed
 (constraint 6 — local Docker only, as evidenced).
+
+## Post-review verification delta (code-review blocking fixes, 2026-09-18)
+
+The two-axis `code-review` (see `review.md`, candidate `710384b`) returned two
+blocking standards findings, both fixed on the changed candidate:
+
+1. `src/loop.ts` `--issue` override path: `Loop finished without a PR — …` now
+   passes `assertNoSecrets` before `console.error`, mirroring its sibling
+   merge-failure/close-failure lines and queue mode's `emit` guard (closes T3
+   follow-up #3, elevated to blocking by the review because WI-6 routes raw
+   subprocess error text into `failure` on the revert path).
+2. `CLAUDE.md` `src/queue.ts` module-table row updated to name merged-PR dedup
+   and the revert re-queue guard (honesty rule: same PR).
+
+Fresh proving commands on the changed candidate (working tree at this commit):
+
+- `npm run typecheck` → exit 0.
+- `npm test` → `Test Files 10 passed (10)`, `Tests 195 passed (195)`, exit 0.
+
+No behavioral change (a guard call with no configured secret keys behaves as a
+no-op pass-through; a documentation row), so the T7 pipeline evidence remains
+valid for this candidate. All other review findings triaged and recorded in
+`review.md` — none blocking.
