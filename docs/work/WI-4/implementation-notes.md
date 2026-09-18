@@ -89,6 +89,17 @@ typecheck exit 0; `npm test` 10 files / 145 tests (139 + 6).
    `resolve()` argv[2] like scripts/onboard.ts does.
 7. (judgement, fine) preflight's local comment restates the shared doc
    nearly verbatim.
+8. (branch standards review, conditional) The shared regex admits
+   skipped-only verification suites as readable (zero failures → pass).
+   Counter-analysis in review.md (repro gate independent; pathological-only;
+   the observed real bug was the reverse disagreement). If a real repo ever
+   produces a skipped-only verification suite: require at least one
+   `passed|failed|error` token AT THE GATE SEAM ONLY — never diverge the
+   definitions again.
+9. (branch standards review, record-only) verify.ts now owns the canonical
+   execution-evidence definition beyond its "verification gate" remit
+   (mild Divergent Change); a tiny shared module is the alternative if it
+   accretes further.
 
 ## Task 2 — T2: loop/onboard deletion fails loudly when the branch survives
 
