@@ -37,10 +37,11 @@ import {
   admitIssues,
   buildTriagePrompt,
   listOpenIssues,
-  openPrListArgs,
+  prListArgs,
   parseTriageOutput,
   realGhJson,
   splitQueue,
+  type MergedPr,
   type OpenPr,
   type QueueDeps,
   type TriageValue,
@@ -519,6 +520,8 @@ export interface QueueSummary {
   readonly fixed: string[];
   readonly failed: [string, string][];
   readonly skippedDuplicate: string[];
+  /** Ids a merged PR already fixed — done, not re-admitted (WI-6 FR-002). */
+  readonly skippedMerged: string[];
   /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
   readonly notAdmitted: [string, string][];
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
@@ -614,6 +617,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     fixed: [...fixed],
     failed: [...failed],
     skippedDuplicate: split.skippedDuplicate,
+    skippedMerged: split.skippedMerged,
     notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
     attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
@@ -654,7 +658,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
 export function formatSummary(summary: QueueSummary): string {
   return [
     ...(summary.source !== undefined ? [`source: ${summary.source}`] : []),
-    `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | not-admitted: ${summary.notAdmitted.length}`,
+    `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | skipped-merged: ${summary.skippedMerged.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
@@ -737,12 +741,14 @@ export function parseSourceArgs(argv: readonly string[]): SourceSelection | unde
 
 export type OverrideOutcome =
   | { readonly kind: "skipped-duplicate"; readonly id: string }
+  | { readonly kind: "skipped-merged"; readonly id: string }
   | { readonly kind: "run"; readonly outcome: LoopOutcome };
 
 /**
  * `--issue N` single-issue override: no cap, no triage — the user named the
- * issue — but dedup still applies (decision 6). Also cleans a stale fix
- * branch for the named issue so the retry starts from clean main.
+ * issue — but dedup still applies, open (in flight) and merged (done) alike
+ * (decision 6; WI-6 FR-002). Also cleans a stale fix branch for the named
+ * issue so the retry starts from clean main.
  */
 export async function runOverrideIssue(
   input: SingleIssueInput,
@@ -751,6 +757,9 @@ export async function runOverrideIssue(
   const split = await splitQueue(deps, input.repoDir, [input.issue]);
   if (split.skippedDuplicate.includes(input.issue.id)) {
     return { kind: "skipped-duplicate", id: input.issue.id };
+  }
+  if (split.skippedMerged.includes(input.issue.id)) {
+    return { kind: "skipped-merged", id: input.issue.id };
   }
   return { kind: "run", outcome: await runSingleIssue(input, deps) };
 }
@@ -863,7 +872,10 @@ async function main(): Promise<void> {
   const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
     ghJson: realGhJson,
     async listOpenPrs(dir) {
-      return JSON.parse(realGhJson(openPrListArgs(), dir)) as OpenPr[];
+      return JSON.parse(realGhJson(prListArgs("open"), dir)) as OpenPr[];
+    },
+    async listMergedPrs(dir) {
+      return JSON.parse(realGhJson(prListArgs("merged"), dir)) as MergedPr[];
     },
     async listFixBranches(dir) {
       return [...new Set([...localFixBranches(dir), ...remoteFixBranches(dir)])];
@@ -895,6 +907,10 @@ async function main(): Promise<void> {
     );
     if (result.kind === "skipped-duplicate") {
       console.log(`[${result.id}] skipped — an open PR already covers it`);
+      return;
+    }
+    if (result.kind === "skipped-merged") {
+      console.log(`[${result.id}] skipped — a merged PR already covers it`);
       return;
     }
     if (result.outcome.prUrl) {

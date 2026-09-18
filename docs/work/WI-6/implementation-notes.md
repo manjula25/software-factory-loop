@@ -35,3 +35,41 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
      rejected as Speculative Generality at n=2 (reviewer's own conclusion).
      Revisit at n=3.
 
+### T2 — merged-PR dedup (FR-002, slice 2)
+
+- **Dispatched:** 2026-09-18. Size: small-medium. Risk: medium (touches the live
+  dedup seam; R3 refactor of `openPrListArgs`; opted-out byte-identity pinned).
+  Budget: one leaf session; focused queue+loop vitest + typecheck + full `npm test`.
+- **Result:** ACCEPTED. Controller re-ran everything fresh on the final tree:
+  focused `src/queue.test.ts` + `src/loop.test.ts` 81/81 exit 0; typecheck exit 0;
+  full suite 10 files / 155 tests (147 + 8 new), exit 0. Candidate = working tree
+  vs base `5ed4590`; 4 changed paths, all within the allowed set.
+- **Mid-task correction (controller, pre-review):** the leaf surfaced that
+  `runOverrideIssue` (`--issue N`) checked only `skippedDuplicate` — a
+  merged-covered issue would be re-run under the override. FR-002 is not
+  queue-mode-only, so the controller extended the task: new `skipped-merged`
+  override outcome + CLI message, RED observed first (kind "run" received where
+  "skipped-merged" expected). This extension went through the reviews below.
+- **Reviews (same identity, sequential):** specification review APPROVED (all four
+  acceptance states + override extension verified at the seam; no scope creep
+  beyond D8 mechanics; Task-4 `mainRevertsPr` deferral respected); code-quality
+  review APPROVED (no standard violations; three non-blocking judgement calls
+  below).
+- **Conservative decisions:** `MergedPr.number/url` carried now though unused by
+  dedup — D8 named them for the Task-4 revert net; reviewers checked and accepted
+  this as justified, not speculative. `QueueAcquisitionError` message reworded
+  ("listing PRs / fix branches failed") to stay truthful across both listings; no
+  test asserted the old text.
+- **Follow-ups (non-blocking, recorded):**
+  1. Quality nit: duplicated match predicate
+     `pr.headRefName === branch || token.test(pr.body)` in `splitQueue`
+     (src/queue.ts ~191 and ~198) — extract a `covers` predicate if a third
+     state ever appears.
+  2. Quality nit: `OPEN_PR_PAGE_LIMIT` now bounds both listings; rename to
+     `PR_PAGE_LIMIT` next time the export is touched (avoids churn-only rename
+     now).
+  3. Known deferral: merged-then-reverted PRs are deduped away until Task 4's
+     `mainRevertsPr` guard lands (spec'd, tracked, not a gap at this
+     checkpoint).
+
+

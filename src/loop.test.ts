@@ -325,6 +325,7 @@ function issueSandbox(
 interface QueueDepsConfig {
   issues?: NormalizedIssue[];
   prs?: { headRefName: string; body: string }[];
+  mergedPrs?: { number: number; url: string; headRefName: string; body: string }[];
   /** Id whose verification sandbox fails the reproduction test (issue-level failure). */
   failReproFor?: string;
   /** Preflight reports a stale baseline for every issue (harness-level abort). */
@@ -378,6 +379,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     ghJson: vi.fn((_args: string[], _cwd: string) =>
       JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
     listOpenPrs: vi.fn(async () => config.prs ?? []),
+    listMergedPrs: vi.fn(async () => config.mergedPrs ?? []),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
     runTriage: vi.fn(async () => {
@@ -427,6 +429,24 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-2");
     // strictly one sandbox at a time
     expect(maxOpen()).toBe(1);
+  });
+
+  it("skips a merged-covered issue as done and carries it into the summary counts line (WI-6 T2)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      mergedPrs: [
+        { number: 4, url: "https://example/pr/4", headRefName: "fix/gh-1", body: "" },
+      ],
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.skippedMerged).toEqual(["gh-1"]);
+    expect(summary.attempted).toEqual(["gh-2"]);
+    expect(summary.skippedDuplicate).toEqual([]);
+    const counts = formatSummary(summary).split("\n")[0]!;
+    expect(counts).toContain("| skipped-duplicate: 0");
+    expect(counts).toContain("| skipped-merged: 1");
   });
 
   it("aborts the whole queue on a harness-level failure (stale baseline), attempting nothing further", async () => {
@@ -595,6 +615,20 @@ describe("runOverrideIssue (--issue N single-issue mode, WI-2 T4)", () => {
     );
 
     expect(result).toEqual({ kind: "skipped-duplicate", id: "gh-1" });
+    expect(deps.runFixRun).not.toHaveBeenCalled();
+  });
+
+  it("skips the issue as done when a merged PR already covers it — no agent spend (WI-6 T2)", async () => {
+    const { deps } = makeQueueDeps({
+      mergedPrs: [{ number: 4, url: "https://example/pr/4", headRefName: "fix/gh-1", body: "" }],
+    });
+
+    const result = await runOverrideIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(result).toEqual({ kind: "skipped-merged", id: "gh-1" });
     expect(deps.runFixRun).not.toHaveBeenCalled();
   });
 

@@ -4,8 +4,9 @@ import {
   buildTriagePrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
-  openPrListArgs,
+  OPEN_PR_PAGE_LIMIT,
   parseTriageOutput,
+  prListArgs,
   QueueAcquisitionError,
   splitQueue,
   type QueueDeps,
@@ -19,6 +20,7 @@ function makeDeps(overrides: Partial<SplitDeps> = {}): SplitDeps {
   return {
     ghJson: () => "[]",
     listOpenPrs: async () => [],
+    listMergedPrs: async () => [],
     listFixBranches: async () => [],
     deleteRemoteBranch: async () => {},
     deleteBranch: async () => {},
@@ -122,13 +124,25 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
   it("pins the open-PR page explicitly, never narrower than the issue page", () => {
     // gh pr list defaults to 30 silently: past that, a fix already in flight
     // reads as absent and the harness opens a competing PR.
-    const args = openPrListArgs();
+    const args = prListArgs("open");
     const at = args.indexOf("--limit");
 
     expect(at).toBeGreaterThan(-1);
     expect(Number(args[at + 1])).toBeGreaterThanOrEqual(ISSUE_PAGE_LIMIT);
     expect(args).toContain("--state");
     expect(args).toContain("open");
+  });
+
+  it("pins the merged listing: same page bound, merged state, number/url added for the revert net", () => {
+    const args = prListArgs("merged");
+    const at = args.indexOf("--limit");
+
+    expect(at).toBeGreaterThan(-1);
+    expect(Number(args[at + 1])).toBe(OPEN_PR_PAGE_LIMIT);
+    expect(args).toContain("--state");
+    expect(args).toContain("merged");
+    const json = args.indexOf("--json");
+    expect(args[json + 1]).toBe("headRefName,body,number,url");
   });
 
   it("matches an id however a human capitalized it in the PR body", async () => {
@@ -216,6 +230,109 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
     );
     expect(localDeleted).toEqual([]);
     expect(remoteDeleted).toEqual([]);
+  });
+});
+
+describe("merged-PR dedup (WI-6 T2, FR-002)", () => {
+  it("(b) a merged PR covering the issue means done: skippedMerged, never eligible, no branch deletion", async () => {
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listMergedPrs: async () => [
+        { number: 7, url: "https://example/pr/7", headRefName: "fix/gh-2", body: "" },
+      ],
+      listFixBranches: async () => ["fix/gh-2"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1), issue(2)]);
+
+    expect(result.skippedMerged).toEqual(["gh-2"]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-1"]);
+    expect(result.skippedDuplicate).toEqual([]);
+    expect(localDeleted).toEqual([]);
+    expect(remoteDeleted).toEqual([]);
+  });
+
+  it("(b) matches a merged PR by body id token — exact, case-insensitive; gh-2 never matches gh-21", async () => {
+    const deps = makeDeps({
+      listMergedPrs: async () => [
+        { number: 8, url: "https://example/pr/8", headRefName: "feature/other", body: "Fixes GH-2" },
+        { number: 9, url: "https://example/pr/9", headRefName: "feature/x", body: "see gh-21 also" },
+      ],
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2)]);
+
+    expect(result.skippedMerged).toEqual(["gh-2"]);
+    expect(result.eligible).toEqual([]);
+  });
+
+  it("(c) a fix branch whose PR merged is never deleted-and-retried; an uncovered stale branch still is", async () => {
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listMergedPrs: async () => [
+        { number: 7, url: "https://example/pr/7", headRefName: "fix/gh-2", body: "" },
+      ],
+      listFixBranches: async () => ["fix/gh-2", "fix/gh-3"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2), issue(3)]);
+
+    expect(result.skippedMerged).toEqual(["gh-2"]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-3"]);
+    expect(result.staleBranchesDeleted).toEqual(["fix/gh-3"]);
+    expect(localDeleted).toEqual(["fix/gh-3"]);
+    expect(remoteDeleted).toEqual(["fix/gh-3"]);
+  });
+
+  it("(d) a branch whose PR was closed unmerged (in neither list) keeps today's delete-and-retry semantics", async () => {
+    const localDeleted: string[] = [];
+    const remoteDeleted: string[] = [];
+    const deps = makeDeps({
+      listFixBranches: async () => ["fix/gh-2"],
+      deleteBranch: async (_dir, branch) => {
+        localDeleted.push(branch);
+      },
+      deleteRemoteBranch: async (_dir, branch) => {
+        remoteDeleted.push(branch);
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2)]);
+
+    expect(result.skippedMerged).toEqual([]);
+    expect(result.skippedDuplicate).toEqual([]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-2"]);
+    expect(localDeleted).toEqual(["fix/gh-2"]);
+    expect(remoteDeleted).toEqual(["fix/gh-2"]);
+  });
+
+  it("checks merged before open — an issue covered by both lists reports as merged, not in-flight", async () => {
+    const deps = makeDeps({
+      listOpenPrs: async () => [{ headRefName: "fix/gh-1", body: "" }],
+      listMergedPrs: async () => [
+        { number: 5, url: "https://example/pr/5", headRefName: "fix/gh-1", body: "" },
+      ],
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1)]);
+
+    expect(result.skippedMerged).toEqual(["gh-1"]);
+    expect(result.skippedDuplicate).toEqual([]);
+    expect(result.eligible).toEqual([]);
   });
 });
 

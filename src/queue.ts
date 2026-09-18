@@ -15,10 +15,22 @@ export interface OpenPr {
   readonly body: string;
 }
 
+/**
+ * A merged fix PR (WI-6 FR-002). Carries `number`/`url` so later tasks
+ * (the revert net) can identify it; dedup itself only reads the
+ * `OpenPr` fields.
+ */
+export interface MergedPr extends OpenPr {
+  readonly number: number;
+  readonly url: string;
+}
+
 export interface QueueDeps {
   /** Runs `gh` with JSON output; throws on a non-zero exit. */
   ghJson(args: string[], cwd: string): string;
   listOpenPrs(repoDir: string): Promise<OpenPr[]>;
+  /** Merged PRs — a merged fix means the issue is done (WI-6 FR-002). */
+  listMergedPrs(repoDir: string): Promise<MergedPr[]>;
   /** Local and remote `fix/*` branch names that exist right now. */
   listFixBranches(repoDir: string): Promise<string[]>;
   /** `git push origin --delete`; resolves even if the branch is absent. */
@@ -43,23 +55,28 @@ export const ISSUE_PAGE_LIMIT = 30;
 
 /**
  * The dedup signal's own page bound. `gh pr list` silently defaults to 30: on a
- * repo with more open PRs than that, a fix already in flight on page 2 reads as
- * absent, so the issue is re-run and a competing PR opened. The bound is
- * explicit here and never narrower than the queue it filters.
+ * repo with more PRs than that, a fix already in flight (open) or already done
+ * (merged) on page 2 reads as absent, so the issue is re-run and a competing PR
+ * opened. The bound is explicit here, shared by both listings, and never
+ * narrower than the queue it filters.
  */
 export const OPEN_PR_PAGE_LIMIT = 100;
 
-/** Args for the open-PR dedup listing — exported so the bound above is testable. */
-export function openPrListArgs(): string[] {
+/**
+ * Args for a dedup PR listing — exported so the bound above is testable.
+ * `open` keeps exactly the historical fields; `merged` adds `number,url`
+ * (the revert net's identifiers) to the same shape.
+ */
+export function prListArgs(state: "open" | "merged"): string[] {
   return [
     "pr",
     "list",
     "--state",
-    "open",
+    state,
     "--limit",
     String(OPEN_PR_PAGE_LIMIT),
     "--json",
-    "headRefName,body",
+    state === "open" ? "headRefName,body" : "headRefName,body,number,url",
   ];
 }
 
@@ -115,7 +132,9 @@ export interface SplitResult {
   readonly eligible: NormalizedIssue[];
   /** Ids of issues an open PR already covers — skipped, costing nothing. */
   readonly skippedDuplicate: string[];
-  /** Stale `fix/<id>` branches deleted (no open PR owns them). */
+  /** Ids of issues a MERGED PR already fixed — done, never re-admitted (WI-6). */
+  readonly skippedMerged: string[];
+  /** Stale `fix/<id>` branches deleted (no open or merged PR owns them). */
   readonly staleBranchesDeleted: string[];
 }
 
@@ -129,10 +148,14 @@ function escapeRegExp(literal: string): string {
 }
 
 /**
- * Splits the normalized queue into eligible / skipped-duplicate, deleting
- * stale `fix/<id>` branches along the way. An issue is in flight when an
- * open PR's head branch is its fix branch or its body references the issue
- * by exact id token (`gh-1` never matches `gh-11`). Local stale-branch
+ * Splits the normalized queue into eligible / skipped-duplicate /
+ * skipped-merged, deleting stale `fix/<id>` branches along the way. A MERGED
+ * fix PR means the issue is done: matched by head branch or body id token
+ * under the same exact-token, case-insensitive rule as open PRs, checked
+ * BEFORE the open-PR check and before any branch deletion — a merged PR's
+ * branch is never delete-and-retried (WI-6 FR-002). An issue is in flight
+ * when an open PR's head branch is its fix branch or its body references the
+ * issue by exact id token (`gh-1` never matches `gh-11`). Local stale-branch
  * deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
  */
 export async function splitQueue(
@@ -141,18 +164,21 @@ export async function splitQueue(
   issues: readonly NormalizedIssue[],
 ): Promise<SplitResult> {
   let prs: OpenPr[];
+  let mergedPrs: MergedPr[];
   let branches: string[];
   try {
+    mergedPrs = await deps.listMergedPrs(repoDir);
     prs = await deps.listOpenPrs(repoDir);
     branches = await deps.listFixBranches(repoDir);
   } catch (error) {
     throw new QueueAcquisitionError(
-      `listing open PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
+      `listing PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
   const eligible: NormalizedIssue[] = [];
   const skippedDuplicate: string[] = [];
+  const skippedMerged: string[] = [];
   const staleBranchesDeleted: string[] = [];
 
   for (const issue of issues) {
@@ -160,6 +186,15 @@ export async function splitQueue(
     // Case-insensitive: a human PR body writes "Fixes GH-1" as often as "gh-1",
     // and skipping an issue costs nothing — it reappears in the next queue.
     const token = new RegExp(`\\b${escapeRegExp(issue.id)}\\b`, "i");
+    // Merged first: a merged fix is stronger than an in-flight one (a reopened
+    // PR keeps its head branch), and its branch must never reach deletion.
+    const done = mergedPrs.some(
+      (pr) => pr.headRefName === branch || token.test(pr.body),
+    );
+    if (done) {
+      skippedMerged.push(issue.id);
+      continue;
+    }
     const inFlight = prs.some(
       (pr) => pr.headRefName === branch || token.test(pr.body),
     );
@@ -175,7 +210,7 @@ export async function splitQueue(
     eligible.push(issue);
   }
 
-  return { eligible, skippedDuplicate, staleBranchesDeleted };
+  return { eligible, skippedDuplicate, skippedMerged, staleBranchesDeleted };
 }
 
 // ---------------------------------------------------------------------------

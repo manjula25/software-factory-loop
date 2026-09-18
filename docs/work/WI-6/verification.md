@@ -27,3 +27,34 @@ untouched base, and the focused suite was re-run fresh on the final tree.
 arrive T3+); `scripts/onboard.ts` was not executed live (it writes to a target
 repo; its serialization of the shaped object is covered by the unit seam). Not
 claimed: any merge, canary, review-pass, or notification behavior.
+
+## T2 — merged-PR dedup (FR-002)
+
+**Claim.** A merged fix PR (head-branch or exact-token body match, same rule as
+open PRs) means the issue is done: skipped, never re-admitted, its branch never
+delete-and-retried — in queue mode and under the `--issue N` override. Open-PR and
+closed-unmerged semantics unchanged; `prListArgs("open")` byte-identical to the old
+`openPrListArgs()`.
+
+**Commands (controller, fresh on the final candidate, working tree vs `5ed4590`):**
+
+- `npx vitest run src/queue.test.ts src/loop.test.ts` → 81/81 passed, exit 0
+  (8 new tests: merged head-branch skip, exact+case-insensitive token with
+  gh-2/gh-21 non-match, merged-covered branch never deleted while an uncovered
+  stale branch still is, closed-unmerged retry pinned, merged-before-open
+  precedence, merged-args pin, queue summary `skipped-merged` surfacing, and the
+  `runOverrideIssue` merged-skip).
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 155 tests passed, exit 0 (147 baseline + 8 new).
+
+**RED evidence.** Leaf observed: 7 failing tests in `src/queue.test.ts`
+(`skippedMerged` undefined; `prListArgs is not a function`) + 1 in
+`src/loop.test.ts` (summary `skippedMerged` undefined), plus the controller-added
+override test failing with kind "run" where "skipped-merged" was expected — all
+deterministic on the base, all green on the final tree.
+
+**Boundary.** Unit evidence at the acquisition/summary seams with stubbed gh deps.
+No live `gh pr list --state merged` call (T7 territory). A merged-then-reverted PR
+is still deduped away at this checkpoint — the `mainRevertsPr` guard is Task 4,
+spec'd and tracked. Not claimed: any behavior of the merge machinery itself (T3+).
+
