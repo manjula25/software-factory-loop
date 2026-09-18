@@ -1,0 +1,37 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy --issue 20
+
+[gh-20] Started on branch fix/gh-20
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-20-gh-20.log
+remote: 
+remote: Create a pull request for 'fix/gh-20' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-20        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-20 -> fix/gh-20
+branch 'fix/gh-20' set up to track 'origin/fix/gh-20'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-20
+   c719ddb..1d920fa  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 88984fd..1d920fa
+Fast-forward
+ src/loopfix/dates.py             |  5 ++++-
+ tests/fixed-issues/test_gh_20.py | 11 +++++++++++
+ tests/test_contract.py           | 20 ++++++++++++++++++++
+ 3 files changed, 35 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_20.py
+ create mode 100644 tests/test_contract.py
+[main c618b3b] Revert "fix(parse_iso8601): handle fractional seconds on naive timestamps (gh-20) (#21)"
+ Date: Sat Sep 19 00:11:18 2026 +0530
+ 2 files changed, 1 insertion(+), 15 deletions(-)
+ delete mode 100644 tests/fixed-issues/test_gh_20.py
+To github.com:manjula25/loop-fixtures-py.git
+   1d920fa..c618b3b  main -> main
+https://github.com/manjula25/loop-fixtures-py/pull/21#issuecomment-5734595741
+Loop finished without a PR — ⚠️ REVERTED gh-20: merge 1d920fa48fe3d16bfa8483603bcad307e0aa3aa3 reverted after canary went red — canary new failures vs baseline on merged main: tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises; revert: c618b3b9b5b10752e46ece527b94cecc6ff36098; comment: posted; notify: manjula25
+loop exit: 1

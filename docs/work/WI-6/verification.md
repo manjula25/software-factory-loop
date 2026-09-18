@@ -434,3 +434,50 @@ No behavioral change (a guard call with no configured secret keys behaves as a
 no-op pass-through; a documentation row), so the T7 pipeline evidence remains
 valid for this candidate. All other review findings triaged and recorded in
 `review.md` — none blocking.
+
+## T7b — canary-red with a REAL agent fix run (post-delivery, 2026-09-19)
+
+Closes the delivery's largest non-claim: the canary-red chain driven by a real
+agent-authored fix (T7 step 2 used a pre-authored branch). Same "base moved"
+scenario class, ZERO stubs — the production CLI, not a driver.
+
+**Seeding.** Fixtures local main = `88984fd` (pre-A) while origin/main = `c719ddb`
+(commit A: `tests/test_contract.py` pinning the whole-seconds-only naive
+contract — committed and pushed, then local main reset back so the fix run forks
+from pre-A). Issue #20 (open) reports the fractional-seconds gap as a user
+symptom.
+
+**Command.** `npm run loop -- --repo /home/bitcot/Documents/projects/loop-fixtures-py
+--provider claude-via-proxy --issue 20` — full verbatim log:
+`evidence/t7b-canary-red-real.log`, **exit 1**.
+
+**What ran, all real:** Docker preflight on pre-A main (green, baseline match) →
+REAL agent fix run on `fix/gh-20` (its own commit message, dates.py fix mirroring
+the UTC path, its own repro `tests/fixed-issues/test_gh_20.py`) → fresh-sandbox
+verification green → PR #21 with the gate-chain body → REAL bounded review call
+(verdict approve) → squash-merge `1d920fa` onto A+fix → `syncMainToOrigin`
+fast-forward → canary RED on
+`tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises`
+→ revert `c618b3b` pushed → `@manjula25 ⚠️ REVERTED` comment → run halted, exit 1,
+issue #20 left OPEN. The failure emission also exercised the `235c1bc`
+assertNoSecrets guard live (override path).
+
+**Independent end-state verification (never the run's own output):**
+`gh pr view 21` → MERGED @ `1d920fa`; `gh issue view 20` → OPEN;
+`git log origin/main` → `88984fd → c719ddb → 1d920fa → c618b3b (Revert)`;
+`gh api …/issues/comments/5734595741` → verbatim @-mention revert comment;
+`git show 1d920fa` → agent-authored fix + repro (Co-authored-by trailers, agent's
+own words); no `fix/gh-20`/`loop/review`/canary branches left.
+
+**Re-queue proof** (`evidence/t7b-requeue-proof.ts` + `.log`, real acquisition +
+splitQueue, exit 0): merged PR #21 covers gh-20 (would be skipped-merged without
+the guard), `mainRevertsPr(#21): true`, gh-20 back in `eligible` — FR-006/D4
+end-to-end behind a real agent-authored merge.
+
+**Cleanup.** origin/main force-reset (`--force-with-lease`) to `88984fd`; issue
+#20 closed as a test artifact with an explanatory comment; no scenario branches.
+No repo but the fixtures repo was touched.
+
+**Spend ledger.** One real fix-run agent execution + one bounded review call
+(existing loop cost class); canary/preflight/verification sandboxes are
+model-less; re-queue proof zero-LLM.

@@ -52,8 +52,12 @@ once with a real bounded model call (T6, verdict approve, ~19 s).
 
 ## Non-claims
 
-- No real agent-authored fix ran through the canary-red path (pre-authored branch
-  stands in); no merger-agent conflict resolution.
+- ~~No real agent-authored fix ran through the canary-red path (pre-authored
+  branch stands in)~~ — **closed 2026-09-19:** T7b re-ran the canary-red chain
+  through the production CLI with zero stubs and a real agent-authored fix
+  (PR #21, merged `1d920fa` → canary red → revert `c618b3b` → @-notify → halt,
+  exit 1; re-queue proven; `verification.md` T7b). No merger-agent conflict
+  resolution exercised.
 - `mainRevertsPr` reads the local `origin/main` tracking ref without its own fetch —
   a stale clone can misjudge re-queue until any fetch refreshes it
   (`syncMainToOrigin` prunes+fetches after every successful auto-merge).
