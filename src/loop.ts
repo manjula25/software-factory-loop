@@ -287,6 +287,11 @@ export function fixBranch(issue: NormalizedIssue): string {
  * main non-zero, which throws before any canary spend.
  */
 export function syncMainToOrigin(repoDir: string): void {
+  // Prune first (T7 live finding #2): `gh pr merge --delete-branch` removes
+  // the remote fix branch but leaves the stale remote-tracking ref behind in
+  // the target clone — the next run on the same issue would fork its fix
+  // branch from that stale ref and find the fix already committed.
+  execFileSync("git", ["fetch", "--prune", "origin"], { cwd: repoDir, stdio: "inherit" });
   const current = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: repoDir,
     encoding: "utf8",

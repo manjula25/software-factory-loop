@@ -922,6 +922,30 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
       }
     });
   });
+
+  it("prunes stale remote-tracking refs — gh --delete-branch after a merge leaves them, and the next run on the same issue forks its fix branch from the stale ref (T7 live finding #2)", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        // Simulate the post-merge state: a fix branch pushed, then deleted on
+        // the remote WITHOUT a prune (exactly what `gh pr merge
+        // --delete-branch` leaves behind in the target clone).
+        git(target, "checkout", "-q", "-b", "fix/gh-1");
+        writeFileSync(join(target, "c.txt"), "fix\n");
+        git(target, "add", "c.txt");
+        git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "fix");
+        git(target, "push", "-q", "origin", "fix/gh-1");
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        git(upstream, "branch", "-D", "fix/gh-1");
+        expect(git(target, "branch", "-r")).toContain("origin/fix/gh-1"); // stale ref present
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "branch", "-r")).not.toContain("origin/fix/gh-1"); // pruned
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("buildPrBody", () => {

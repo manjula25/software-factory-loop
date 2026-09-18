@@ -284,6 +284,22 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
 - **Follow-ups (non-blocking, recorded):** optional divergence test for the
   non-main fetch-ref path; `advanceUpstream()` test helper if the describe
   grows.
+- **Defect #2 (found live in T7, same day):** `gh pr merge --delete-branch`
+  deletes the remote fix branch but leaves a stale `origin/fix-<id>`
+  remote-tracking ref in the target clone; the NEXT run on the same issue
+  resolves its fix branch from the stale ref, finds the fix already
+  committed, collects 0 commits, and fails ("Fix run produced no commits" —
+  happened twice live; `evidence/t7-green-chain.log.2`). Fix: `syncMainToOrigin`
+  prunes first (`git fetch --prune origin`) — it runs immediately after every
+  successful `mergePr`, exactly when the stale ref is created. Real-git test
+  simulates push-then-remote-delete and asserts the prune. Controller-fresh:
+  focused 90/90, typecheck 0, full suite 195/195 (194+1). Reviews rerun on
+  the changed candidate (both APPROVED; advisories below).
+- **Defect-#2 advisories (recorded):** stale refs from HUMAN merges + remote
+  branch deletion on non-opted repos remain a pre-existing out-of-scope
+  condition (FR-004 non-claims) — name it at delivery; the upstream-advance
+  preamble now repeats in a fourth test — `advanceUpstream()` extraction
+  crossed threshold, folded into the pre-delivery cosmetics batch.
 
 
 
