@@ -1,5 +1,31 @@
 # WI-4 Verification
 
+## WI-4 completion verification — final branch state (2026-09-18)
+
+**Claim under test.** All three correctness-batch fixes from the WI-3b
+follow-up queue are implemented, reviewed, and verified: (1) the nesting
+guard refuses before any attachment fetch (zero network side effect),
+(2) a surviving `loop/onboard` branch kills onboarding loudly instead of
+silently reusing a stale fork (happy path re-proven live in Docker),
+(3) one shared suite-summary definition governs the verification gate,
+onboarding, and the preflight script (their prior disagreement resolved by
+broadening to the counted-outcome set, verified fail-safe).
+
+- Final head `8b93a83` (code identities `7687e9d`, `27421a6`, `0990db8`;
+  the commit above the last is docs-only), working tree clean (untracked
+  `.env` only — gitignored, never committed).
+- `npm run typecheck` exit 0; `npm test` 10 files / 145 tests (baseline 137
+  at `ce763cd`; net +8 permanent pins). Diff vs fixed point `ce763cd`:
+  11 files, +407/−41.
+- Every checkpoint (T1, T2, T3) passed sequential spec + quality reviews on
+  pinned identities; RED empirically re-verified for T1 and T3 by the spec
+  reviewers on throwaway clones; T2's mechanism check independently
+  reproduced by its spec reviewer.
+- Non-claims: no live preflight-check run (no test seam; logic shared with
+  the live-proven onboarding path — see T3 entry); T2's pinned-branch loud
+  path proven at the git-mechanism level, not by wedging the fixtures
+  clone; no client data touched (hard constraint 3).
+
 ## Task 3 (T3) — one shared suite-summary definition — candidate `0990db8`
 
 - Baseline at `c46e7a7` (T2 accepted): typecheck 0; 139 tests green.
