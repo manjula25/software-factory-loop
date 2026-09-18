@@ -1,0 +1,9 @@
+open issues: gh-18
+merged cover: PR #19 (fix/gh-18) — without the revert guard, gh-18 would be skipped-merged
+mainRevertsPr(#19): true
+eligible: gh-18
+skipped-duplicate: (none)
+skipped-merged: (none)
+stale branches deleted: (none)
+RE-QUEUE PROVEN: gh-18 is eligible again
+proof exit: 0

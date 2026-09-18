@@ -301,5 +301,68 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
   preamble now repeats in a fourth test — `advanceUpstream()` extraction
   crossed threshold, folded into the pre-delivery cosmetics batch.
 
+### T7 — pipeline integration (FR-010, slice 7)
+
+- **Dispatched:** 2026-09-18. Controller-run evidence collection (no leaf —
+  the plan routes product defects back through T4b, none found beyond the two
+  already fixed there). Candidate: worktree HEAD `7664e47` throughout.
+- **Step 1 — green chain, live.** Four runs were needed; the first three are
+  the live defect findings already recorded under T4b (run 1: stale
+  `origin/fix-gh-14` → "no commits"; run 2: syncMain crash, uncanaried PR #16
+  recovered by manual revert `8f940ee` — which incidentally live-proved the
+  `mainRevertsPr` re-queue rule; run 3: the same stale-ref class from
+  `--delete-branch`, → defect-#2 prune fix). Run 4
+  (`evidence/t7-green-chain.log.3`, exit 0): PR #17 opened with the
+  gate-chain body → real bounded review call, verdict approve → squash-merged
+  `88984fd` → canary green → issue #14 closed with the FR-008 evidence
+  comment. Controller independently verified via `gh pr view 17` (MERGED),
+  `gh issue view 14` (CLOSED + comment), `git log` (main = `88984fd`), and no
+  stray fix/canary branches or open PRs.
+- **Step 2 — canary-red, live, zero LLM.** Seeded by hand: commit A `453801a`
+  on fixtures main (`tests/test_contract.py` pinning the current
+  naive-timestamp contract — whole-seconds-only, raises on fractional input),
+  issue #18 reporting that exact gap as a user symptom, and `fix/gh-18`
+  `95dfa37` authored from pre-A main (fractional-naive support + repro
+  `tests/fixed-issues/test_gh_18.py`). Driver
+  `evidence/canary-red-driver.ts` runs `runQueue` with the real production
+  wiring — real gh acquisition/dedup, real Docker preflight + verification +
+  canary sandboxes, real git PR/merge/revert — stubbing exactly four seams
+  (documented in its header): `runFixRun` (returns the pre-authored branch +
+  authored evidence blocks), `runReview` (`approve` — the pass itself was
+  live-exercised in T6), `listFixBranches` (`[]` — acquisition would otherwise
+  delete the pre-authored branch as stale), `runTriage` (never called).
+  Result (`evidence/t7-canary-red.log`, exit 1, captured verbatim): PR #19
+  opened → squash-merged `4ef7f69` → canary RED on
+  `tests/test_contract.py::…test_naive_timestamp_with_fractional_seconds_raises`
+  → revert `eecb13a` pushed to main → `@manjula25 ⚠️ REVERTED` comment posted
+  (PR comment verified via `gh api`) → `QueueAbortedError` with `⚠️ REVERTED`
+  summary → exit 1. Controller independently verified: PR #19 MERGED, issue
+  #18 OPEN (the red path never closes), `Revert "… (#19)"` on origin/main, no
+  stray branches.
+- **Deviations from the plan's step-2 sketch (all same construction shape,
+  strictly more real pipeline; documented, not silent):** (1) the plan's
+  `divide`/ZeroDivision example was hypothetical — fixtures has no such
+  function; the pivot is the repo's real uncovered behavior gap
+  (`parse_iso8601` naive fractional input), same contract-test construction.
+  (2) the driver drives `runQueue` (real acquisition + dedup included) rather
+  than `runSingleIssue` alone; (3) the PR is opened by the driver's real
+  `createPr` wiring rather than by hand.
+- **Step 3 — re-queue proof.** `evidence/requeue-proof.ts` runs the REAL
+  acquisition + `splitQueue` (no stubs) against the post-revert state
+  (`evidence/t7-requeue-proof.log`, exit 0): merged PR #19 covers gh-18
+  (without the guard it would be skipped-merged), `mainRevertsPr(#19)` true,
+  and gh-18 is back in `eligible` — FR-006/D4 end-to-end.
+- **Step 4 — cleanup.** Fixtures main force-reset (`--force-with-lease`) to
+  `88984fd` (the pre-scenario seeded state); issue #18 closed as a test
+  artifact with an explanatory comment; no scenario branches remain local or
+  remote; no merge touched any repo but the fixtures repo.
+- **Steps 5–6.** verification.md T7 section (incl. the honest spend ledger
+  and the canary-evidence boundary) + this commit, message verbatim from the
+  plan.
+- **Follow-ups (non-blocking, recorded):** `mainRevertsPr` reads
+  `origin/main` without an explicit fetch (T4 follow-up #5, unchanged — the
+  re-queue proof was fresh only because the revert was pushed from the same
+  clone); fold into the cosmetics batch or delivery notes.
+
 
 

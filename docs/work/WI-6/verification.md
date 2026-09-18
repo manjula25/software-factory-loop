@@ -229,3 +229,131 @@ test, throw-path branch-deletion test, `runSingleIssue` extraction at
 threshold, `BoundedRunOptions` named type.
 
 
+
+## T7 — pipeline integration (FR-010)
+
+**Claim.** The full opt-in chain runs live, end-to-end, against the fixtures
+repo in local Docker: fix run → fresh-sandbox verification → PR with the
+gate-chain body → bounded pre-merge review → squash-merge → post-merge canary
+on merged main → green: issue closed with an evidence comment; red:
+auto-revert on main, run halt (exit 1), @-mention comment on the merged PR,
+and the reverted issue eligible again on the next run.
+
+**Candidate identity.** Worktree HEAD `7664e47` (both T4b defect fixes
+included) for every run below; `npm test` 10 files / 195 tests and
+`npm run typecheck` exit 0 fresh at this commit (T4b record).
+
+### Step 1 — green chain, live (controller-run, 2026-09-18)
+
+Command: `npm run loop -- --repo /home/bitcot/Documents/projects/loop-fixtures-py
+--provider claude-via-proxy --issue 14`. Full log:
+`evidence/t7-green-chain.log.3` (exit 0).
+
+- PR #17 opened (gate-chain PR body: machine-merge wording, canary named) →
+  real bounded review call → verdict `approve` → squash-merged
+  (`88984fdc…`) → canary green on merged main → issue #14 closed with the
+  FR-008 evidence comment naming PR, merge commit, and canary result.
+- Independent end-state verification (never the run's own output):
+  `gh pr view 17 --json state,mergeCommit` → MERGED @ `88984fd`;
+  `gh issue view 14 --json state` → CLOSED with the evidence comment;
+  `git log origin/main` → `88984fd` on top; no `fix/gh-14` branches (local or
+  remote) and no open PRs.
+- Runs 1–3 failed live and are recorded evidence for the two T4b defects
+  (`evidence/t7-green-chain.log` — syncMain crash; `.log.2` — stale-ref
+  "no commits"); the uncanaried PR #16 from run 2 was recovered by a manual
+  `git revert` + push (`8f940ee`), which incidentally live-proved the
+  `mainRevertsPr` re-queue rule before step 3 proved it deliberately.
+
+### Step 2 — canary-red, live, ZERO LLM (controller-run, 2026-09-18)
+
+Seeding (hand-authored, all pushed before the driver ran): fixtures main
+commit A `453801a` — `tests/test_contract.py` pins the CURRENT
+`parse_iso8601` contract (naive input is whole-seconds-only; fractional naive
+input raises ValueError) so the suite stays green and the `[]` baseline
+holds; issue #18 reports the uncovered gap as a user symptom;
+`fix/gh-18` `95dfa37` is authored from pre-A main (fractional-naive support +
+repro `tests/fixed-issues/test_gh_18.py`) — genuinely green on its own tree.
+
+Command: `npx tsx docs/work/WI-6/evidence/canary-red-driver.ts`. Full log:
+`evidence/t7-canary-red.log` (**exit 1** — the halt).
+
+Zero-LLM boundary (documented in the driver header): stubbed =
+`runFixRun` (returns the pre-authored branch + authored RED/GREEN blocks —
+the fresh-sandbox verification gate still runs FOR REAL in Docker),
+`runReview` (`approve`; the pass was live-exercised in T6), `listFixBranches`
+(`[]`; real acquisition would delete the pre-authored branch as stale),
+`runTriage` (never called). Everything else is the production wiring: real gh
+acquisition + dedup, real Docker preflight/verification/canary sandboxes,
+real git push/PR/merge/revert, real gh comment.
+
+Verbatim results (lines from the log):
+
+```
+⚠️ REVERTED gh-18: pr https://github.com/manjula25/loop-fixtures-py/pull/19 merge 4ef7f69… revert eecb13a… — canary: canary new failures vs baseline on merged main: tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises
+notify: @manjula25
+Queue aborted — gh-18: ⚠️ REVERTED gh-18: … comment: posted; notify: manjula25
+driver exit: 1
+```
+
+Independent end-state verification: PR #19 `state=MERGED` (`gh pr view`);
+the PR comment body read via `gh api …/issues/19/comments` carries
+`@manjula25 ⚠️ REVERTED:`, the merge commit, the canary evidence, the revert
+commit, and the halt statement verbatim (FR-006/FR-007); `git log origin/main`
+showed `Revert "… (#19)"` (`eecb13a`) on the squash merge (`4ef7f69`) on top
+of A (`453801a`); issue #18 remained OPEN (the red path never closes);
+no `fix/gh-18`/`loop/canary-gh-18` branches remained. The contract
+contradiction — a failure NO pre-merge step can see, because the branch's
+verification tree predates A — is exactly the base-moved class the canary
+exists to catch (FR-005).
+
+### Step 3 — re-queue proof (FR-006/D4 end-to-end)
+
+Command: `npx tsx docs/work/WI-6/evidence/requeue-proof.ts` — the REAL
+`listOpenIssues` + `splitQueue` (no stubs) against the post-revert state.
+Log: `evidence/t7-requeue-proof.log`, exit 0:
+
+```
+merged cover: PR #19 (fix/gh-18) — without the revert guard, gh-18 would be skipped-merged
+mainRevertsPr(#19): true
+eligible: gh-18
+RE-QUEUE PROVEN: gh-18 is eligible again
+```
+
+### Step 4 — cleanup
+
+Fixtures main force-reset (`--force-with-lease`) to `88984fd` (the
+pre-scenario seeded state, verified `main...origin/main` clean); issue #18
+closed as a test artifact with an explanatory comment; no scenario branches
+remain. No merge touched any repository but the fixtures repo.
+
+### Canary evidence boundary (honest non-claim)
+
+The canary is a model-less sandbox suite run and writes no log file of its
+own under `.sandcastle/logs/` (only agent runs log there). Green-path canary
+evidence is therefore indirect but structural: the FR-008 close comment is
+constructed ONLY on the canary-green branch of `runSingleIssue`, the issue
+close and merged-outcome only happen after it, and the run exited 0.
+Red-path canary evidence is fully verbatim (the new failure is named in the
+`⚠️ REVERTED` and `FAILED` summary lines — see step 2).
+
+### LLM spend ledger (WI-6 total, honest)
+
+- T6 review exercise: 1 bounded call, ~1.2k tokens (recorded in the T6
+  section).
+- Green chain (step 1): 4 fix-run agent executions (runs 1–4; runs 1 and 3
+  produced no commits and failed before any PR), 2 review-pass calls
+  (runs 2 and 4 — run 2's merged PR #16 was the one recovered by manual
+  revert). This is the existing loop cost the plan named as "not new";
+  fix-run token usage is not precisely metered by the POC (Sandcastle run
+  logs retained under the fixtures repo's `.sandcastle/logs/`).
+- Canary-red driver + re-queue proof: **zero** LLM calls (verified by
+  construction — both agent-run seams stubbed; no provider invocation).
+- Total auxiliary (new-surface) spend: 3 bounded review calls, ~3.6k tokens.
+
+**Remaining risks / non-claims.** A canary-red driven by a real agent fix run
+(rather than the pre-authored branch) is the same machinery with real spend
+and was not separately exercised. `mainRevertsPr` reads `origin/main` without
+an explicit fetch (fresh in the proof only because the revert was pushed from
+the same clone) — recorded follow-up. Stale refs from HUMAN merges +
+remote branch deletion on non-opted repos remain out of scope (FR-004
+non-claims), to be named at delivery.

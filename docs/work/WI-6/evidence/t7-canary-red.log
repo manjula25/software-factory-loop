@@ -1,0 +1,29 @@
+[canary-red] pre-authored fix/gh-18 @ 95dfa37110d2d8708ddf5f21448d4a1c1d4ad4ea, autoMerge=true
+[canary-red] acquiring the real issue queue from manjula25/loop-fixtures-py
+[canary-red] open issues: gh-18
+Everything up-to-date
+branch 'fix/gh-18' set up to track 'origin/fix/gh-18'.
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-18
+   453801a..4ef7f69  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 453801a..4ef7f69
+Fast-forward
+ src/loopfix/dates.py             |  8 ++++++--
+ tests/fixed-issues/test_gh_18.py | 16 ++++++++++++++++
+ 2 files changed, 22 insertions(+), 2 deletions(-)
+ create mode 100644 tests/fixed-issues/test_gh_18.py
+[main eecb13a] Revert "fix(parse_iso8601): handle fractional seconds on naive timestamps (gh-18) (#19)"
+ Date: Fri Sep 18 21:42:17 2026 +0530
+ 2 files changed, 2 insertions(+), 22 deletions(-)
+ delete mode 100644 tests/fixed-issues/test_gh_18.py
+To github.com:manjula25/loop-fixtures-py.git
+   4ef7f69..eecb13a  main -> main
+https://github.com/manjula25/loop-fixtures-py/pull/19#issuecomment-5732792686
+Run summary — attempted: 1 (fixed: 0, failed: 1) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+⚠️ REVERTED gh-18: pr https://github.com/manjula25/loop-fixtures-py/pull/19 merge 4ef7f697b8b4b682fa11fbf4e63fc68f42b60726 revert eecb13ab7fb2fdfd1f754feeb9b5974d7a8a88e3 — canary: canary new failures vs baseline on merged main: tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises
+notify: @manjula25
+FAILED gh-18: ⚠️ REVERTED gh-18: merge 4ef7f697b8b4b682fa11fbf4e63fc68f42b60726 reverted after canary went red — canary new failures vs baseline on merged main: tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises; revert: eecb13ab7fb2fdfd1f754feeb9b5974d7a8a88e3; comment: posted; notify: manjula25
+Queue aborted — gh-18: ⚠️ REVERTED gh-18: merge 4ef7f697b8b4b682fa11fbf4e63fc68f42b60726 reverted after canary went red — canary new failures vs baseline on merged main: tests/test_contract.py::TestNaiveTimestampContract::test_naive_timestamp_with_fractional_seconds_raises; revert: eecb13ab7fb2fdfd1f754feeb9b5974d7a8a88e3; comment: posted; notify: manjula25
+driver exit: 1
