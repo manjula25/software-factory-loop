@@ -102,6 +102,8 @@ interface DepOverrides {
   /** Preflight (first) sandbox — override to simulate a stale baseline. */
   preflight?: FixSandboxHandle;
   env?: Record<string, string>;
+  /** Override to simulate a committed `.loop-harness` on the base branch. */
+  pathCommittedOnBranch?: (repoDir: string, branch: string, path: string) => Promise<boolean>;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -121,6 +123,7 @@ function makeDeps(overrides: DepOverrides = {}) {
       url: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       ...args,
     })),
+    pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
   };
 }
 
@@ -321,6 +324,8 @@ interface QueueDepsConfig {
   triageStdout?: string;
   /** The triage run itself throws (sandbox/credentials failure), not its output. */
   triageThrows?: string;
+  /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
+  pathCommittedOnBranch?: boolean;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -371,6 +376,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       }
       return config.triageStdout ?? "";
     }),
+    pathCommittedOnBranch: vi.fn(async () => config.pathCommittedOnBranch === true),
   };
   return { deps, maxOpen: () => maxOpen };
 }
@@ -877,6 +883,55 @@ describe("attachments in the loop (WI-3 T2)", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("aborts loudly with zero spend when main has .loop-harness committed (nesting guard)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-nest-guard-"));
+    try {
+      const deps = makeDeps({ pathCommittedOnBranch: async () => true });
+
+      const outcome = await runSingleIssue(
+        { issue: issueWithAttachment, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeUndefined();
+      // names the root cause and the remediation
+      expect(outcome.failure).toMatch(/committed|git rm/);
+      expect(outcome.failure).toContain(".loop-harness");
+      expect(outcome.failureKind).toBe("harness"); // repo-wide: the queue must abort too
+      expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
+      expect(deps.runFixRun).not.toHaveBeenCalled(); // zero agent spend
+      expect(deps.createPr).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a committed .loop-harness on main aborts the queue (harness-level) — attempted stays honest, nothing further runs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [issueWithAttachment, queueIssue(2)],
+        pathCommittedOnBranch: true,
+      });
+
+      const error = await runQueue(queueRunInput({ profile: clearedProfile }), deps).catch(
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(QueueAbortedError);
+      const aborted = error as QueueAbortedError;
+      expect(aborted.message).toMatch(/committed/);
+      expect(aborted.summary.attempted).toEqual(["gh-1"]); // honest: gh-1 was reached
+      expect(aborted.summary.fixed).toEqual([]);
+      expect(deps.runFixRun).not.toHaveBeenCalled();
+      expect(deps.createPr).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -938,7 +993,9 @@ describe("plain-list suffix attachments join discovery (WI-3 T7)", () => {
   });
 
   // PIN (expected green now): FR-001's scan for GitHub issues reads the
-  // description only — attachedLog is fenced log content, deliberately unscanned.
+  // description only — attachedLog is an extracted copy of a fenced block that
+  // the description already carries verbatim (this synthetic issue omits it
+  // from the description, so nothing is discovered).
   it("PIN: a GitHub attachedLog (fenced log content) carrying a URL is still not discovered", async () => {
     const fetchSpy = vi.fn(async () => new Response("should never be fetched"));
     vi.stubGlobal("fetch", fetchSpy);

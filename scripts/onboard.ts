@@ -14,14 +14,22 @@
  * re-runs in every sandbox.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { onboardProfile } from "../src/onboard-profile.js";
+import { onboardProfile, parseSuiteBaseline } from "../src/onboard-profile.js";
 import { createFixSandbox } from "../src/sandcastle-adapter.js";
-import { parsePytestFailures } from "../src/verify.js";
 
 async function main(): Promise<void> {
   const repoDir = resolve(process.argv[2] ?? ".");
   const startedAt = Date.now();
+
+  // Sandcastle reuses an existing branch instead of re-forking, so a persisted
+  // loop/onboard made re-onboarding test stale code (observed live 2026-09-18).
+  try {
+    execFileSync("git", ["branch", "-D", "loop/onboard"], { cwd: repoDir, stdio: "ignore" });
+  } catch {
+    // Absent branch is fine — nothing to clean up.
+  }
 
   const sandbox = await createFixSandbox({
     cwd: repoDir,
@@ -41,15 +49,9 @@ async function main(): Promise<void> {
 
     const suite = await sandbox.exec(pending.testCmd);
     const durationSec = Math.round((Date.now() - startedAt) / 1000);
-    const baselineFailures = parsePytestFailures(suite.stdout);
-
-    // The repo is born red: a clean suite run that exits 0 or shows no
-    // failures means our assumptions are wrong — refuse to record a profile.
-    if (suite.exitCode === 0 || baselineFailures.length === 0) {
-      throw new Error(
-        `expected a born-red suite, got exit ${suite.exitCode} with ${baselineFailures.length} failures`,
-      );
-    }
+    // Throws SuiteDidNotRunError when there is no evidence the suite executed;
+    // a green suite is valid and onboards with an empty baseline.
+    const baselineFailures = parseSuiteBaseline(suite.exitCode, suite.stdout);
 
     const profile = onboardProfile(argv, { baselineFailures, durationSec });
     const profileDir = resolve(repoDir, ".loop-harness");
