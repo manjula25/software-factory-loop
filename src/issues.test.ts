@@ -112,8 +112,18 @@ describe("spec-doc normalization (WI-3, FR-005)", () => {
     const entries = parseSpecDoc(doc);
     expect(entries.map((e) => e.id)).toEqual([
       "spec-camera-json-overwrite",
-      "spec-camera-json-overwrite-2",
+      "spec-camera-json-overwrite--2",
     ]);
+  });
+
+  it("a duplicate's counter id never collides with a literal 'Foo 2' heading's id", () => {
+    // slugify("Foo 2") is "foo-2" and slugify output can never contain "--",
+    // so the duplicate counter (spec-foo--2) and the literal's plain id
+    // (spec-foo-2) are distinct by construction.
+    const doc = "## Foo\n\none\n\n## Foo\n\ntwo\n\n## Foo 2\n\nthree\n";
+    const entries = parseSpecDoc(doc);
+    expect(entries.map((e) => e.id)).toEqual(["spec-foo", "spec-foo--2", "spec-foo-2"]);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(3);
   });
 
   it("throws SpecDocParseError on content with zero ## headings", () => {
@@ -213,8 +223,17 @@ describe("plain-list normalization (WI-3, FR-006)", () => {
     const entries = parsePlainList("Camera JSON overwrite\n\nCamera JSON overwrite\n");
     expect(entries.map((e) => e.id)).toEqual([
       "list-camera-json-overwrite",
-      "list-camera-json-overwrite-2",
+      "list-camera-json-overwrite--2",
     ]);
+  });
+
+  it("a duplicate's counter id never collides with a literal 'Foo 2' line's id", () => {
+    // slugify("Foo 2") is "foo-2" and slugify output can never contain "--",
+    // so the duplicate counter (list-foo--2) and the literal's plain id
+    // (list-foo-2) are distinct by construction.
+    const entries = parsePlainList("Foo\n\nFoo\n\nFoo 2\n");
+    expect(entries.map((e) => e.id)).toEqual(["list-foo", "list-foo--2", "list-foo-2"]);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(3);
   });
 
   it("throws PlainListParseError on comments-only and empty text", () => {

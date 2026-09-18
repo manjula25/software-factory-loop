@@ -92,7 +92,9 @@ export function parseSpecDoc(text: string): NormalizedIssue[] {
     seen.set(slug, count);
 
     return {
-      id: count === 1 ? `spec-${slug}` : `spec-${slug}-${count}`,
+      // slugify output can never contain `--` (runs collapse to one `-`), so a
+      // `--N` counter id can never collide with a literal "Foo N" section's id.
+      id: count === 1 ? `spec-${slug}` : `spec-${slug}--${count}`,
       description: `# ${title}\n\n${body}`.trim(),
       ...(logMatch ? { attachedLog: logMatch[1] } : {}),
       sourceType: "spec-doc" as const,
@@ -140,7 +142,9 @@ export function parsePlainList(text: string): NormalizedIssue[] {
     seen.set(slug, count);
 
     return {
-      id: count === 1 ? `list-${slug}` : `list-${slug}-${count}`,
+      // slugify output can never contain `--` (runs collapse to one `-`), so a
+      // `--N` counter id can never collide with a literal "Foo N" entry's id.
+      id: count === 1 ? `list-${slug}` : `list-${slug}--${count}`,
       description,
       ...(suffixMatch ? { attachedLog: suffixMatch[1] } : {}),
       sourceType: "plain-list" as const,
