@@ -95,6 +95,19 @@ function sandboxHandle(suiteOutput: string, reproExit = 0, installExit = 0): Fix
   };
 }
 
+/**
+ * WI-6 T4: a canary sandbox whose close() is observable — the canary must be
+ * closed and its branch deleted on EVERY path (green, red, install failure).
+ */
+function trackedCanary(suiteOutput: string, installExit = 0): {
+  handle: FixSandboxHandle & { commands: string[] };
+  close: ReturnType<typeof vi.fn>;
+} {
+  const base = sandboxHandle(suiteOutput, 0, installExit);
+  const close = vi.fn(async () => ({}));
+  return { handle: { ...base, close }, close };
+}
+
 interface DepOverrides {
   fixOutcome?: FixRunOutcome;
   /** Verification (second) sandbox; the preflight sandbox defaults to a matching baseline. */
@@ -108,6 +121,12 @@ interface DepOverrides {
   mergeCommit?: string;
   /** Simulated merge failure (conflict / API error) on opted-in runs. */
   mergeThrows?: string;
+  /** Canary (post-merge) sandbox; defaults to a green suite (failures ⊆ baseline). */
+  canary?: FixSandboxHandle;
+  /** revertMerge result; defaults to a fixed revert commit. */
+  revertCommit?: string;
+  /** Simulated revert failure (conflict / push error) on canary-red runs. */
+  revertThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -116,7 +135,13 @@ function makeDeps(overrides: DepOverrides = {}) {
   return {
     env,
     runFixRun: vi.fn(async (_input: { branch: string; prompt: string }) => overrides.fixOutcome ?? fixOutcome()),
-    createFixSandbox: vi.fn(async () => {
+    createFixSandbox: vi.fn(async (input: { branch: string }) => {
+      // The canary sandbox is distinguished by its branch (loop/canary-<id>),
+      // not by call order — the preflight (loop/preflight-<id>) also forks
+      // from main, so baseBranch alone cannot tell them apart.
+      if (input.branch.startsWith("loop/canary-")) {
+        return overrides.canary ?? sandboxHandle(SUITE_AFTER_FIX);
+      }
       sandboxCalls += 1;
       return sandboxCalls === 1
         ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
@@ -133,6 +158,15 @@ function makeDeps(overrides: DepOverrides = {}) {
       }
       return { mergeCommit: overrides.mergeCommit ?? "m0ckmerge" };
     }),
+    // WI-6 T4 seams
+    syncMain: vi.fn(async (_repoDir: string) => {}),
+    revertMerge: vi.fn(async () => {
+      if (overrides.revertThrows !== undefined) {
+        throw new Error(overrides.revertThrows);
+      }
+      return { revertCommit: overrides.revertCommit ?? "r3vert0000" };
+    }),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
   };
 }
@@ -309,6 +343,7 @@ describe("runSingleIssue auto-merge (WI-6 T3, FR-003/FR-004 wiring)", () => {
     expect(outcome.merged).toEqual({
       prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       mergeCommit: "deadbeef",
+      canaryGreen: true, // WI-6 T4: `merged` now implies the canary ran and was green
     });
     // FR-003 at the same seam: the opted-in PR body states the machine gate
     // chain, never the human-review sentence.
@@ -337,6 +372,241 @@ describe("runSingleIssue auto-merge (WI-6 T3, FR-003/FR-004 wiring)", () => {
     expect(outcome.merged).toBeUndefined();
     expect(outcome.mergeFailure).toContain("merge conflict");
     expect(outcome.prUrl).toBe("https://github.com/manjula25/loop-fixtures-py/pull/9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-6 T4: post-merge canary, auto-revert, run halt, @-mention notification
+// (FR-005/006/007). The canary is a THIRD sandbox, on `loop/canary-<id>` from
+// synced main, created only after a successful merge on an opted-in profile.
+// ---------------------------------------------------------------------------
+
+describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)", () => {
+  const optedInNotify: ProjectProfile = { ...profile, autoMerge: true, notifyHandle: "manjula25" };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+  /** Suite with a failure the baseline does not have — the canary-red trigger. */
+  const CANARY_RED_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
+
+  it("(a) merged success: syncMain first; canary sandbox created on loop/canary-<id> from main; install + testCmd run inside; result recorded; sandbox closed and canary branch deleted", async () => {
+    const canary = trackedCanary(SUITE_AFTER_FIX); // green: failures ⊆ baseline
+    const deps = makeDeps({ canary: canary.handle });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.syncMain).toHaveBeenCalledTimes(1);
+    expect(deps.syncMain).toHaveBeenCalledWith("/tmp/repo");
+    expect(deps.createFixSandbox).toHaveBeenCalledWith({
+      cwd: "/tmp/repo",
+      branch: "loop/canary-gh-1",
+      baseBranch: "main",
+      imageName: "sandcastle-loop",
+    });
+    expect(canary.handle.commands).toEqual([profile.installCmd, profile.testCmd]);
+    expect(canary.close).toHaveBeenCalledTimes(1);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/canary-gh-1");
+    expect(outcome.merged).toEqual({ prUrl: PR_URL, mergeCommit: "m0ckmerge", canaryGreen: true });
+    expect(outcome.failure).toBeUndefined();
+    expect(deps.revertMerge).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(b) canary green: outcome keeps merged and the queue proceeds to the next issue", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      deps,
+    );
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]); // no halt after a green canary
+    expect(summary.mergedPrs).toEqual([
+      ["gh-1", "https://example/pr/fix/gh-1", "mdef456"],
+      ["gh-2", "https://example/pr/fix/gh-2", "mdef456"],
+    ]);
+    expect(summary.reverted).toEqual([]);
+    expect(deps.syncMain).toHaveBeenCalledWith("/tmp/repo");
+    expect(deps.createFixSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "loop/canary-gh-1", baseBranch: "main" }),
+    );
+    expect(deps.revertMerge).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(c) canary red (a failure NOT in baseline): revertMerge called with exactly the merge commit from the merge step; outcome is a harness-level REVERTED failure with the canary evidence", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+    expect(deps.revertMerge).toHaveBeenCalledWith({ repoDir: "/tmp/repo", mergeCommit: "m0ckmerge" });
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.prUrl).toBeUndefined(); // not counted fixed — the merge was reverted
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toContain("REVERTED");
+    expect(outcome.failure).toContain("gh-1");
+    expect(outcome.failure).toContain("tests/test_contract.py::test_zero_contract"); // canary evidence
+    expect(outcome.reverted).toMatchObject({
+      id: "gh-1",
+      prUrl: PR_URL,
+      mergeCommit: "m0ckmerge",
+      revertCommit: "r3vert0000",
+      evidence: expect.stringContaining("tests/test_contract.py::test_zero_contract"),
+    });
+  });
+
+  it("(c) canary red halts the queue: runQueue throws QueueAbortedError and no further admitted issue is attempted", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
+    expect(deps.createPr).toHaveBeenCalledTimes(1);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("(d) canary red: exactly one comment on the merged PR, its body carrying @<notifyHandle> and REVERTED", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) });
+
+    await run(deps, optedInNotify);
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
+    expect(call.repoDir).toBe("/tmp/repo");
+    expect(call.prUrl).toBe(PR_URL);
+    expect(call.body).toContain("@manjula25");
+    expect(call.body).toContain("REVERTED");
+  });
+
+  it("(d) commentOnPr is never called on green, opted-out, or merge-failure paths (syncMain/revertMerge likewise inert)", async () => {
+    const green = makeDeps(); // default canary is green
+    await run(green, optedInNotify);
+    expect(green.commentOnPr).not.toHaveBeenCalled();
+
+    const optedOut = makeDeps();
+    await run(optedOut, { ...profile, notifyHandle: "manjula25" }); // no autoMerge
+    expect(optedOut.mergePr).not.toHaveBeenCalled();
+    expect(optedOut.syncMain).not.toHaveBeenCalled();
+    expect(optedOut.commentOnPr).not.toHaveBeenCalled();
+
+    const mergeFailed = makeDeps({ mergeThrows: "gh: conflict" });
+    await run(mergeFailed, optedInNotify);
+    expect(mergeFailed.syncMain).not.toHaveBeenCalled(); // no merge landed → no canary
+    expect(mergeFailed.revertMerge).not.toHaveBeenCalled();
+    expect(mergeFailed.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(e) canary red with notifyHandle ABSENT: the comment still posts, carries no @, and the summary says the notify handle is not configured (D6)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).toContain("REVERTED");
+    expect(body).not.toContain("@"); // no configured handle → no mention token at all
+    const aborted = error as QueueAbortedError;
+    expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
+  });
+
+  it("(f) canary install failure → red path: reverted, harness-level, with the install failure named (D2)", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(SUITE_AFTER_FIX, 0, /* installExit */ 1) });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toContain("install");
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+  });
+
+  it("(f) canary suite output unreadable (no summary token) → red path (D2: silence is not success)", async () => {
+    const deps = makeDeps({ canary: sandboxHandle("") });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toMatch(/unreadable|summary/i);
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+  });
+
+  it("(g) revertMerge throws: the run still halts (QueueAbortedError), the revert failure is recorded, and the comment is still attempted", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+      canaryRevertThrows: "git: revert conflict on main",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // halt is unconditional on red
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toContain("revert conflict on main");
+    expect(aborted.summary.attempted).toEqual(["gh-1"]);
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // notification is best-effort, still attempted
+    expect(aborted.summary.reverted[0]!.revertCommit).toBeUndefined();
+    expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
+  });
+
+  it("(h) formatSummary for a reverted run: ⚠️ REVERTED section names issue id, PR url, merge commit, revert commit, and canary evidence", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      deps,
+    ).catch((e: unknown) => e);
+
+    const aborted = error as QueueAbortedError;
+    const text = formatSummary(aborted.summary);
+    expect(text).toContain(
+      "⚠️ REVERTED gh-1: pr https://example/pr/fix/gh-1 merge mdef456 revert rvrt789",
+    );
+    expect(text).toContain("canary:");
+    expect(text).toContain("tests/test_contract.py::test_zero_contract");
+    expect(text).toContain("notify: @manjula25");
+  });
+
+  it("--issue N override: a reverted outcome has no prUrl — the existing CLI failure path prints it and exits 1 (verified at the runOverrideIssue seam)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [issue],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const result = await runOverrideIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: { ...profile, autoMerge: true } },
+      deps,
+    );
+
+    expect(result.kind).toBe("run");
+    const outcome = result.kind === "run" ? result.outcome : undefined;
+    expect(outcome?.prUrl).toBeUndefined(); // the CLI's "no PR" branch: prints the failure, exit 1
+    expect(outcome?.failureKind).toBe("harness");
+    expect(outcome?.failure).toContain("REVERTED");
   });
 });
 
@@ -375,13 +645,14 @@ function issueSandbox(
   target: NormalizedIssue,
   suite: string,
   reproExit = 0,
+  installExit = 0,
 ): FixSandboxHandle {
   return {
     branch: fixBranch(target),
     worktreePath: "/tmp/wt",
     async exec(command: string) {
       if (command === profile.installCmd) {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: installExit, stdout: "", stderr: installExit === 0 ? "" : "pip: build failed" };
       }
       if (command.includes(reproTestPath(target))) {
         return { exitCode: reproExit, stdout: reproExit === 0 ? GREEN : RED, stderr: "" };
@@ -411,7 +682,21 @@ interface QueueDepsConfig {
   pathCommittedOnBranch?: boolean;
   /** Opted-in runs: merge fails (conflict/API error) for PRs whose url contains this token. */
   mergeThrowsFor?: string;
+  /** Canary (post-merge) suite shows a NEW failure for this id — the red path. */
+  canaryNewFailureFor?: string;
+  /** Canary suite output has no summary token — unreadable → red path (D2). */
+  canaryUnreadableFor?: string;
+  /** Canary install command fails for this id — red path (D2). */
+  canaryInstallFailFor?: string;
+  /** revertMerge throws (conflict/push error) — best-effort revert fails loudly. */
+  canaryRevertThrows?: string;
 }
+
+/** Canary-red suite for the queue harness: one failure outside the baseline. */
+const CANARY_RED_QUEUE_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
   const issues = config.issues ?? [issue];
@@ -439,6 +724,15 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       // preflight sandbox resolves to its own issue rather than the previous
       // one — `runFixRun` has not been reached yet when preflight runs.
       active = issues.find((i) => input.branch.endsWith(i.id)) ?? active;
+      // The canary also forks from main, so dispatch on its branch prefix.
+      if (input.branch.startsWith("loop/canary-")) {
+        const suite = config.canaryUnreadableFor === active.id
+          ? ""
+          : config.canaryNewFailureFor === active.id
+            ? CANARY_RED_QUEUE_SUITE
+            : SUITE_AFTER_FIX;
+        return track(issueSandbox(active, suite, 0, config.canaryInstallFailFor === active.id ? 1 : 0));
+      }
       if (input.baseBranch === "main") {
         // baseline preflight
         const stale = config.staleBaseline === true || config.staleBaselineFor === active.id;
@@ -455,11 +749,21 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       }
       return { mergeCommit: "mdef456" };
     }),
+    // WI-6 T4 seams
+    syncMain: vi.fn(async (_repoDir: string) => {}),
+    revertMerge: vi.fn(async () => {
+      if (config.canaryRevertThrows !== undefined) {
+        throw new Error(config.canaryRevertThrows);
+      }
+      return { revertCommit: "rvrt789" };
+    }),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
     // QueueDeps
     ghJson: vi.fn((_args: string[], _cwd: string) =>
       JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
     listOpenPrs: vi.fn(async () => config.prs ?? []),
     listMergedPrs: vi.fn(async () => config.mergedPrs ?? []),
+    mainRevertsPr: vi.fn(async () => false),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
     runTriage: vi.fn(async () => {

@@ -77,6 +77,15 @@ export interface ProjectProfile {
    * sets it (constraint 1, amended 2026-09-18).
    */
   readonly autoMerge?: boolean;
+  /**
+   * WI-6 (D6/R1, FR-007): the handle @-mentioned in a canary-red revert
+   * comment. HAND-EDIT ONLY — this field's only write path is a human
+   * editing profile.json (no onboarding flag, no writer code; a
+   * once-per-repo value does not earn a CLI surface). Absent → the revert
+   * comment still posts, without a mention, and the summary says the notify
+   * handle is not configured.
+   */
+  readonly notifyHandle?: string;
 }
 
 /** Seam the loop runs on — the adapter plus PR creation, stubbed in tests. */
@@ -123,6 +132,26 @@ export interface LoopDeps {
    * safe fallback: PR stays open, run continues).
    */
   mergePr(input: { repoDir: string; prUrl: string }): Promise<{ mergeCommit: string }>;
+  /**
+   * WI-6 (D3, FR-005): fast-forward the target clone's main to origin's
+   * (`git fetch origin main:main`). Loud on divergence — a refused
+   * fast-forward exits non-zero and throws; the canary never judges a
+   * stale main silently.
+   */
+  syncMain(repoDir: string): Promise<void>;
+  /**
+   * WI-6 (D4, FR-006): revert `mergeCommit` on main and push the revert
+   * (`git revert --no-edit` + `git push origin main`), reporting the revert
+   * commit. Best-effort at the call site: a thrown failure is recorded in
+   * the outcome — the halt happens regardless.
+   */
+  revertMerge(input: { repoDir: string; mergeCommit: string }): Promise<{ revertCommit: string }>;
+  /**
+   * WI-6 (FR-007): post a comment on a PR (`gh pr comment`) — the @-mention
+   * notification path. Best-effort at the call site: failure is recorded,
+   * never thrown past the revert chain.
+   */
+  commentOnPr(input: { repoDir: string; prUrl: string; body: string }): Promise<void>;
 }
 
 export interface SingleIssueInput {
@@ -152,10 +181,16 @@ export interface LoopOutcome {
    */
   readonly attachmentFailures?: readonly string[];
   /**
-   * WI-6 (FR-004): set when the auto-merge (opted-in profiles only) succeeded —
+   * WI-6 (FR-004/FR-005): set when the auto-merge (opted-in profiles only)
+   * succeeded AND the post-merge canary suite on merged main went green —
    * the PR is squash-merged on the base branch at this commit.
    */
-  readonly merged?: { readonly prUrl: string; readonly mergeCommit: string };
+  readonly merged?: {
+    readonly prUrl: string;
+    readonly mergeCommit: string;
+    /** WI-6 T4: always true when `merged` is set — a red canary reverts instead. */
+    readonly canaryGreen: boolean;
+  };
   /**
    * WI-6 (FR-004): set when the auto-merge was attempted and FAILED (conflict,
    * moved base, API error). The PR stays open for a human and the run continues
@@ -163,6 +198,34 @@ export interface LoopOutcome {
    * verified and the PR is real work).
    */
   readonly mergeFailure?: string;
+  /**
+   * WI-6 (FR-006/FR-007): set on the canary-red path — the merge was reverted
+   * (or the revert itself failed loudly), the queue must halt
+   * (`failureKind: "harness"`), and the summary prints its `⚠️ REVERTED`
+   * section from this record. No `prUrl`/`merged` on this outcome: a reverted
+   * issue is NOT fixed, and the merged-dedup's revert guard re-queues it.
+   */
+  readonly reverted?: RevertedRecord;
+}
+
+/**
+ * What the summary needs to report a canary-red revert (FR-006/FR-007):
+ * identifiers, evidence, and the notify outcome. All fields are harness-known
+ * values or test-node ids — never raw suite output beyond the evidence string
+ * built by the canary step.
+ */
+export interface RevertedRecord {
+  readonly id: string;
+  readonly prUrl: string;
+  readonly mergeCommit: string;
+  /** Present iff the revert landed on main; absent = revert failed. */
+  readonly revertCommit?: string;
+  /** Why the revert failed, when it did — the summary must not hide it. */
+  readonly revertFailure?: string;
+  /** Why the canary went red (the FR-005 evidence). */
+  readonly evidence: string;
+  /** The profile's notifyHandle at revert time; absent = not configured (D6). */
+  readonly notifyHandle?: string;
 }
 
 /** Deterministic home for the reproduction test (constraint 4: it stays in the suite). */
@@ -537,9 +600,9 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
     // [WI-6 T6] pre-merge review pass slots in here — before mergePr, after createPr.
+    let mergeCommit: string;
     try {
-      const merged = await deps.mergePr({ repoDir: input.repoDir, prUrl });
-      return { ...prOutcome, merged: { prUrl, mergeCommit: merged.mergeCommit } };
+      mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
     } catch (error) {
       // FR-004 safe fallback: no auto-merge, the PR stays open, the run
       // continues — but never silently. A merge failure is not an issue
@@ -547,6 +610,109 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
       const reason = error instanceof Error ? error.message : String(error);
       return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
     }
+
+    // WI-6 T4 (D2/D3, FR-005): the post-merge canary. A third sandbox, on a
+    // throwaway branch forked from SYNCED main, runs install + the full suite
+    // (the repro test is in the suite now — the merge landed it). Green iff
+    // the output is readable AND every parsed failure is in the baseline —
+    // the same new-failure rule as diffVerification. The canary runs even
+    // though pre-merge verification was green: what it guards is the merge
+    // itself (squash semantics, a base that moved). A canary that cannot
+    // start is red (FR-005 boundary).
+    await deps.syncMain(input.repoDir);
+    const canaryBranch = `loop/canary-${input.issue.id}`;
+    let canaryEvidence: string | undefined;
+    let canaryGreen = false;
+    try {
+      const canary = await deps.createFixSandbox({
+        cwd: input.repoDir,
+        branch: canaryBranch,
+        baseBranch: "main",
+        imageName: input.imageName,
+      });
+      try {
+        const install = await canary.exec(input.profile.installCmd);
+        if (install.exitCode !== 0) {
+          canaryEvidence = `canary install command exited ${install.exitCode} on merged main`;
+        } else {
+          const suite = await canary.exec(input.profile.testCmd);
+          const parsed = parseSuiteOrReject(suite.stdout);
+          if (!parsed.ok) {
+            canaryEvidence = `canary ${parsed.reason}`;
+          } else {
+            const newFailures = parsed.failures.filter(
+              (f) => !input.profile.baselineFailures.includes(f),
+            );
+            if (newFailures.length > 0) {
+              canaryEvidence = `canary new failures vs baseline on merged main: ${newFailures.join(", ")}`;
+            } else {
+              canaryGreen = true;
+            }
+          }
+        }
+      } finally {
+        await canary.close();
+        await deps.deleteBranch(input.repoDir, canaryBranch);
+      }
+    } catch (error) {
+      canaryEvidence = `canary sandbox failed to run: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    if (canaryGreen) {
+      return { ...prOutcome, merged: { prUrl, mergeCommit, canaryGreen: true } };
+    }
+
+    // WI-6 T4 (FR-006/FR-007): red main is a stop-the-line event. Revert
+    // (best-effort), notify on the merged PR (best-effort), then return a
+    // harness-level failure — the queue halts on it and the CLI exits 1.
+    // Deliberately NO prUrl/merged on this outcome: a reverted issue is not
+    // fixed, and splitQueue's revert guard keeps it queued (FR-006).
+    const evidence = canaryEvidence ?? "canary went red";
+    let revertCommit: string | undefined;
+    let revertFailure: string | undefined;
+    let revertNote: string;
+    try {
+      revertCommit = (await deps.revertMerge({ repoDir: input.repoDir, mergeCommit })).revertCommit;
+      revertNote = `revert: ${revertCommit}`;
+    } catch (error) {
+      revertFailure = error instanceof Error ? error.message : String(error);
+      revertNote = `revert: FAILED (${revertFailure})`;
+    }
+    const handle = input.profile.notifyHandle;
+    const commentBody = [
+      `${handle !== undefined ? `@${handle} ` : ""}⚠️ REVERTED: the merge of this PR (${mergeCommit}) was automatically reverted.`,
+      `The post-merge canary suite on main went red — ${evidence}.`,
+      revertCommit !== undefined
+        ? `Revert commit: ${revertCommit}.`
+        : `The revert itself FAILED: ${revertFailure}.`,
+      "The run has been halted; the issue returns to the queue for a human decision.",
+    ].join("\n");
+    let commentNote: string;
+    try {
+      assertNoSecrets([commentBody], deps.env);
+      await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: commentBody });
+      commentNote = "comment: posted";
+    } catch (error) {
+      commentNote = `comment: FAILED (${error instanceof Error ? error.message : String(error)})`;
+    }
+    return {
+      branch,
+      failure:
+        `⚠️ REVERTED ${input.issue.id}: merge ${mergeCommit} reverted after canary went red — ` +
+        `${evidence}; ${revertNote}; ${commentNote}; notify: ${handle ?? "not configured"}`,
+      failureKind: "harness",
+      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+      reverted: {
+        id: input.issue.id,
+        prUrl,
+        mergeCommit,
+        ...(revertCommit !== undefined
+          ? { revertCommit }
+          : { revertFailure: revertFailure ?? "unknown revert failure" }),
+        evidence,
+        ...(handle !== undefined ? { notifyHandle: handle } : {}),
+      },
+    };
   }
   return prOutcome;
 }
@@ -599,6 +765,12 @@ export interface QueueSummary {
    * named surface of its own (`MERGE FAILED` lines), never silence.
    */
   readonly mergeFailures: [string, string][];
+  /**
+   * WI-6 (FR-006/FR-007): canary-red reverts — each halted the run (see the
+   * FAILED lines for the message), was reverted on main (or failed loudly),
+   * and stays queued for a later run. Snapshotted even on the abort path.
+   */
+  readonly reverted: RevertedRecord[];
   /** Source label (WI-3 FR-007) — set only for non-GitHub queue sources. */
   readonly source?: string;
 }
@@ -686,6 +858,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const prUrls: string[] = [];
   const mergedPrs: [string, string, string][] = [];
   const mergeFailures: [string, string][] = [];
+  const reverted: RevertedRecord[] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
     fixed: [...fixed],
@@ -697,6 +870,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     prUrls: [...prUrls],
     mergedPrs: [...mergedPrs],
     mergeFailures: [...mergeFailures],
+    reverted: [...reverted],
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
@@ -714,6 +888,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     attempted.push(issue.id);
     for (const url of outcome.attachmentFailures ?? []) {
       attachmentFailures.push([issue.id, url]);
+    }
+    // WI-6 T4: collected before the abort below — the aborting snapshot still
+    // carries the ⚠️ REVERTED record for the summary.
+    if (outcome.reverted !== undefined) {
+      reverted.push(outcome.reverted);
     }
     if (outcome.prUrl) {
       fixed.push(issue.id);
@@ -746,6 +925,12 @@ export function formatSummary(summary: QueueSummary): string {
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | skipped-merged: ${summary.skippedMerged.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
     ...summary.mergedPrs.map(([id, url, mergeCommit]) => `MERGED ${id}: ${url} @ ${mergeCommit}`),
+    ...summary.reverted.map(
+      (r) =>
+        `⚠️ REVERTED ${r.id}: pr ${r.prUrl} merge ${r.mergeCommit} revert ` +
+        `${r.revertCommit ?? `FAILED (${r.revertFailure ?? "unknown"})`} — canary: ${r.evidence}\n` +
+        (r.notifyHandle !== undefined ? `notify: @${r.notifyHandle}` : "notify handle not configured"),
+    ),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
@@ -969,6 +1154,28 @@ async function main(): Promise<void> {
       ).trim();
       return { mergeCommit };
     },
+    // WI-6 (D3, FR-005): fast-forward local main to origin's before the canary.
+    // A divergent main refuses the update, exits non-zero, and throws — loud,
+    // and before any canary spend.
+    async syncMain(dir: string) {
+      execFileSync("git", ["fetch", "origin", "main:main"], { cwd: dir, stdio: "inherit" });
+    },
+    // WI-6 (D4, FR-006): revert the squash merge on main and push the revert;
+    // the revert commit is HEAD after `git revert`.
+    async revertMerge({ repoDir: dir, mergeCommit }) {
+      execFileSync("git", ["revert", "--no-edit", mergeCommit], { cwd: dir, stdio: "inherit" });
+      execFileSync("git", ["push", "origin", "main"], { cwd: dir, stdio: "inherit" });
+      const revertCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      return { revertCommit };
+    },
+    // WI-6 (FR-007): the @-mention revert notification lands on the merged PR.
+    async commentOnPr({ repoDir: dir, prUrl, body }) {
+      execFileSync("gh", ["pr", "comment", prUrl, "--body", body], { cwd: dir, stdio: "inherit" });
+    },
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
@@ -979,6 +1186,20 @@ async function main(): Promise<void> {
     },
     async listMergedPrs(dir) {
       return JSON.parse(realGhJson(prListArgs("merged"), dir)) as MergedPr[];
+    },
+    // WI-6 (D4, FR-006): main's history says whether this merged PR was
+    // reverted — `git revert` of gh's squash merge produces a subject
+    // `Revert "<original subject (#N)>"`, so a `Revert "` line carrying the
+    // PR's own `(#N)` tag means the merge is undone and its issue goes back
+    // to todo.
+    async mainRevertsPr({ repoDir: dir, pr }) {
+      const subjects = execFileSync("git", ["log", "--format=%s", "origin/main"], {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).split("\n");
+      const tag = `(#${pr.number})`;
+      return subjects.some((s) => s.startsWith('Revert "') && s.includes(tag));
     },
     async listFixBranches(dir) {
       return [...new Set([...localFixBranches(dir), ...remoteFixBranches(dir)])];

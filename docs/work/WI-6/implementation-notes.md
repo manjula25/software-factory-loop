@@ -110,5 +110,54 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
      `Loop finished without a PR` console.error bypasses `assertNoSecrets`;
      route it through the guard alongside the new guarded line.
 
+### T4 — canary, revert, halt, notify (FR-005/006/007, slice 4)
+
+- **Dispatched:** 2026-09-18. Size: medium-large. Risk: elevated (new
+  sandbox stage on merged main; revert writes to main; halt semantics).
+  Budget: one leaf session; focused loop+queue vitest + typecheck + full
+  `npm test`.
+- **Result:** ACCEPTED. Controller re-ran everything fresh on the final tree:
+  focused `src/loop.test.ts` + `src/queue.test.ts` 102/102 exit 0; typecheck
+  exit 0; full suite 10 files / 176 tests (161 + 15 new), exit 0. Candidate =
+  working tree vs base `8be5b89`; 5 changed paths, all within the allowed set
+  (+605/−15).
+- **Reviews (same identity, sequential):** specification review APPROVED
+  (no missing FR elements beyond the two minor notes below, no scope creep,
+  no wrong semantics — D2 canary-green rule, D4 revert/re-queue, D5 halt
+  wiring, D6 notify identity all verified at the seam); code-quality review
+  APPROVED (no standard violations; five judgement calls, one optional
+  cleanup recorded as follow-up).
+- **Leaf deviations (accepted):** (1) `mainRevertsPr` placed on `QueueDeps`
+  rather than `LoopDeps` — per the plan's GREEN-step text and its single
+  caller; (2) `merged.canaryGreen: true` recorded on green outcomes — a red
+  canary reverts instead, so the field is always true when set (documented
+  in the field's doc comment; spec-review-sanctioned); (3) one T3 test
+  updated in place for the new merged-outcome shape; (4) `RevertedRecord`
+  carries both `revertCommit?` and `revertFailure?` (revert-failure still
+  halts, still notifies, records the named error).
+- **Follow-ups (non-blocking, recorded):**
+  1. Spec-review MINOR: green canary result is not visible in summary text —
+     `merged.canaryGreen: true` lives on the outcome but `formatSummary`'s
+     MERGED line prints id/url/mergeCommit only. Red results are fully
+     recorded (`⚠️ REVERTED`). Candidate fix: append `canary: green` to the
+     MERGED line; fold into T5 (it touches the same tail) or the cosmetics
+     batch.
+  2. Spec-review MINOR/ADVISORY: `syncMain` throw (divergent main, git
+     failure) propagates uncaught — exit 1 and loud, but no revert/comment/
+     REVERTED summary, and an uncanaried merge stays on main. Plan D3
+     prescribes throw-on-divergence, so this is a plan/spec tension, not
+     silent degradation; surface at `verification-before-completion` or
+     fold syncMain failure into the red path. Same class, smaller: a
+     canary `close()`/`deleteBranch` throw in the finally also propagates.
+  3. Quality optional: `CANARY_RED_SUITE` and `CANARY_RED_QUEUE_SUITE` in
+     `src/loop.test.ts` are byte-identical constants — extract one; deferred
+     because fixing it would have invalidated both review identities
+     (kept per the implement loop's changed-candidate rule).
+  4. Quality note: canary block in `runSingleIssue` is ~55 lines inline —
+     if WI-6 grows further, `runCanary()` returning `{green, evidence}` is
+     the natural extraction point.
+  5. From the leaf, to check in T7: whether `mainRevertsPr` should fetch
+     origin before reading `git log origin/main` (stale-clone freshness).
+
 
 

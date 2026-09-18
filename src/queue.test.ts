@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   admitIssues,
   buildTriagePrompt,
@@ -24,6 +24,7 @@ function makeDeps(overrides: Partial<SplitDeps> = {}): SplitDeps {
     listFixBranches: async () => [],
     deleteRemoteBranch: async () => {},
     deleteBranch: async () => {},
+    mainRevertsPr: async () => false,
     ...overrides,
   };
 }
@@ -333,6 +334,53 @@ describe("merged-PR dedup (WI-6 T2, FR-002)", () => {
     expect(result.skippedMerged).toEqual(["gh-1"]);
     expect(result.skippedDuplicate).toEqual([]);
     expect(result.eligible).toEqual([]);
+  });
+});
+
+describe("revert guard on the merged dedup (WI-6 T4, FR-006)", () => {
+  const mergedPr = { number: 7, url: "https://example/pr/7", headRefName: "fix/gh-2", body: "" };
+
+  it("a merged PR that main has reverted restores the issue to todo — eligible, not skippedMerged; consulted only for the covering PR", async () => {
+    const mainRevertsPr = vi.fn(async () => true);
+    const deps = makeDeps({
+      listMergedPrs: async () => [mergedPr],
+      mainRevertsPr,
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2)]);
+
+    expect(result.skippedMerged).toEqual([]);
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-2"]);
+    // once, and only for the covering match — never per-PR over the whole list
+    expect(mainRevertsPr).toHaveBeenCalledTimes(1);
+    expect(mainRevertsPr).toHaveBeenCalledWith({ repoDir: "/repo", pr: mergedPr });
+  });
+
+  it("mainRevertsPr false → still skipped: merged means done (existing behavior)", async () => {
+    const deps = makeDeps({
+      listMergedPrs: async () => [mergedPr],
+      mainRevertsPr: async () => false,
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2)]);
+
+    expect(result.skippedMerged).toEqual(["gh-2"]);
+    expect(result.eligible).toEqual([]);
+  });
+
+  it("never consults mainRevertsPr when no merged PR covers the issue", async () => {
+    const mainRevertsPr = vi.fn(async () => true);
+    const deps = makeDeps({
+      listMergedPrs: async () => [
+        { number: 9, url: "https://example/pr/9", headRefName: "feature/other", body: "" },
+      ],
+      mainRevertsPr,
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(2)]);
+
+    expect(mainRevertsPr).not.toHaveBeenCalled();
+    expect(result.eligible.map((i) => i.id)).toEqual(["gh-2"]);
   });
 });
 

@@ -29,8 +29,18 @@ export interface QueueDeps {
   /** Runs `gh` with JSON output; throws on a non-zero exit. */
   ghJson(args: string[], cwd: string): string;
   listOpenPrs(repoDir: string): Promise<OpenPr[]>;
-  /** Merged PRs — a merged fix means the issue is done (WI-6 FR-002). */
+  /**
+   * Merged PRs — a merged fix means the issue is done (WI-6 FR-002), UNLESS
+   * main has since reverted that PR (WI-6 T4, FR-006: a reverted merged PR
+   * restores its issue to todo). Consulted only for the covering PR.
+   */
   listMergedPrs(repoDir: string): Promise<MergedPr[]>;
+  /**
+   * WI-6 (D4, FR-006): true when main's history contains a `Revert "…"`
+   * commit naming this PR (`(#<number>)`) — the merge is undone on main and
+   * the issue must NOT be skipped as merged.
+   */
+  mainRevertsPr(input: { repoDir: string; pr: MergedPr }): Promise<boolean>;
   /** Local and remote `fix/*` branch names that exist right now. */
   listFixBranches(repoDir: string): Promise<string[]>;
   /** `git push origin --delete`; resolves even if the branch is absent. */
@@ -153,10 +163,13 @@ function escapeRegExp(literal: string): string {
  * fix PR means the issue is done: matched by head branch or body id token
  * under the same exact-token, case-insensitive rule as open PRs, checked
  * BEFORE the open-PR check and before any branch deletion — a merged PR's
- * branch is never delete-and-retried (WI-6 FR-002). An issue is in flight
- * when an open PR's head branch is its fix branch or its body references the
- * issue by exact id token (`gh-1` never matches `gh-11`). Local stale-branch
- * deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
+ * branch is never delete-and-retried (WI-6 FR-002) — UNLESS main has since
+ * reverted that PR (`mainRevertsPr`, WI-6 T4 FR-006): a reverted merged PR
+ * restores its issue to todo. The revert check is consulted only for the PR
+ * that actually covers the issue, never per-PR over the whole list. An issue
+ * is in flight when an open PR's head branch is its fix branch or its body
+ * references the issue by exact id token (`gh-1` never matches `gh-11`).
+ * Local stale-branch deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
  */
 export async function splitQueue(
   deps: QueueDeps & Pick<LoopDeps, "deleteBranch">,
@@ -187,10 +200,14 @@ export async function splitQueue(
     // and skipping an issue costs nothing — it reappears in the next queue.
     const token = new RegExp(`\\b${escapeRegExp(issue.id)}\\b`, "i");
     // Merged first: a merged fix is stronger than an in-flight one (a reopened
-    // PR keeps its head branch), and its branch must never reach deletion.
-    const done = mergedPrs.some(
+    // PR keeps its head branch), and its branch must never reach deletion —
+    // unless main reverted it (WI-6 T4, FR-006): the issue goes back to todo.
+    const mergedCover = mergedPrs.find(
       (pr) => pr.headRefName === branch || token.test(pr.body),
     );
+    const done =
+      mergedCover !== undefined &&
+      !(await deps.mainRevertsPr({ repoDir, pr: mergedCover }));
     if (done) {
       skippedMerged.push(issue.id);
       continue;

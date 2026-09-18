@@ -88,4 +88,51 @@ comment marks the slot), canary/revert/halt/notify (T4), issue closing (T5).
 `merged` means "merge command succeeded", not "canary green". The
 `main()`-level override console behavior is untested (not an exported seam).
 
+## T4 — canary, revert, halt, notify (FR-005/006/007)
+
+**Claim.** After a successful merge on an opted-in profile, the loop syncs
+main, runs the full suite in a fresh canary sandbox
+(`loop/canary-<issue.id>` from main), and: green → outcome `merged` with
+`canaryGreen: true`, queue continues; red (any failure ∉ baselineFailures,
+install failure, or unreadable output — D2) → `revertMerge` of exactly the
+merge commit, run halt via `failureKind: "harness"` (`QueueAbortedError`,
+exit 1), exactly one `@<notifyHandle>` REVERTED comment on the PR (posted
+without a mention when no handle is configured), a `⚠️ REVERTED` summary
+section (id, PR, merge commit, revert commit or FAILED, canary evidence),
+and the reverted issue re-queued (`mainRevertsPr` guard in `splitQueue` —
+merged cover consulted only for the covering PR). Revert failure still
+halts and notifies with the error recorded.
+
+**Commands (controller, fresh on the final candidate, working tree vs `8be5b89`):**
+
+- `npx vitest run src/loop.test.ts src/queue.test.ts` → 102/102 passed,
+  exit 0 (15 new tests: canary sandbox lifecycle on `loop/canary-<id>` from
+  synced main; green-continues vs red-reverts; red → revert with exactly the
+  merge commit + halt + summary; @-mention comment once on red only;
+  handle-absent comment + `notify handle not configured`; install-failure
+  and unparseable-output red; `revertMerge` throw → still halted, failure
+  recorded; `⚠️ REVERTED` summary text; reverted issue eligible again under
+  `mainRevertsPr: true`; merged-not-reverted still `skippedMerged`).
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 176 tests passed, exit 0 (161 + 15 new).
+
+**RED evidence.** Leaf observed the new chain tests fail pre-GREEN for the
+stated reasons (deps/fields absent: `syncMain`/`revertMerge`/`commentOnPr`
+not in `LoopDeps`, `mainRevertsPr` not in `QueueDeps`, no `reverted` on the
+outcome/summary) — deterministic on the base. Controller re-ran everything
+fresh on the final tree (above).
+
+**Boundary.** Unit evidence at the loop/queue seams with stubbed
+git/gh/sandbox deps. The real `git fetch`/`git revert`/`git push`/
+`gh pr comment` wirings are typechecked but NOT exercised live (T7, incl.
+the recorded follow-up on whether `mainRevertsPr` should fetch origin
+first). CLI exit 1 asserted at the `runQueue`/`QueueAbortedError` seam —
+`main()` is not an exported seam and its exit wiring is unchanged from T3.
+Two spec-review minor notes recorded as follow-ups in
+`implementation-notes.md`: green-canary result absent from summary text;
+`syncMain` throw propagates uncaught (no revert/comment on that path —
+plan-D3-sanctioned loud failure, surfaced for an owner decision). Not
+implemented at this checkpoint by design: issue closing (T5), pre-merge
+review pass (T6 gap comment).
+
 
