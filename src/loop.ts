@@ -1489,7 +1489,12 @@ async function main(): Promise<void> {
         console.error(line);
       }
     } else {
-      console.error(`Loop finished without a PR — ${result.outcome.failure}`);
+      // Code-review finding (WI-6, standards axis): the failure text quotes
+      // subprocess errors (the WI-6 revert path made this string class much
+      // richer), so this emission passes the guard like its siblings above.
+      const line = `Loop finished without a PR — ${result.outcome.failure}`;
+      assertNoSecrets([line], guardEnv);
+      console.error(line);
       process.exitCode = 1;
     }
     return;
