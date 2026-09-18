@@ -1,5 +1,31 @@
 # WI-4 Verification
 
+## Task 3 (T3) — one shared suite-summary definition — candidate `0990db8`
+
+- Baseline at `c46e7a7` (T2 accepted): typecheck 0; 139 tests green.
+- RED (leaf report; independently re-verified empirically by the spec
+  reviewer on a throwaway worktree with only the test hunks applied to
+  `0990db8~1`): 5 failed / 66 passed focused — the loop skipped-only pin
+  (current code rejects `"4 skipped in 0.01s"` as unreadable: "expected
+  undefined, received 'Verification failed — full-suite output is
+  unreadable…'") + all 4 verify.test.ts pins (`SUITE_SUMMARY_RE` undefined
+  at parent). The onboard-profile skipped-only pin passed at parent —
+  correct narrowing guard, not claimed red.
+- GREEN (controller, fresh at `0990db8`): focused 71/71 across the three
+  suites; `npm run typecheck` exit 0; `npm test` 10 files / 145 tests
+  (139 + 6).
+- Specification review: **PASS**, zero blocking (regex effect-identical to
+  the deleted token; gate broadening verified fail-safe at both callers;
+  no circular import). Code-quality review: **APPROVED**, zero
+  critical/important (three nits queued in implementation-notes).
+- Both verdicts apply to `0990db8`; checkpoint accepted 2026-09-18.
+- Non-claims: `scripts/preflight-check.ts` has no test seam — its changes
+  (parseSuiteBaseline + argv repoDir) are verified by typecheck, reading,
+  and review only; no live preflight run was executed in WI-4 (it requires
+  a target repo with a recorded baseline; the fixtures repo qualifies but
+  the run is Docker-cost for a script whose logic is now shared with the
+  live-proven onboarding path).
+
 ## Task 2 (T2) — loop/onboard deletion fails loudly — candidate `27421a6`
 
 - Baseline at `7687e9d` (T1 accepted): typecheck 0; 139 tests green.

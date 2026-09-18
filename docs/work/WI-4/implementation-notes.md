@@ -38,6 +38,58 @@ user scoped WI-4 to the correctness batch 2026-09-18 (cosmetics deferred).
 Record-only items (2, 3, 5) and the cosmetics batch stay on the WI-3b queue;
 not WI-4 scope.
 
+## Task 3 — T3: one shared suite-summary definition (queue items 6+8+9)
+
+**Dispatch record.** Size M (8 files incl. CLAUDE.md + 3 test files) · risk
+medium (broadens the verification gate's readable-output set) · time budget
+45m · tool budget ~20 calls · evidence boundary: vitest seams for
+verify/onboard-profile/loop; preflight-check has no test seam — typecheck +
+reading · fixed point: `c46e7a7` (typecheck 0, 139 tests, controller-fresh).
+
+**Candidate identity.** `0990db8` — leaf's eight files, no controller
+amendments. Two judgment calls within latitude, accepted: the loop pin
+asserts via the public `runSingleIssue` seam (matching where the existing
+unreadable-output behavior is pinned) rather than testing
+`parseSuiteOrReject` directly; preflight's redundant `summary line present`
+console.log dropped rather than re-pointed (`parseSuiteBaseline` enforces
+the same bar by throwing).
+
+**TDD evidence (leaf, preserved; RED independently re-verified by the spec
+reviewer on a throwaway worktree).** RED: 5 failed / 66 passed focused —
+the loop skipped-only pin (current code rejects "4 skipped in 0.01s" as
+unreadable — exactly the divergence under fix) + all 4 verify.test.ts pins
+(`SUITE_SUMMARY_RE` not yet exported). The onboard-profile skipped-only pin
+passed at parent (correct — the old token already included "skipped"; it is
+a narrowing guard, not a red). GREEN (controller, fresh): 71/71 focused;
+typecheck exit 0; `npm test` 10 files / 145 tests (139 + 6).
+
+**Reviews (sequential, identity `0990db8`).**
+- Specification review: **PASS**, zero blocking. Regex byte-identical in
+  effect to the deleted `SUMMARY_TOKEN` (onboarding behavior provably
+  unchanged); gate-broadening safety reasoned through at both callers —
+  newly admitted outputs fail SAFE (errors carry `ERROR` lines
+  `parsePytestFailures` captures; skipped/xpassed-only has nothing to
+  mis-parse; silence and "no tests ran" still rejected); no circular import
+  (verify.ts imports nothing).
+- Code-quality review: **APPROVED**, zero critical/important. Duplicated
+  Code eliminated at the right rung; export placement and naming right
+  (resolves WI-3b's mysterious-name nit); preflight's argv-with-usage-error
+  judged a justified improvement (it mutates branches in a target repo);
+  workflow.md correctly untouched (doesn't list preflight-check). Three
+  nits queued (below).
+
+**Checkpoint accepted** — both sequential reviews on identity `0990db8`
+(2026-09-18).
+
+**T3 follow-ups (non-blocking).**
+5. (nit) onboard-profile doc still says "no summary token" — inherited
+   vocabulary from the deleted `SUMMARY_TOKEN`; "no counted-outcome
+   summary" would match the shared regex's vocabulary.
+6. (nit) preflight-check header lacks a `Usage:` line and doesn't
+   `resolve()` argv[2] like scripts/onboard.ts does.
+7. (judgement, fine) preflight's local comment restates the shared doc
+   nearly verbatim.
+
 ## Task 2 — T2: loop/onboard deletion fails loudly when the branch survives
 
 **Dispatch record.** Size S (1 file) · risk medium (silently swallowing a
