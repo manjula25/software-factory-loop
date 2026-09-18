@@ -199,3 +199,13 @@ loose end (profile refresh) is CLOSED with the correct baseline.
    next touched.
 7. (quality nit) node:fs / node:child_process import ordering in
    scripts/onboard.ts vs loop.ts's alphabetical convention.
+8. (branch spec review) `SUMMARY_TOKEN` (onboard-profile) accepts
+   `skipped|xfailed|xpassed|errors` as execution evidence while the
+   verification gate's `SUITE_SUMMARY_RE` (loop.ts) accepts only
+   `passed|failed|error` — a skipped-only suite onboards with an empty
+   baseline but every later verification is rejected as unreadable. Fold
+   into follow-up 6's unification of suite-output parsing.
+9. (branch standards review, cosmetic) `SUMMARY_TOKEN` names a regex
+   pattern, not a token — rename to `SUMMARY_PATTERN` when next touched.
+   Branch review also re-flagged the slug-dedup extraction (matches WI-3's
+   recorded follow-up); CLAUDE.md module-table clause resolved in-PR.

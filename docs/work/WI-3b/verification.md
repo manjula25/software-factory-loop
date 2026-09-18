@@ -73,10 +73,11 @@ separator) and the two live-diagnosed onboarding defects are implemented,
 reviewed, and — where the fix is observable without client data — proven
 live; the fixtures repo is remediated and its profile fresh.
 
-- `git rev-parse HEAD` and clean-tree check: recorded at delivery time (see
-  delivery.md).
+- Final head `a578f40` (code identity `d60e041`; the two commits above it are
+  docs-only), working tree clean (`git status --short` empty).
 - `npm run typecheck` exit 0; `npm test` 10 files / 137 tests (baseline 129
-  at `f53be15`; net +8 permanent pins).
+  at `f53be15`; net +8 permanent pins). Diff vs fixed point:
+  10 files, +481/−21.
 - Nesting root cause: diagnosed from preserved artifacts + dist reading;
   guard unit-pinned at the spend seam; instance remediated on fixtures
   (`009a404`).
