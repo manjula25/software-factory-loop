@@ -277,6 +277,28 @@ export function fixBranch(issue: NormalizedIssue): string {
   return `fix/${issue.id}`;
 }
 
+/**
+ * WI-6 (D3, FR-005): fast-forward local main to origin's before the canary,
+ * loud on divergence. The plan's literal `git fetch origin main:main` is
+ * unrunnable in the loop's real configuration — git refuses to update a ref
+ * that is checked out, and loop target clones sit on main (T7 live finding,
+ * 2026-09-18) — so the wiring is branch-aware: `pull --ff-only` when main is
+ * the current branch, the fetch-ref form otherwise. Both refuse a divergent
+ * main non-zero, which throws before any canary spend.
+ */
+export function syncMainToOrigin(repoDir: string): void {
+  const current = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: repoDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (current === "main") {
+    execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repoDir, stdio: "inherit" });
+  } else {
+    execFileSync("git", ["fetch", "origin", "main:main"], { cwd: repoDir, stdio: "inherit" });
+  }
+}
+
 /** Throwaway branch the baseline preflight check runs on (deleted after). */
 function preflightBranch(issue: NormalizedIssue): string {
   return `loop/preflight-${issue.id}`;
@@ -1349,9 +1371,10 @@ async function main(): Promise<void> {
     },
     // WI-6 (D3, FR-005): fast-forward local main to origin's before the canary.
     // A divergent main refuses the update, exits non-zero, and throws — loud,
-    // and before any canary spend.
+    // and before any canary spend. See syncMainToOrigin for why this is not a
+    // bare `git fetch origin main:main` (checked-out main; T7 live finding).
     async syncMain(dir: string) {
-      execFileSync("git", ["fetch", "origin", "main:main"], { cwd: dir, stdio: "inherit" });
+      syncMainToOrigin(dir);
     },
     // WI-6 (D4, FR-006): revert the squash merge on main and push the revert;
     // the revert commit is HEAD after `git revert`.

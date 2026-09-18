@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -20,6 +21,7 @@ import {
   runOverrideIssue,
   runQueue,
   runSingleIssue,
+  syncMainToOrigin,
   type ProjectProfile,
 } from "./loop.js";
 import {
@@ -850,6 +852,75 @@ describe("pre-merge review pass (WI-6 T6, FR-009)", () => {
     const text = formatSummary(summary);
     expect(text).toContain("REVIEW SKIP gh-1:");
     expect(text).toContain("REVIEW SKIP gh-2:");
+  });
+});
+
+describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)", () => {
+  // The T7 live run proved `git fetch origin main:main` can never sync a main
+  // that is CHECKED OUT (git refuses the ref update) — and loop target clones
+  // always sit on main. These tests drive the real wiring against throwaway
+  // git repositories: no stubs can catch this class.
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  const makeRepoPair = async () => {
+    const root = await mkdtemp(join(tmpdir(), "syncmain-"));
+    const upstream = join(root, "upstream");
+    const target = join(root, "target");
+    mkdirSync(upstream);
+    git(upstream, "init", "-q", "-b", "main");
+    writeFileSync(join(upstream, "a.txt"), "one\n");
+    git(upstream, "add", "a.txt");
+    git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one");
+    git(upstream, "clone", "-q", upstream, target);
+    return { root, upstream, target };
+  };
+
+  it("fast-forwards a CHECKED-OUT main to origin (the case the loop always hits)", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        expect(git(target, "rev-parse", "HEAD")).not.toBe(git(upstream, "rev-parse", "HEAD"));
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("syncs main via the fetch-ref form when main is NOT the current branch", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        git(target, "checkout", "-q", "-b", "fix/other");
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "rev-parse", "main")).toBe(git(upstream, "rev-parse", "HEAD"));
+        expect(git(target, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("fix/other");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("throws loudly on a divergent main — no canary on a main we cannot sync", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        writeFileSync(join(target, "b.txt"), "local\n");
+        git(target, "add", "b.txt");
+        git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local");
+        expect(() => syncMainToOrigin(target)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 });
 

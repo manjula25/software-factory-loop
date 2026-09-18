@@ -251,5 +251,39 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
   5. No test asserts `loop/review` branch deletion specifically on the throw
      path.
 
+### T4b — defect fix routed back from T7: syncMain (FR-005/D3)
+
+- **Defect (found live in T7, 2026-09-18):** the plan-D3 literal wiring
+  `git fetch origin main:main` throws "refusing to fetch into branch
+  'refs/heads/main' checked out at <dir>" in the loop's real configuration —
+  target clones sit on main, and git never allows fetching into a checked-out
+  ref. Unit tests could not catch it (syncMain is stubbed at the loop seam);
+  the live green chain crashed post-merge, leaving an uncanaried merge on
+  fixtures main (evidence: `evidence/t7-green-chain.log`, tail; recovered by
+  a manual `git revert` + push, which incidentally live-proved the
+  `mainRevertsPr` re-queue rule — merged PR #16 reverted → gh-14 eligible
+  again).
+- **Fix:** exported `syncMainToOrigin(repoDir)` — branch-aware: `git pull
+  --ff-only origin main` when main is the current branch, the fetch-ref form
+  otherwise; both refuse a divergent main non-zero (loud, pre-canary, D3
+  intent). main()'s `syncMain` dep delegates to it. Plan-D3's literal command
+  is amended in code with the justification and date (deviation documented,
+  not silent).
+- **Evidence:** 3 new real-git tests (mkdtemp throwaway repos): checked-out
+  main fast-forwards (the case the loop always hits); non-main current
+  branch syncs main without switching; divergent main throws. RED carried by
+  the two positive tests (`syncMainToOrigin is not a function`); the
+  divergence test is vacuous pre-fix (TypeError satisfies toThrow) — noted.
+  Controller-fresh: focused 89/89, typecheck 0, full suite 194/194 (191+3).
+- **Reviews (same identity, sequential):** specification review APPROVED
+  (D3 intent preserved in both branch cases, deviation documented, no scope
+  creep — advisories: this notes entry, and an optional divergence test for
+  the fetch-ref path); code-quality review APPROVED (minor: triplicated
+  upstream-advance preamble in the tests; `.then` style vs the file's
+  `async/await` — cosmetic).
+- **Follow-ups (non-blocking, recorded):** optional divergence test for the
+  non-main fetch-ref path; `advanceUpstream()` test helper if the describe
+  grows.
+
 
 
