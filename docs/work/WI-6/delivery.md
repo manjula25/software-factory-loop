@@ -108,13 +108,20 @@ None authorized yet. Prepared (not executed) options:
 
 ## Executed external actions and observed results
 
-None. No push, PR, merge, tracker transition, or publication performed. WI-6's
-live-pipeline evidence touched only the fixtures repo `manjula25/loop-fixtures-py`
-(during implementation, already cleaned up); the harness's own repository has
-received no external writes from this work item.
+Authorized by the user 2026-09-18 ("Push + open PR"), executed and observed:
+
+1. `git push -u origin worktree-wi-6` → `* [new branch] worktree-wi-6 ->
+   worktree-wi-6`, upstream set.
+2. `gh pr create --base main --head worktree-wi-6 …` →
+   **https://github.com/manjula25/software-factory-loop/pull/10**, read back
+   `gh pr view 10`: state OPEN, base main, head worktree-wi-6, 19 commits.
+
+No merge performed — a human merges this PR (the harness's own repository never
+auto-merges, constraint 1). WI-6's live-pipeline evidence touched only the fixtures
+repo `manjula25/loop-fixtures-py` (during implementation, already cleaned up).
 
 ## Pending actions
 
-- Awaiting user authorization for: push branch, open PR (scope to be confirmed).
-- Post-merge (human): worktree removal + branch cleanup per `using-git-worktrees`
+- Human review + merge of PR #10.
+- Post-merge: worktree removal + branch cleanup per `using-git-worktrees`
   convention — not executed automatically.
