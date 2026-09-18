@@ -198,5 +198,58 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
   4. Canary-block extraction note from T4 unchanged (`runCanary()` if
      WI-6 grows further).
 
+### T6 — pre-merge review pass (FR-009 + completes FR-004 ordering, slice 6)
+
+- **Dispatched:** 2026-09-18. Size: medium-large. Risk: elevated (a blocking
+  gate inserted into the merge chain; adapter refactor of the triage options).
+  Budget: one leaf session for code; the live model exercise (plan step 5)
+  controller-owned. Focused queue+loop+boundary vitest + typecheck + full
+  `npm test`.
+- **Result:** ACCEPTED. Controller re-ran everything fresh on the final tree:
+  focused `src/queue.test.ts` + `src/loop.test.ts` +
+  `src/sandcastle-adapter.boundary.test.ts` 121/121 exit 0 (boundary file
+  byte-unchanged); typecheck exit 0; full suite 10 files / 191 tests
+  (181 + 10 new), exit 0. Candidate = working tree vs base `2d2f6cf`; 6
+  changed paths, all within the allowed set (+368/−11).
+- **Reviews (same identity, sequential):** specification review APPROVED
+  (FR-009 + FR-004 ordering verified at the seam; opted-out never invokes the
+  reviewer; every non-approve path — wrong, uncertain, unparseable, any thrown
+  step — blocks mergePr with the PR left open, skip comment, run continues);
+  code-quality review APPROVED (no standard violations; three non-blocking
+  judgement calls below).
+- **Live exercise (plan step 5, controller-run):** one real bounded review
+  call through the production wiring against fixtures PR #15 — details and
+  cost in `verification.md`. Verdict `approve`, ~19 s wall.
+- **Leaf deviations (accepted, all reviewed):**
+  1. `triageRunOptions` kept as a thin delegating export rather than removed —
+     `src/sandcastle-adapter.boundary.test.ts:65` calls it and the boundary
+     file was untouchable per the brief; spec review judged the delegation
+     honors D7's intent (bound defined and asserted once at the factory).
+  2. `assertNoSecrets` on the review prompt sits inside the try that maps to
+     uncertain (a secret in the diff → uncertain → no merge, guard before the
+     API call, guard message names the env key only) — deviates from triage's
+     guard-outside-catch precedent; spec review judged it fail-closed and
+     safe.
+  3. `QueueSummary.reviewSkipped` is a required field → one mechanical edit
+     adding `reviewSkipped: []` to the single existing `formatSummary` test
+     literal; existing T3/T4/T5 auto-merge tests left green (dep factories
+     gained default-approve stubs).
+  4. CLAUDE.md loop.ts row updated to name the review pass AND gh-issue
+     closing (the sanctioned T5 follow-up).
+- **Follow-ups (non-blocking, recorded):**
+  1. Spec-review note: no negative test asserts a secret-bearing diff blocks
+     the review call (guard-before-runReview ordering is wired but
+     unasserted) — fold into the pre-delivery cosmetics batch.
+  2. Quality (at threshold): `runSingleIssue` is ~408 lines with a
+     triple-nested try/finally chain tail — extract `runPreMergeReview` /
+     `runCanary` helpers when next touched.
+  3. Quality cosmetic: a named `BoundedRunOptions` type would remove the
+     third copy of the inline return shape.
+  4. Quality subtlety: a `deleteBranch` throw on an approved verdict converts
+     to uncertain (fail-closed, correct) — a one-line comment or assigning
+     the verdict outside the inner try would make the intent explicit.
+  5. No test asserts `loop/review` branch deletion specifically on the throw
+     path.
+
 
 

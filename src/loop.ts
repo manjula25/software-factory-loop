@@ -25,9 +25,11 @@ import {
 } from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
+  REVIEW_BRANCH,
   TRIAGE_BRANCH,
   createFixSandbox,
   runFixRun,
+  runReview,
   runTriage,
   type AgentSpec,
   type TriageRunInput,
@@ -38,12 +40,14 @@ import {
   buildTriagePrompt,
   listOpenIssues,
   prListArgs,
+  parseReviewOutput,
   parseTriageOutput,
   realGhJson,
   splitQueue,
   type MergedPr,
   type OpenPr,
   type QueueDeps,
+  type ReviewVerdict,
   type TriageValue,
 } from "./queue.js";
 
@@ -125,6 +129,18 @@ export interface LoopDeps {
   createPr(args: { repoDir: string; title: string; body: string; base: string; head: string }): Promise<{
     url: string;
   }>;
+  /**
+   * WI-6 (T6, FR-009, D7): `git diff main...<branch>` — the change the
+   * pre-merge review pass judges.
+   */
+  fixDiff(repoDir: string, branch: string): Promise<string>;
+  /**
+   * WI-6 (T6, FR-009, D7): one bounded cheap-model review run on the throwaway
+   * `loop/review` branch. The caller builds the prompt (`buildReviewPrompt`),
+   * secrets-guards it before the call, and deletes the branch afterwards. A
+   * thrown run maps to the `uncertain` verdict class at the call site.
+   */
+  runReview(input: TriageRunInput & { readonly diff: string }): Promise<string>;
   /**
    * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
    * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
@@ -214,6 +230,14 @@ export interface LoopOutcome {
    * merged outcome, never an issue failure; the queue continues.
    */
   readonly closeFailure?: string;
+  /**
+   * WI-6 (FR-009): set when the pre-merge review pass did NOT approve — no
+   * merge happened, the PR stays open for a human, and the skip reason was
+   * commented on the PR. Like `mergeFailure` this is a loud note on a PR'd
+   * outcome, never an issue failure: the fix is verified, the queue continues,
+   * and the summary carries its own `REVIEW SKIP` surface.
+   */
+  readonly reviewSkip?: string;
   /**
    * WI-6 (FR-006/FR-007): set on the canary-red path — the merge was reverted
    * (or the revert itself failed loudly), the queue must halt
@@ -346,6 +370,41 @@ End your output with two fenced blocks, verbatim tool output inside, nothing par
 <green-evidence>
 (the passing run of your reproduction test, after the fix)
 </green-evidence>`;
+}
+
+/**
+ * WI-6 (T6, FR-009): the pre-merge review prompt — the reported issue plus the
+ * PR diff, judged for wrong-root-cause / wrong-test risk only (not style, not
+ * security), under the three-verdict contract `parseReviewOutput` accepts.
+ * Only an explicit `approve` lets the merge proceed; the prompt says so.
+ */
+export function buildReviewPrompt(issue: NormalizedIssue, diff: string): string {
+  return `You are reviewing a proposed bug-fix diff against the issue report it claims to fix.
+Judge one thing only: wrong-root-cause / wrong-test risk — does this diff actually
+address the reported issue, and does its new test test the reported behavior?
+This is not a style review and not a security review.
+
+## The reported issue (${issue.id})
+
+${issue.description}
+
+## The diff under review (git diff main...fix branch)
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Required output format
+
+End your output with exactly one block, one of three verdicts, and nothing else inside it:
+
+<review>approve</review>
+<review>wrong</review>
+<review>uncertain</review>
+
+approve = the diff addresses the reported issue. wrong = it fixes something other
+than the report, or its test does not test the reported behavior. uncertain = you
+cannot tell.`;
 }
 
 export function buildPrBody(
@@ -615,7 +674,58 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
-    // [WI-6 T6] pre-merge review pass slots in here — before mergePr, after createPr.
+    // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass — after
+    // createPr, before mergePr, completing FR-004's order: verification →
+    // review → merge. One bounded cheap-model call judging the fix diff
+    // against the report. Only an explicit approve reaches mergePr; anything
+    // else — wrong, uncertain (which is also what an unparseable verdict or a
+    // failed/unavailable reviewer maps to), or even a diff/prompt failure —
+    // skips the merge, comments the skip reason on the PR (best-effort), and
+    // the run continues: the PR stays open for a human.
+    let verdict: ReviewVerdict;
+    let reviewNote: string | undefined;
+    try {
+      const diff = await deps.fixDiff(input.repoDir, branch);
+      const reviewPrompt = buildReviewPrompt(input.issue, diff);
+      // The prompt reaches a third-party API — guard it before the call, like
+      // every other emitted string.
+      assertNoSecrets([reviewPrompt], deps.env);
+      try {
+        const stdout = await deps.runReview({
+          cwd: input.repoDir,
+          prompt: reviewPrompt,
+          imageName: input.imageName,
+          agent: input.agent,
+          diff,
+        });
+        verdict = parseReviewOutput(stdout);
+      } finally {
+        // Runs on the throw path too, so a failed pass never leaks the branch.
+        await deps.deleteBranch(input.repoDir, REVIEW_BRANCH);
+      }
+    } catch (error) {
+      verdict = "uncertain";
+      reviewNote = error instanceof Error ? error.message : String(error);
+    }
+    if (verdict !== "approve") {
+      const reason =
+        verdict === "wrong"
+          ? "review verdict: wrong — the diff does not address the reported issue"
+          : reviewNote !== undefined
+            ? `review unavailable (${reviewNote}) — treated as uncertain`
+            : "review verdict: uncertain";
+      const skipBody =
+        `Auto-merge skipped: ${reason}.\n` +
+        `The fix is independently verified in a fresh sandbox; this PR stays open for a human to review and merge.`;
+      let commentNote = "";
+      try {
+        assertNoSecrets([skipBody], deps.env);
+        await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: skipBody });
+      } catch (error) {
+        commentNote = ` (skip comment FAILED: ${error instanceof Error ? error.message : String(error)})`;
+      }
+      return { ...prOutcome, reviewSkip: `${reason}${commentNote}` };
+    }
     let mergeCommit: string;
     try {
       mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
@@ -813,6 +923,13 @@ export interface QueueSummary {
    */
   readonly closeFailures: [string, string][];
   /**
+   * [id, reason] — WI-6 (FR-009): merges the pre-merge review pass blocked
+   * (wrong / uncertain / reviewer unavailable). Mirrors `mergeFailures`: a
+   * loud note of its own (`REVIEW SKIP` lines), never a `failed` entry — the
+   * fix is verified and PR'd, and the queue continues.
+   */
+  readonly reviewSkipped: [string, string][];
+  /**
    * WI-6 (FR-006/FR-007): canary-red reverts — each halted the run (see the
    * FAILED lines for the message), was reverted on main (or failed loudly),
    * and stays queued for a later run. Snapshotted even on the abort path.
@@ -906,6 +1023,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const mergedPrs: [string, string, string][] = [];
   const mergeFailures: [string, string][] = [];
   const closeFailures: [string, string][] = [];
+  const reviewSkipped: [string, string][] = [];
   const reverted: RevertedRecord[] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
@@ -919,6 +1037,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     mergedPrs: [...mergedPrs],
     mergeFailures: [...mergeFailures],
     closeFailures: [...closeFailures],
+    reviewSkipped: [...reviewSkipped],
     reverted: [...reverted],
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
@@ -958,6 +1077,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       if (outcome.closeFailure !== undefined) {
         closeFailures.push([issue.id, outcome.closeFailure]);
       }
+      if (outcome.reviewSkip !== undefined) {
+        reviewSkipped.push([issue.id, outcome.reviewSkip]);
+      }
       continue;
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
@@ -990,6 +1112,7 @@ export function formatSummary(summary: QueueSummary): string {
     ),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.closeFailures.map(([id, reason]) => `ISSUE CLOSE FAILED ${id}: ${reason}`),
+    ...summary.reviewSkipped.map(([id, reason]) => `REVIEW SKIP ${id}: auto-merge not performed — ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
     ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
@@ -1196,6 +1319,18 @@ async function main(): Promise<void> {
       ).trim();
       return { url };
     },
+    // WI-6 (T6, FR-009, D7): the change the pre-merge review pass judges —
+    // the three-dot diff from main to the fix branch.
+    async fixDiff(dir: string, diffBranch: string) {
+      return execFileSync("git", ["diff", `main...${diffBranch}`], {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    },
+    // WI-6 (T6, FR-009): the bounded cheap-model review run itself (the only
+    // Sandcastle import stays in the adapter).
+    runReview,
     // WI-6 (D1, FR-004): squash keeps main linear; --delete-branch cleans the
     // fix branch remote+local — the merged PR itself stays queryable. Any
     // non-zero gh exit throws; runSingleIssue catches and falls back safely.

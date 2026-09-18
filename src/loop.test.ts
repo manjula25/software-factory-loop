@@ -11,6 +11,7 @@ import {
   SourceSelectionError,
   buildFixPrompt,
   buildPrBody,
+  buildReviewPrompt,
   fixBranch,
   formatSummary,
   parseCap,
@@ -21,7 +22,13 @@ import {
   runSingleIssue,
   type ProjectProfile,
 } from "./loop.js";
-import type { AgentSpec, FixRunOutcome, FixSandboxHandle } from "./sandcastle-adapter.js";
+import {
+  REVIEW_BRANCH,
+  boundedRunOptions,
+  type AgentSpec,
+  type FixRunOutcome,
+  type FixSandboxHandle,
+} from "./sandcastle-adapter.js";
 import type { NormalizedIssue } from "./issues.js";
 
 const agent: AgentSpec = { engine: "claude-code", model: "claude-haiku-4-5-20251001" };
@@ -129,6 +136,12 @@ interface DepOverrides {
   revertThrows?: string;
   /** Simulated issue-close failure (gh error) on canary-green merged runs (WI-6 T5). */
   closeThrows?: string;
+  /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
+  reviewVerdict?: "approve" | "wrong" | "uncertain";
+  /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
+  reviewStdout?: string;
+  /** The review run itself throws (API down / budget refusal). */
+  reviewThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -174,6 +187,14 @@ function makeDeps(overrides: DepOverrides = {}) {
       if (overrides.closeThrows !== undefined) {
         throw new Error(overrides.closeThrows);
       }
+    }),
+    // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
+    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
+    runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
+      if (overrides.reviewThrows !== undefined) {
+        throw new Error(overrides.reviewThrows);
+      }
+      return overrides.reviewStdout ?? `<review>${overrides.reviewVerdict ?? "approve"}</review>`;
     }),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
   };
@@ -708,9 +729,127 @@ FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
       mergedPrs: [["gh-1", "https://example/pr/fix/gh-1", "mdef456"]],
       mergeFailures: [],
       closeFailures: [],
+      reviewSkipped: [],
       reverted: [],
     });
     expect(text).toContain("MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-6 T6: pre-merge diff-review pass (FR-009, completes FR-004's blocking
+// order: verification → review → merge). One bounded cheap-model call judging
+// `git diff main...fix/<id>` against the report; only an explicit approve
+// reaches mergePr — anything else (wrong, uncertain, reviewer unavailable)
+// leaves the PR open with a skip comment, and the queue continues.
+// ---------------------------------------------------------------------------
+
+describe("pre-merge review pass (WI-6 T6, FR-009)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile = optedIn) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+
+  it("the review pass is bounded: one iteration on the throwaway loop/review branch, never a fix branch (D7, R2)", () => {
+    const options = boundedRunOptions("review", REVIEW_BRANCH);
+    expect(options.maxIterations).toBe(1); // constraint 5 — asserted once at the shared factory
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: "loop/review" });
+  });
+
+  it("buildReviewPrompt states the three-verdict contract, the reported issue, and the diff under review", () => {
+    const prompt = buildReviewPrompt(issue, "+ def slugify(s):\n-     return s.lower()");
+    expect(prompt).toContain(issue.description); // the report the diff is judged against
+    expect(prompt).toContain("+ def slugify(s):"); // the diff itself
+    for (const verdict of ["approve", "wrong", "uncertain"]) {
+      expect(prompt).toContain(`<review>${verdict}</review>`);
+    }
+  });
+
+  it("approve: the reviewer runs once on the guarded prompt with the diff, loop/review is deleted, and mergePr proceeds", async () => {
+    const deps = makeDeps();
+    const outcome = await run(deps);
+
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    const call = deps.runReview.mock.calls[0]![0] as { cwd: string; prompt: string; diff: string };
+    expect(call.cwd).toBe("/tmp/repo");
+    expect(call.diff).toBe("diff-under-review");
+    expect(call.prompt).toContain(issue.description);
+    expect(call.prompt).toContain("diff-under-review");
+    expect(call.prompt).toContain("<review>approve</review>");
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/review");
+    expect(deps.mergePr).toHaveBeenCalledTimes(1); // FR-004: review green → merge
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true });
+    expect(outcome.reviewSkip).toBeUndefined();
+  });
+
+  it("wrong: mergePr NEVER called (no canary either), the skip reason is commented on the PR, the run continues with a PR'd outcome and a loud reviewSkip", async () => {
+    const deps = makeDeps({ reviewVerdict: "wrong" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.syncMain).not.toHaveBeenCalled(); // no merge landed → no canary spend
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
+    expect(call.repoDir).toBe("/tmp/repo");
+    expect(call.prUrl).toBe(PR_URL);
+    expect(call.body).toContain("wrong");
+    expect(outcome.prUrl).toBe(PR_URL); // the PR is the deliverable — the run continues
+    expect(outcome.failure).toBeUndefined(); // never an issue failure
+    expect(outcome.reviewSkip).toContain("wrong");
+  });
+
+  it("a verdict that fails to parse counts as uncertain: no merge, skip comment, PR stays open (FR-009 boundary)", async () => {
+    const deps = makeDeps({ reviewStdout: "<review>maybe</review>" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    expect((deps.commentOnPr.mock.calls[0]![0] as { body: string }).body).toContain("uncertain");
+    expect(outcome.reviewSkip).toContain("uncertain");
+    expect(outcome.prUrl).toBe(PR_URL);
+  });
+
+  it("a thrown review run maps to uncertain (D7): no merge, skip comment, run continues", async () => {
+    const deps = makeDeps({ reviewThrows: "provider: 503 unavailable" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    expect((deps.commentOnPr.mock.calls[0]![0] as { body: string }).body).toContain("uncertain");
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.reviewSkip).toContain("503 unavailable");
+  });
+
+  it("opted-out repo: the reviewer is never invoked — no review spend, even on a would-be-wrong verdict (FR-009)", async () => {
+    const deps = makeDeps({ reviewVerdict: "wrong" });
+    const outcome = await run(deps, profile); // no autoMerge
+
+    expect(deps.fixDiff).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.reviewSkip).toBeUndefined();
+  });
+
+  it("the queue records the skip loudly and continues: reviewSkipped in the summary, REVIEW SKIP lines, never a failed entry", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      reviewVerdict: "uncertain",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]); // the run continued past both skips
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]); // PR'd = fixed, exactly like a merge failure
+    expect(summary.failed).toEqual([]); // a review skip is never an issue failure
+    expect(summary.mergedPrs).toEqual([]);
+    expect(summary.reviewSkipped).toEqual([
+      ["gh-1", expect.stringContaining("uncertain")],
+      ["gh-2", expect.stringContaining("uncertain")],
+    ]);
+    const text = formatSummary(summary);
+    expect(text).toContain("REVIEW SKIP gh-1:");
+    expect(text).toContain("REVIEW SKIP gh-2:");
   });
 });
 
@@ -796,6 +935,12 @@ interface QueueDepsConfig {
   canaryRevertThrows?: string;
   /** Issue close throws (gh error) for this id — bookkeeping failure on a merged outcome (WI-6 T5). */
   closeThrowsFor?: string;
+  /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
+  reviewVerdict?: "approve" | "wrong" | "uncertain";
+  /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
+  reviewStdout?: string;
+  /** The review run itself throws for every issue (API down / budget refusal). */
+  reviewThrows?: string;
 }
 
 /** Canary-red suite for the queue harness: one failure outside the baseline. */
@@ -869,6 +1014,14 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (config.closeThrowsFor !== undefined && target.id === config.closeThrowsFor) {
         throw new Error("gh: issue close failed — network");
       }
+    }),
+    // WI-6 T6 seams (FR-009)
+    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
+    runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
+      if (config.reviewThrows !== undefined) {
+        throw new Error(config.reviewThrows);
+      }
+      return config.reviewStdout ?? `<review>${config.reviewVerdict ?? "approve"}</review>`;
     }),
     // QueueDeps
     ghJson: vi.fn((_args: string[], _cwd: string) =>

@@ -5,6 +5,7 @@ import {
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
   OPEN_PR_PAGE_LIMIT,
+  parseReviewOutput,
   parseTriageOutput,
   prListArgs,
   QueueAcquisitionError,
@@ -469,6 +470,20 @@ describe("parseTriageOutput (WI-2 T3, Zod-validated)", () => {
       parseTriageOutput('<triage>{"scores":{"gh-1":3.5,"gh-2":1},"files":{}}</triage>', ids),
     ).toBeUndefined(); // non-integer
     expect(parseTriageOutput("<triage>not json</triage>", ids)).toBeUndefined();
+  });
+});
+
+describe("parseReviewOutput (WI-6 T6, FR-009)", () => {
+  it("parses each of the three contract verdicts", () => {
+    expect(parseReviewOutput("prose\n<review>approve</review>\nmore prose")).toBe("approve");
+    expect(parseReviewOutput("<review>wrong</review>")).toBe("wrong");
+    expect(parseReviewOutput("<review>uncertain</review>")).toBe("uncertain");
+  });
+
+  it("a missing block, an off-contract verdict, or empty input is uncertain — the blocking class", () => {
+    expect(parseReviewOutput("the diff looks fine, ship it")).toBe("uncertain"); // no block
+    expect(parseReviewOutput("<review>maybe</review>")).toBe("uncertain"); // not a contract verdict
+    expect(parseReviewOutput("")).toBe("uncertain");
   });
 });
 

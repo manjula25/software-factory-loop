@@ -171,4 +171,61 @@ The `main()`-level override stderr line is untested (not an exported seam).
 Remaining from T4: T6 review pass (gap comment) and the `syncMain` throw
 note for `verification-before-completion`.
 
+## T6 — pre-merge review pass (FR-009, completes FR-004 ordering)
+
+**Claim.** Between `createPr` and `mergePr` in the auto-merge chain (opted-in
+repos only), one bounded cheap-model review pass judges the fix diff against
+the report: `fixDiff` (`git diff main...<branch>`) → `buildReviewPrompt`
+(three-verdict contract) → `assertNoSecrets` → `runReview` (single
+`run({...})`, `maxIterations: 1` via the shared `boundedRunOptions` factory,
+throwaway `loop/review` branch deleted in a finally) → `parseReviewOutput`.
+Only an explicit `approve` reaches `mergePr`; wrong, uncertain (also what
+unparseable output and any thrown step map to) blocks the merge with the PR
+left open, a guarded skip comment posted, `REVIEW SKIP` summary lines, and
+the run continuing. Opted-out repos never invoke the reviewer. FR-004's full
+blocking order holds: verification → review → merge.
+
+**Commands (controller, fresh on the final candidate, working tree vs `2d2f6cf`):**
+
+- `npx vitest run src/queue.test.ts src/loop.test.ts src/sandcastle-adapter.boundary.test.ts`
+  → 121/121 passed, exit 0 (10 new tests: parser verdict table + uncertain
+  defaults; prompt build; approve → merge proceeds; wrong / unparseable /
+  throw → mergePr never called + skip comment + queue continues; opted-out →
+  reviewer never invoked; `REVIEW SKIP` summary surfacing; the shared
+  `maxIterations: 1` bound asserted once).
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 191 tests passed, exit 0 (181 + 10 new).
+- `git diff 2d2f6cf -- src/sandcastle-adapter.boundary.test.ts` → empty
+  (boundary file byte-unchanged, still passing).
+
+**RED evidence.** Leaf observed, pre-GREEN: parser tests — `TypeError:
+parseReviewOutput is not a function` (focused exit 1, 2 failed/29 passed);
+wiring tests — `buildReviewPrompt is not a function`, `runReview` called 0
+times, `mergePr` called where never-expected (no gate), summary
+`reviewSkipped` absent (focused exit 1, 6 failed/80 passed). The opted-out
+test passed pre-change as expected. Controller re-ran everything fresh on
+the final tree (above).
+
+**Live exercise (plan step 5 — one real bounded model call, controller-run
+2026-09-18).** Script: `docs/work/WI-6/evidence/review-exercise.ts` — the
+exact production wiring against fixtures PR #15 (hand-opened; issue #14:
+`parse_iso8601` ValueError on fractional-second Z timestamps; hand-authored
+fix branch `fix/gh-14`, all four parse cases verified locally before push).
+
+- prompt: 2886 chars (diff 1688 chars); provider `claude-via-proxy`
+  (glm-5.2, the run's own cheap default — no new provider).
+- verdict: **approve** (parseReviewOutput on real stdout; reviewer's
+  reasoning named the root cause and both regression tests).
+- wall: 18974 ms; `loop/review` branch deleted post-run (verified absent).
+- cost estimate: ~0.75k prompt + ~0.4k completion tokens ≈ **~1.2k tokens
+  total** on the cheap model — one call, `maxIterations: 1`.
+- LLM spend ledger for WI-6 to date: exactly this one auxiliary call.
+
+**Boundary.** Unit evidence at the parser/loop/summary seams with stubbed
+reviewer deps + one live call as above. The full chain live (review verdict
+actually gating a merge in Docker) is T7. `main()` console output not a unit
+seam. Recorded follow-ups (implementation-notes T6): guard-ordering negative
+test, throw-path branch-deletion test, `runSingleIssue` extraction at
+threshold, `BoundedRunOptions` named type.
+
 

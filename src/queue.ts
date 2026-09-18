@@ -272,6 +272,24 @@ export function parseTriageOutput(
   return covers ? parsed.data : undefined;
 }
 
+/**
+ * WI-6 T6 (FR-009): the pre-merge review pass's three verdicts. `approve` is
+ * the only verdict that lets a merge proceed; `wrong` (wrong root cause /
+ * wrong test) and `uncertain` (cannot tell) both block it.
+ */
+export type ReviewVerdict = "approve" | "wrong" | "uncertain";
+
+/**
+ * Extract the `<review>…</review>` verdict (WI-6 T6, FR-009). Only the three
+ * contract verdicts parse; a missing block, empty output, or any other content
+ * is `uncertain` — the blocking class (FR-009: a verdict that fails to parse
+ * counts as uncertain).
+ */
+export function parseReviewOutput(stdout: string): ReviewVerdict {
+  const match = stdout.match(/<review>\s*(approve|wrong|uncertain)\s*<\/review>/);
+  return match === null ? "uncertain" : (match[1] as ReviewVerdict);
+}
+
 /** Short scoring prompt — one block, per-issue score and likely-touched files. */
 export function buildTriagePrompt(issues: readonly NormalizedIssue[]): string {
   const listing = issues
