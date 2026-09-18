@@ -1,5 +1,9 @@
 # WI-6 Implementation Plan — auto-merge
 
+*Revised 2026-09-18 after `/ponytail` — three accepted recommendations folded
+in (R1: `--notify` flag deleted, hand-edit only; R2: shared
+`boundedRunOptions` factory; R3: shared `prListArgs(state)` factory).*
+
 Inputs of record: `docs/work/WI-6/specification.md` (approved 2026-09-18),
 `docs/work/WI-6/slices.md`, tickets `docs/work/WI-6/tickets/t1…t7`. Baseline recorded
 fresh at `749b132` (worktree `.claude/worktrees/wi-6`, branch `worktree-wi-6`):
@@ -52,26 +56,35 @@ image `sandcastle-loop`.
    `:905-938`). The summary gains `mergedPrs: [id, url, mergeCommit][]` and
    `reverted: { id; prUrl; mergeCommit; revertCommit; canaryEvidence }[]`;
    `formatSummary` prints the `⚠️ REVERTED` section.
-6. **D6 — notify identity.** New optional profile field `notifyHandle?: string`, set
-   by a value-taking `--notify <github-handle>` onboarding flag (same shape as
-   `--install`). Absent → the revert comment is still posted, without a mention, and
-   the summary says `notify handle not configured`. This discharges FR-007's
-   "configured identity" without a new config surface. Not in `.env`: guard semantics
-   forbid echoing env values, and a handle must appear in the comment body.
+6. **D6 — notify identity.** The profile carries an optional
+   `notifyHandle?: string` — **hand-edit only** (R1, ponytail 2026-09-18): a
+   once-per-repo value does not earn a CLI surface, and the profile is already the
+   endorsed hand-edit mechanism (FR-001's own "hand-editable" rule). No onboarding
+   flag, no writer code — `ProjectProfile` gains the field; the human edits
+   `profile.json`. Absent → the revert comment is still posted, without a mention,
+   and the summary says `notify handle not configured`. This discharges FR-007's
+   "configured identity". Not in `.env`: guard semantics forbid echoing env values,
+   and a handle must appear in the comment body.
 7. **D7 — review pass mechanics.** New adapter export `runReview(input)` cloned from
    `runTriage`: one `run({...})` with `maxIterations: 1` on throwaway branch
-   `loop/review` (new const `REVIEW_BRANCH` + `reviewRunOptions()` mirroring
-   `triageRunOptions`), prompt = issue description + `git diff main...<fixBranch>`
+   `loop/review` (new const `REVIEW_BRANCH`). The cost-control options object is a
+   **shared factory** (R2): `boundedRunOptions(name: string, branch: string)` with
+   `maxIterations: 1`, replacing `triageRunOptions` — `runTriage` and `runReview`
+   both call it, so the budget bound is asserted in one place. Prompt = issue
+   description + `git diff main...<fixBranch>`
    (new dep `fixDiff(repoDir, branch)` = `git diff main...<branch>`), required output
    `<review>approve|wrong|uncertain</review>`. New parser `parseReviewOutput(stdout)`
    in `src/queue.ts` beside `parseTriageOutput`: any missing block, unparseable
    content, or thrown run maps to the **uncertain** class. Non-approve → no merge
    call, skip-reason comment via `commentOnPr`, run continues.
-8. **D8 — merged-PR listing.** New `QueueDeps.listMergedPrs(repoDir)` +
-   exported `mergedPrListArgs()` = `["pr","list","--state","merged","--limit",
-   String(OPEN_PR_PAGE_LIMIT),"--json","headRefName,body,number,url"]`; merged PRs
-   extend `OpenPr` with `number`/`url` (a new `MergedPr` interface). `SplitResult`
-   gains `skippedMerged: string[]`, surfaced as a summary count.
+8. **D8 — merged-PR listing.** New `QueueDeps.listMergedPrs(repoDir)`. The
+   listing args are a **shared factory** (R3): generalize
+   `openPrListArgs()` (`src/queue.ts:53`) into
+   `prListArgs(state: "open" | "merged")` — the open call sites and tests move to
+   `prListArgs("open")` in the same green commit; the merged variant adds
+   `number,url` to the json fields. Merged PRs extend `OpenPr` with `number`/`url`
+   (a new `MergedPr` interface). `SplitResult` gains `skippedMerged: string[]`,
+   surfaced as a summary count.
 9. **D9 — PR body mode.** `buildPrBody` gains a final `autoMerge: boolean` param;
    opted-in bodies replace the last line (`src/loop.ts:277`) with the gate-chain
    sentence: merge is automatic after independent verification, a diff-review pass,
@@ -121,14 +134,17 @@ per checkpoint is recorded in `implementation-notes.md`.
      retried (existing behavior, now pinned);
    - (a) open PR → `skippedDuplicate` (existing, unchanged).
    Run → fails: `listMergedPrs` is not part of `QueueDeps`.
-2. **GREEN.** Implement D8: `MergedPr` interface, `mergedPrListArgs()`,
-   `QueueDeps.listMergedPrs`, `SplitResult.skippedMerged`. In `splitQueue`, the
+2. **GREEN.** Implement D8: `MergedPr` interface, `prListArgs(state)` (the
+   refactor of `openPrListArgs` — its existing call sites in `src/loop.ts` and its
+   assertions in `src/queue.test.ts` move to `prListArgs("open")` in this same
+   commit, refactor-while-green), `QueueDeps.listMergedPrs`,
+   `SplitResult.skippedMerged`. In `splitQueue`, the
    merged check runs **before** the open-PR check and before any branch deletion
    (`revertedOnMain` guard arrives in Task 4 — the dep slot
    `mainRevertsPr` is added there, not now). `runQueue` passes `skippedMerged` into
    `QueueSummary` (new field) and `formatSummary` adds
    `| skipped-merged: N` to the counts line. Real wiring in `main()`:
-   `listMergedPrs` via `realGhJson(mergedPrListArgs(), dir)`. Note: `runOverrideIssue`
+   `listMergedPrs` via `realGhJson(prListArgs("merged"), dir)`. Note: `runOverrideIssue`
    inherits the dedup automatically (it calls `splitQueue`).
 3. **Commit.** `feat(WI-6): merged-PR dedup — merged fix means issue done; merged branch never retried (FR-002)`
 
@@ -164,16 +180,13 @@ per checkpoint is recorded in `implementation-notes.md`.
 
 ## Task 4 — T4: canary, revert, halt, notify (FR-005/006/007, slice 4)
 
-**Files:** `src/loop.ts`, `src/queue.ts`, `src/onboard-profile.ts`,
-`src/loop.test.ts`, `src/queue.test.ts`, `src/onboard-profile.test.ts`,
-`scripts/onboard.ts`, `CLAUDE.md`.
+**Files:** `src/loop.ts`, `src/queue.ts`, `src/loop.test.ts`,
+`src/queue.test.ts`, `CLAUDE.md`.
 
-1. **RED (profile).** `src/onboard-profile.test.ts`: `--notifyalice`-style value flag
-   `["--notify", "alice"]` → `notifyHandle: "alice"`; absent → key omitted. Fails.
-2. **GREEN (profile).** `ProjectProfile.notifyHandle?: string` +
-   `optValue(argv, "--notify")` spread in `onboardProfile`; usage header gains
-   `[--notify <github-handle>]`.
-3. **RED (chain).** In `src/loop.test.ts` with stubbed
+*`notifyHandle` is a hand-edit-only profile field (D6, R1) — no onboarding flag,
+no writer code; `ProjectProfile` gains the typed field in this task's GREEN step.*
+
+1. **RED (chain).** In `src/loop.test.ts` with stubbed
    `syncMain`/`revertMerge`/`commentOnPr`/`mainRevertsPr` and a canary
    `createFixSandbox` that returns a programmable suite result:
    - merge success → canary sandbox created on `loop/canary-<id>` from synced main,
@@ -184,7 +197,9 @@ per checkpoint is recorded in `implementation-notes.md`.
      merge commit; outcome `failureKind: "harness"` + `reverted` record;
      `runQueue` throws `QueueAbortedError`; CLI exits 1;
    - red → `commentOnPr` called once with a body containing `@<notifyHandle>` and
-     `REVERTED`; green paths → never called;
+     `REVERTED` (profile carries `notifyHandle` in the test fixture); green paths →
+     never called; red with `notifyHandle` absent → comment still posted, no
+     mention, summary says `notify handle not configured` (D6);
    - canary install failure / unreadable suite output → red path (D2);
    - `revertMerge` throws → still halted, still exit 1, revert failure recorded;
    - summary text contains a `⚠️ REVERTED` section naming id, PR, merge commit,
@@ -192,16 +207,16 @@ per checkpoint is recorded in `implementation-notes.md`.
    In `src/queue.test.ts`: merged PR whose `mainRevertsPr` stub returns true →
    **eligible** (not `skippedMerged`) — the FR-006 re-queue rule.
    Run → all fail (deps/fields absent).
-4. **GREEN (chain).** Implement D2–D5: `LoopDeps.syncMain`, `revertMerge`,
+2. **GREEN (chain).** Implement D2–D5: `ProjectProfile.notifyHandle?: string`
+   (type only — hand-edit field, no writer), `LoopDeps.syncMain`, `revertMerge`,
    `commentOnPr` (`gh pr comment <url> --body <body>`), `mainRevertsPr`; the
    canary step per D3; halt via `failureKind: "harness"` on the reverted outcome
    (existing `QueueAbortedError` path carries the summary out); `QueueSummary.reverted`
    + `formatSummary` `⚠️ REVERTED` block; `splitQueue` merged-check gains the
    `mainRevertsPr` guard. All strings that reach terminals/comments pass
    `assertNoSecrets` as today.
-5. **Docs.** `CLAUDE.md` loop.ts row: merge/canary/revert; onboard-profile row:
-   `--notify`.
-6. **Commit.** `feat(WI-6): post-merge canary with auto-revert, run halt, @-mention notification (FR-005/006/007)`
+3. **Docs.** `CLAUDE.md` loop.ts row: merge/canary/revert.
+4. **Commit.** `feat(WI-6): post-merge canary with auto-revert, run halt, @-mention notification (FR-005/006/007)`
 
 ## Task 5 — T5: issue closing on merge (FR-008, slice 5)
 
@@ -231,8 +246,11 @@ per checkpoint is recorded in `implementation-notes.md`.
    `<review>approve</review>` → `approve`; `wrong`/`uncertain` likewise; missing
    block, `<review>maybe</review>`, empty → `uncertain`. Fails.
 2. **GREEN (parser + adapter).** `parseReviewOutput` beside `parseTriageOutput`;
-   `REVIEW_BRANCH = "loop/review"`, `reviewRunOptions()` (name `"review"`,
-   `maxIterations: 1`), `runReview(input: TriageRunInput & { diff: string })` per
+   `REVIEW_BRANCH = "loop/review"`; refactor `triageRunOptions` into the shared
+   factory `boundedRunOptions(name, branch)` (R2 — `runTriage` calls
+   `boundedRunOptions("triage", TRIAGE_BRANCH)`, keeping its existing exported
+   behavior; the `maxIterations: 1` bound is asserted once); `runReview(input:
+   TriageRunInput & { diff: string })` per
    D7 — the adapter stays the only Sandcastle import (boundary test unchanged and
    green). Prompt built in `src/loop.ts` (`buildReviewPrompt(issue, diff)`) stating
    the three-verdict contract; `assertNoSecrets([prompt])` before the call;
@@ -267,7 +285,9 @@ known open issue (existing re-seed practice; the canary-red scenario below resee
 again).
 
 1. **Green chain, live.** Onboard fixtures with
-   `npx tsx scripts/onboard.ts <fixtures> --auto-merge --notify manjula25`, then
+   `npx tsx scripts/onboard.ts <fixtures> --auto-merge`, then hand-edit the
+   fixtures profile to add `"notifyHandle": "manjula25"` (D6 — the field's only
+   write path), then
    `npm run loop -- --repo <fixtures> --provider claude-via-proxy --issue <n>`.
    Observe and record (commands + verbatim output in `evidence/`): PR opened with
    gate-chain body → review verdict → squash merge on main (`gh pr view --json
