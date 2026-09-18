@@ -69,6 +69,13 @@ export interface ProjectProfile {
    * means not cleared — attachment URLs then trip the confidentiality gate.
    */
   readonly confidentialityCleared?: boolean;
+  /**
+   * Opt-in to automatic squash-merge of verified PRs (WI-6). Recorded only by
+   * `--auto-merge` at onboarding; absent = off (the default — a human merges
+   * every PR). Hand-editable in profile.json. The harness's own repo never
+   * sets it (constraint 1, amended 2026-09-18).
+   */
+  readonly autoMerge?: boolean;
 }
 
 /** Seam the loop runs on — the adapter plus PR creation, stubbed in tests. */
