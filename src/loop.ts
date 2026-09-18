@@ -152,6 +152,15 @@ export interface LoopDeps {
    * never thrown past the revert chain.
    */
   commentOnPr(input: { repoDir: string; prUrl: string; body: string }): Promise<void>;
+  /**
+   * WI-6 (FR-008, T5): close a gh-sourced issue with an evidence comment
+   * (`gh issue close <n> --comment <body>`, the number parsed from the issue
+   * url). Called only at the end of the green auto-merge chain (D3 ordering:
+   * merge → canary → close). Best-effort at the call site: closing is
+   * bookkeeping — a throw is recorded, the merged outcome stands, and the
+   * run continues.
+   */
+  closeIssue(repoDir: string, issue: NormalizedIssue, comment: string): Promise<void>;
 }
 
 export interface SingleIssueInput {
@@ -198,6 +207,13 @@ export interface LoopOutcome {
    * verified and the PR is real work).
    */
   readonly mergeFailure?: string;
+  /**
+   * WI-6 (FR-008): set when closing a gh-sourced issue after a canary-green
+   * merge FAILED. The merge stands — the fix is merged and canary-green, and
+   * closing is bookkeeping — so like `mergeFailure` this is a loud note on a
+   * merged outcome, never an issue failure; the queue continues.
+   */
+  readonly closeFailure?: string;
   /**
    * WI-6 (FR-006/FR-007): set on the canary-red path — the merge was reverted
    * (or the revert itself failed loudly), the queue must halt
@@ -659,7 +675,31 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     }
 
     if (canaryGreen) {
-      return { ...prOutcome, merged: { prUrl, mergeCommit, canaryGreen: true } };
+      // WI-6 T5 (FR-008, D3 ordering merge → canary → close): the last link of
+      // the green chain. Only gh-sourced issues have something external to
+      // close — spec-doc/plain-list are a no-op. Best-effort: the fix is
+      // merged and canary-green, so closing is bookkeeping; a failure is
+      // recorded loudly on the merged outcome, never thrown (FR-008 boundary).
+      let closeFailure: string | undefined;
+      if (input.issue.sourceType === "github-issue") {
+        const closeComment =
+          `Closed by the fix loop: the fix PR ${prUrl} was squash-merged ` +
+          `(merge commit ${mergeCommit}) and the post-merge canary suite on the base ` +
+          `branch is green — no new failures versus the onboarding baseline.`;
+        try {
+          assertNoSecrets([closeComment], deps.env);
+          await deps.closeIssue(input.repoDir, input.issue, closeComment);
+        } catch (error) {
+          closeFailure =
+            `issue close failed for ${input.issue.url ?? input.issue.id}: ` +
+            `${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      return {
+        ...prOutcome,
+        merged: { prUrl, mergeCommit, canaryGreen: true },
+        ...(closeFailure !== undefined ? { closeFailure } : {}),
+      };
     }
 
     // WI-6 T4 (FR-006/FR-007): red main is a stop-the-line event. Revert
@@ -766,6 +806,13 @@ export interface QueueSummary {
    */
   readonly mergeFailures: [string, string][];
   /**
+   * [id, reason] — WI-6 (FR-008): closing a gh-sourced issue after a
+   * canary-green merge failed. Like `mergeFailures` this is a loud note of
+   * its own (`ISSUE CLOSE FAILED` lines), never a `failed` entry — the merge
+   * stands and the queue continues.
+   */
+  readonly closeFailures: [string, string][];
+  /**
    * WI-6 (FR-006/FR-007): canary-red reverts — each halted the run (see the
    * FAILED lines for the message), was reverted on main (or failed loudly),
    * and stays queued for a later run. Snapshotted even on the abort path.
@@ -858,6 +905,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const prUrls: string[] = [];
   const mergedPrs: [string, string, string][] = [];
   const mergeFailures: [string, string][] = [];
+  const closeFailures: [string, string][] = [];
   const reverted: RevertedRecord[] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
@@ -870,6 +918,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     prUrls: [...prUrls],
     mergedPrs: [...mergedPrs],
     mergeFailures: [...mergeFailures],
+    closeFailures: [...closeFailures],
     reverted: [...reverted],
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
@@ -906,6 +955,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       if (outcome.mergeFailure !== undefined) {
         mergeFailures.push([issue.id, outcome.mergeFailure]);
       }
+      if (outcome.closeFailure !== undefined) {
+        closeFailures.push([issue.id, outcome.closeFailure]);
+      }
       continue;
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
@@ -924,7 +976,12 @@ export function formatSummary(summary: QueueSummary): string {
     ...(summary.source !== undefined ? [`source: ${summary.source}`] : []),
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | skipped-merged: ${summary.skippedMerged.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
-    ...summary.mergedPrs.map(([id, url, mergeCommit]) => `MERGED ${id}: ${url} @ ${mergeCommit}`),
+    // A mergedPrs entry exists only on a canary-green merge (red reverts and
+    // never reaches this list), so the canary result is pinned here (T4
+    // spec-review follow-up): a MERGED line without it hides the gate.
+    ...summary.mergedPrs.map(
+      ([id, url, mergeCommit]) => `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green)`,
+    ),
     ...summary.reverted.map(
       (r) =>
         `⚠️ REVERTED ${r.id}: pr ${r.prUrl} merge ${r.mergeCommit} revert ` +
@@ -932,6 +989,7 @@ export function formatSummary(summary: QueueSummary): string {
         (r.notifyHandle !== undefined ? `notify: @${r.notifyHandle}` : "notify handle not configured"),
     ),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
+    ...summary.closeFailures.map(([id, reason]) => `ISSUE CLOSE FAILED ${id}: ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
     ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
@@ -1176,6 +1234,14 @@ async function main(): Promise<void> {
     async commentOnPr({ repoDir: dir, prUrl, body }) {
       execFileSync("gh", ["pr", "comment", prUrl, "--body", body], { cwd: dir, stdio: "inherit" });
     },
+    // WI-6 (FR-008): close the gh-sourced issue with its evidence comment; the
+    // issue number is the last path segment of the issue url.
+    async closeIssue(dir: string, issueToClose: NormalizedIssue, comment: string) {
+      execFileSync("gh", ["issue", "close", issueNumberFromUrl(issueToClose.url), "--comment", comment], {
+        cwd: dir,
+        stdio: "inherit",
+      });
+    },
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
@@ -1252,6 +1318,13 @@ async function main(): Promise<void> {
       if (result.outcome.merged !== undefined) {
         console.log(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
       }
+      // WI-6 (FR-008): a failed close is bookkeeping noise on a merged outcome
+      // — loud (guarded, stderr), never fatal.
+      if (result.outcome.closeFailure !== undefined) {
+        const line = `issue close failed: ${result.outcome.closeFailure}`;
+        assertNoSecrets([line], guardEnv);
+        console.error(line);
+      }
     } else {
       console.error(`Loop finished without a PR — ${result.outcome.failure}`);
       process.exitCode = 1;
@@ -1320,6 +1393,20 @@ function remoteFixBranches(repoDir: string): string[] {
     .split("\n")
     .map((line) => line.trim().split("refs/heads/")[1] ?? "")
     .filter(Boolean);
+}
+
+/**
+ * WI-6 (FR-008): the issue number for `gh issue close`, from the issue url —
+ * the last path segment (`…/issues/42` → `"42"`). A gh-sourced issue always
+ * carries a url ending in its number; anything else is a harness bug, thrown
+ * loudly so the close step records it instead of closing the wrong issue.
+ */
+function issueNumberFromUrl(url: string | undefined): string {
+  const last = url?.split("/").filter(Boolean).pop();
+  if (last === undefined || !/^\d+$/.test(last)) {
+    throw new Error(`cannot derive an issue number from issue url "${url ?? "(none)"}"`);
+  }
+  return last;
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]).endsWith("src/loop.ts");

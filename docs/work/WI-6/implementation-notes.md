@@ -159,5 +159,44 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
   5. From the leaf, to check in T7: whether `mainRevertsPr` should fetch
      origin before reading `git log origin/main` (stale-clone freshness).
 
+### T5 — issue closing on merge (FR-008, slice 5)
+
+- **Dispatched:** 2026-09-18. Size: small-medium. Risk: low-medium (additive
+  final chain link; no new halt/revert semantics). Budget: one leaf session;
+  focused loop vitest + typecheck + full `npm test`.
+- **Result:** ACCEPTED. Controller re-ran everything fresh on the final tree:
+  focused `src/loop.test.ts` 78/78 exit 0; typecheck exit 0; full suite
+  10 files / 181 tests (176 + 5 new), exit 0. Candidate = working tree vs
+  base `2597226`; 2 changed paths, all within the allowed set (+204/−3).
+- **Reviews (same identity, sequential):** specification review APPROVED
+  (FR-008 complete — D3 ordering, source gating, red-path never closes,
+  evidence comment, loud-but-non-fatal failure; no scope creep; non-opted
+  repos byte-identical); code-quality review APPROVED (no standard
+  violations; three minor judgement calls below).
+- **Brief extension (controller, upfront):** T4 spec-review follow-up #1
+  folded in — `formatSummary`'s MERGED line now ends `(canary: green)`,
+  pinned by test (truthful via the invariant that `mergedPrs` only ever
+  holds canary-green merges).
+- **Leaf deviations (accepted, both reviewed):** (1) `QueueSummary`
+  gains `closeFailures` + `ISSUE CLOSE FAILED` lines mirroring the T3
+  `mergeFailures` precedent — an outcome-level field alone would be silent
+  in queue mode; (2) the pre-existing exact-pin of the MERGED line (T3
+  ordering test) updated to the new text, required by the sanctioned
+  formatSummary change. Also added: `issueNumberFromUrl` helper (digits-only
+  url tail, throws loudly, caught by the best-effort close step) and a
+  guarded `issue close failed:` stderr line on the `--issue` override path.
+- **Follow-ups (non-blocking, recorded):**
+  1. Seam-shape drift: `closeIssue(repoDir, issue, comment)` positional vs
+     T4's `commentOnPr({repoDir, prUrl, body})` input-object — `LoopDeps`
+     already mixes both; use input-object for the next seam, no churn now.
+  2. Error-channel conflation: a `assertNoSecrets` abort inside the close
+     try is recorded as `closeFailure` like a gh failure — safe (guard names
+     the env key only, close doesn't happen, note is loud), but the operator
+     responses differ; a distinguishing catch would be marginally clearer.
+  3. CLAUDE.md loop.ts row should mention gh-issue closing — folded into
+     T6's docs step (T6 edits that row anyway per plan).
+  4. Canary-block extraction note from T4 unchanged (`runCanary()` if
+     WI-6 grows further).
+
 
 

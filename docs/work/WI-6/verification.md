@@ -129,10 +129,46 @@ the recorded follow-up on whether `mainRevertsPr` should fetch origin
 first). CLI exit 1 asserted at the `runQueue`/`QueueAbortedError` seam —
 `main()` is not an exported seam and its exit wiring is unchanged from T3.
 Two spec-review minor notes recorded as follow-ups in
-`implementation-notes.md`: green-canary result absent from summary text;
-`syncMain` throw propagates uncaught (no revert/comment on that path —
-plan-D3-sanctioned loud failure, surfaced for an owner decision). Not
-implemented at this checkpoint by design: issue closing (T5), pre-merge
-review pass (T6 gap comment).
+`implementation-notes.md`: green-canary result absent from summary text
+(discharged in T5 — see below); `syncMain` throw propagates uncaught (no
+revert/comment on that path — plan-D3-sanctioned loud failure, surfaced for
+an owner decision). Not implemented at that checkpoint by design: issue
+closing (T5), pre-merge review pass (T6 gap comment).
+
+## T5 — issue closing on merge (FR-008)
+
+**Claim.** At the end of the green auto-merge chain (D3: merge → canary →
+close), a gh-sourced issue is closed via `LoopDeps.closeIssue`
+(`gh issue close <n> --comment <body>`, number from the issue url) with a
+comment naming the PR url, merge commit, and canary result. spec-doc /
+plain-list sources are a no-op; the canary-red path never closes. A close
+failure is recorded loudly (`closeFailure` on the outcome,
+`closeFailures` + `ISSUE CLOSE FAILED` summary lines, guarded stderr on the
+override path) but the outcome stays `merged` and the run continues.
+`formatSummary`'s MERGED line now ends `(canary: green)` (T4 follow-up).
+
+**Commands (controller, fresh on the final candidate, working tree vs `2597226`):**
+
+- `npx vitest run src/loop.test.ts` → 78/78 passed, exit 0 (5 new tests:
+  close-once-with-evidence on green gh-issue; spec-doc/plain-list no-op;
+  red path never closes; close throw → loud record, outcome merged, queue
+  continues; MERGED-line `(canary: green)` pin — plus the T3 ordering pin
+  updated in place).
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 181 tests passed, exit 0 (176 + 5 new).
+
+**RED evidence.** Leaf observed 3 failing tests pre-GREEN (closeIssue called
+0 times where 1 expected; `closeFailures` summary undefined; MERGED-line
+text without `(canary: green)`) — focused exit 1; the two negative-pin
+tests (no-op sources, red path) passed pre-wiring as structurally expected.
+Controller re-ran everything fresh on the final tree (above).
+
+**Boundary.** Unit evidence at the loop seam with a stubbed `closeIssue`.
+The real `gh issue close` wiring (and `issueNumberFromUrl`) is typechecked
+but NOT exercised live (T7). Non-opted repos byte-identical (close sits
+inside the autoMerge chain; MERGED lines only exist on merged outcomes).
+The `main()`-level override stderr line is untested (not an exported seam).
+Remaining from T4: T6 review pass (gap comment) and the `syncMain` throw
+note for `verification-before-completion`.
 
 
