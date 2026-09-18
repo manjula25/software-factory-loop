@@ -38,6 +38,55 @@ user scoped WI-4 to the correctness batch 2026-09-18 (cosmetics deferred).
 Record-only items (2, 3, 5) and the cosmetics batch stay on the WI-3b queue;
 not WI-4 scope.
 
+## Task 2 — T2: loop/onboard deletion fails loudly when the branch survives
+
+**Dispatch record.** Size S (1 file) · risk medium (silently swallowing a
+failed deletion reintroduces the stale-fork bug WI-3b fixed) · time budget
+30m · tool budget ~12 calls · evidence boundary: no vitest seam exists for
+scripts — typecheck + full suite + a throwaway mechanism check of the git
+invocation sequence (leaf) + live Docker re-run of onboarding (controller
+afterwards) · fixed point: `7687e9d` (typecheck 0, 139 tests,
+controller-fresh).
+
+**Candidate identity.** `27421a6` — leaf's one file (scripts/onboard.ts),
+no controller amendments. One accepted implementation deviation: the
+existence probe keeps a try/catch (scoped to the probe only) because
+`execFileSync` throws on non-zero exit rather than returning a status —
+the `-D` deletion itself is fully unguarded.
+
+**Evidence (leaf, preserved).** Typecheck 0; full suite 139/139. Mechanism
+check in a throwaway /tmp git repo (branch pinned via a worktree):
+absent → no-op exit 0; pinned → exit 1 with the real git error visible
+("cannot delete branch 'loop/onboard' used by worktree at …").
+
+**Reviews (sequential, identity `27421a6`).**
+- Specification review: **PASS**, zero blocking. Probe semantics verified
+  empirically in /tmp (present → exit 0, absent → exit 1); worktree-pinned
+  branches ARE seen by rev-parse (shared ref store), so the loud path is
+  reachable in exactly the WI-3b scenario; unpinned stale branches delete
+  cleanly; non-repo repoDir probes as absent and fails loudly downstream at
+  createFixSandbox. Scope: one file, +11/−2.
+- Code-quality review: **APPROVED**, zero critical/important. stdio
+  asymmetry judged correct (probe output discarded, delete stderr must
+  surface); mutable-flag probe matches the repo's execFileSync idiom
+  (spawnSync would be the inconsistency); matches loop.ts's deleteBranch
+  shape. Two nits queued (below).
+
+**Live proof (controller, Docker, zero LLM spend).** `npx tsx
+scripts/onboard.ts <fixtures> --confidentiality-cleared` from this worktree:
+`suite exit: 0 / baseline failures (0) / profile written`, script exit 0;
+`loop/onboard` re-forked exactly at main `009a404` (merge-base confirmed) —
+the happy path (absent-or-deletable branch) is unchanged end-to-end.
+
+**Checkpoint accepted** — both sequential reviews on identity `27421a6`
+(2026-09-18).
+
+**T2 follow-ups (non-blocking).**
+3. (nit) "loop/onboard" literal appears three times in `main()` — a
+   `const onboardBranch` would prevent drift.
+4. (nit) comment line "a branch that survives deletion means a stale fork"
+   reads compressed; reword when next touched.
+
 ## Task 1 — T1: nesting guard fires before the fetch
 
 **Dispatch record.** Size S (2 files) · risk medium (refusal path adjacent to
