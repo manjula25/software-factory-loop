@@ -116,6 +116,13 @@ export interface LoopDeps {
   createPr(args: { repoDir: string; title: string; body: string; base: string; head: string }): Promise<{
     url: string;
   }>;
+  /**
+   * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
+   * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
+   * commit back — any non-zero exit throws, and the loop catches (FR-004's
+   * safe fallback: PR stays open, run continues).
+   */
+  mergePr(input: { repoDir: string; prUrl: string }): Promise<{ mergeCommit: string }>;
 }
 
 export interface SingleIssueInput {
@@ -144,6 +151,18 @@ export interface LoopOutcome {
    * a verification failure. Recorded loudly wherever the issue is reported.
    */
   readonly attachmentFailures?: readonly string[];
+  /**
+   * WI-6 (FR-004): set when the auto-merge (opted-in profiles only) succeeded —
+   * the PR is squash-merged on the base branch at this commit.
+   */
+  readonly merged?: { readonly prUrl: string; readonly mergeCommit: string };
+  /**
+   * WI-6 (FR-004): set when the auto-merge was attempted and FAILED (conflict,
+   * moved base, API error). The PR stays open for a human and the run continues
+   * — this is a loud note, never a failure of the issue itself (the fix is
+   * verified and the PR is real work).
+   */
+  readonly mergeFailure?: string;
 }
 
 /** Deterministic home for the reproduction test (constraint 4: it stays in the suite). */
@@ -256,11 +275,27 @@ export function buildPrBody(
   greenEvidence: string,
   verification: { passed: boolean; newFailures: readonly string[] },
   attachmentFailures?: readonly string[],
+  /**
+   * WI-6 (D9, FR-003): the review path this PR will actually take. `true`
+   * (opted-in profile) → the machine gate chain wording, so a human reading
+   * the PR knows merge may already have happened and where the safety net
+   * lives. `false`/absent → today's human-review closing, byte-identical.
+   * (Default `false` rather than required: TS forbids a required parameter
+   * after the optional `attachmentFailures`, and the default keeps every
+   * existing call site byte-identical without adaptation.)
+   */
+  autoMerge: boolean = false,
 ): string {
   const symptomLine = `Symptom mapping: issue ${issue.id} reported "${issue.description.split("\n")[0].replace(/^#\s*/, "")}" — reproduced by \`${reproTestPath(issue)}\` failing exactly that way, now passing.`;
   const attachmentNote = (attachmentFailures ?? []).length > 0
     ? `\n${attachmentFailures!.map((url) => `attachment fetch failed: ${url}`).join("\n")}\n`
     : "";
+  const closing = autoMerge
+    ? `This repo is opted into automatic merge: this PR is squash-merged automatically once the
+independent fresh-sandbox verification above has passed and a pre-merge diff-review pass
+approves; a post-merge canary suite then runs on the base branch and auto-reverts the
+merge if it goes red. Human review is still welcome at any time.`
+    : `A human reviews and merges this — please judge whether the reproduced symptom matches the report.`;
   return `Automated fix for issue ${issue.id}${issue.url ? ` (${issue.url})` : ""}.
 
 The reproduction test is retained in the suite at \`${reproTestPath(issue)}\`.
@@ -282,7 +317,7 @@ ${symptomLine}
 Independent verification in a fresh sandbox: reproduction test passed; full-suite diff versus
 the onboarding baseline shows no new failures${verification.newFailures.length > 0 ? ` (except: ${verification.newFailures.join(", ")})` : ""}.
 
-A human reviews and merges this — please judge whether the reproduced symptom matches the report.`;
+${closing}`;
 }
 
 export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): Promise<LoopOutcome> {
@@ -446,6 +481,7 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     branch,
     imageName: input.imageName,
   });
+  let prUrl: string | undefined;
   try {
     // Each sandbox is a fresh container: the agent's `pip install -e .` (or
     // equivalent) lived in ITS site-packages, not this one's. Without the
@@ -474,18 +510,45 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     }
 
     const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-    const body = buildPrBody(input.issue, redEvidence, greenEvidence, verification, attachmentFailures);
+    const body = buildPrBody(
+      input.issue,
+      redEvidence,
+      greenEvidence,
+      verification,
+      attachmentFailures,
+      input.profile.autoMerge === true,
+    );
     assertNoSecrets([title, body], deps.env);
 
     const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-    return {
-      branch,
-      prUrl: pr.url,
-      ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
-    };
+    prUrl = pr.url;
   } finally {
     await sandbox.close();
   }
+
+  // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
+  // finally has closed it — merging (with --delete-branch) deletes the very
+  // branch that sandbox sits on. Every failed/gated path above returned inside
+  // the try; reaching here with prUrl set means verification green + PR open.
+  const prOutcome: LoopOutcome = {
+    branch,
+    prUrl,
+    ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+  };
+  if (prUrl !== undefined && input.profile.autoMerge === true) {
+    // [WI-6 T6] pre-merge review pass slots in here — before mergePr, after createPr.
+    try {
+      const merged = await deps.mergePr({ repoDir: input.repoDir, prUrl });
+      return { ...prOutcome, merged: { prUrl, mergeCommit: merged.mergeCommit } };
+    } catch (error) {
+      // FR-004 safe fallback: no auto-merge, the PR stays open, the run
+      // continues — but never silently. A merge failure is not an issue
+      // failure: the fix IS verified and PR'd (the queue counts it fixed).
+      const reason = error instanceof Error ? error.message : String(error);
+      return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
+    }
+  }
+  return prOutcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +590,15 @@ export interface QueueSummary {
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
   readonly attachmentFailures: [string, string][];
   readonly prUrls: string[];
+  /** [id, prUrl, mergeCommit] — auto-merged (opted-in) verified PRs (WI-6). */
+  readonly mergedPrs: [string, string, string][];
+  /**
+   * [id, reason] — auto-merge attempts that failed (WI-6 FR-004). Deliberate
+   * choice: NOT a `failed` entry — the issue is fixed, verified, and PR'd; the
+   * PR is real work and the queue continues. The failure still needs a loud,
+   * named surface of its own (`MERGE FAILED` lines), never silence.
+   */
+  readonly mergeFailures: [string, string][];
   /** Source label (WI-3 FR-007) — set only for non-GitHub queue sources. */
   readonly source?: string;
 }
@@ -612,6 +684,8 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const failed: [string, string][] = [];
   const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
+  const mergedPrs: [string, string, string][] = [];
+  const mergeFailures: [string, string][] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
     fixed: [...fixed],
@@ -621,6 +695,8 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
     attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
+    mergedPrs: [...mergedPrs],
+    mergeFailures: [...mergeFailures],
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
@@ -642,6 +718,15 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     if (outcome.prUrl) {
       fixed.push(issue.id);
       prUrls.push(outcome.prUrl);
+      // WI-6: a merged or failed-to-merge outcome still counts as fixed (see
+      // QueueSummary.mergeFailures for why a merge failure is not an issue
+      // failure); both get their own loud summary surfaces.
+      if (outcome.merged !== undefined) {
+        mergedPrs.push([issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit]);
+      }
+      if (outcome.mergeFailure !== undefined) {
+        mergeFailures.push([issue.id, outcome.mergeFailure]);
+      }
       continue;
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
@@ -660,6 +745,8 @@ export function formatSummary(summary: QueueSummary): string {
     ...(summary.source !== undefined ? [`source: ${summary.source}`] : []),
     `Run summary — attempted: ${summary.attempted.length} (fixed: ${summary.fixed.length}, failed: ${summary.failed.length}) | skipped-duplicate: ${summary.skippedDuplicate.length} | skipped-merged: ${summary.skippedMerged.length} | not-admitted: ${summary.notAdmitted.length}`,
     ...summary.prUrls.map((url) => `PR: ${url}`),
+    ...summary.mergedPrs.map(([id, url, mergeCommit]) => `MERGED ${id}: ${url} @ ${mergeCommit}`),
+    ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
     ...summary.notAdmitted.map(([id, reason]) => `NOT ADMITTED ${id}: ${reason}`),
@@ -866,6 +953,22 @@ async function main(): Promise<void> {
       ).trim();
       return { url };
     },
+    // WI-6 (D1, FR-004): squash keeps main linear; --delete-branch cleans the
+    // fix branch remote+local — the merged PR itself stays queryable. Any
+    // non-zero gh exit throws; runSingleIssue catches and falls back safely.
+    async mergePr({ repoDir: dir, prUrl }) {
+      execFileSync(
+        "gh",
+        ["pr", "merge", prUrl, "--squash", "--delete-branch"],
+        { cwd: dir, stdio: "inherit" },
+      );
+      const mergeCommit = execFileSync(
+        "gh",
+        ["pr", "view", prUrl, "--json", "mergeCommit", "-q", ".mergeCommit.oid"],
+        { cwd: dir, encoding: "utf8" },
+      ).trim();
+      return { mergeCommit };
+    },
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
@@ -915,6 +1018,19 @@ async function main(): Promise<void> {
     }
     if (result.outcome.prUrl) {
       console.log(`PR opened: ${result.outcome.prUrl}`);
+      // WI-6: there is always a prUrl on the merge-failure path — the PR is the
+      // deliverable, so the run stays green (exit 0) and a human can still
+      // merge it. The failure is loud, never silent, but never fatal here.
+      // The reason quotes a subprocess error, so it passes the secrets guard
+      // like every other emitted string.
+      if (result.outcome.mergeFailure !== undefined) {
+        const line = `auto-merge failed: ${result.outcome.mergeFailure}`;
+        assertNoSecrets([line], guardEnv);
+        console.error(line);
+      }
+      if (result.outcome.merged !== undefined) {
+        console.log(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
+      }
     } else {
       console.error(`Loop finished without a PR — ${result.outcome.failure}`);
       process.exitCode = 1;

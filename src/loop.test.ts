@@ -104,6 +104,10 @@ interface DepOverrides {
   env?: Record<string, string>;
   /** Override to simulate a committed `.loop-harness` on the base branch. */
   pathCommittedOnBranch?: (repoDir: string, branch: string, path: string) => Promise<boolean>;
+  /** mergePr result (opted-in runs); defaults to a fixed merge commit. */
+  mergeCommit?: string;
+  /** Simulated merge failure (conflict / API error) on opted-in runs. */
+  mergeThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -123,6 +127,12 @@ function makeDeps(overrides: DepOverrides = {}) {
       url: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       ...args,
     })),
+    mergePr: vi.fn(async () => {
+      if (overrides.mergeThrows !== undefined) {
+        throw new Error(overrides.mergeThrows);
+      }
+      return { mergeCommit: overrides.mergeCommit ?? "m0ckmerge" };
+    }),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
   };
 }
@@ -283,10 +293,72 @@ describe("runSingleIssue", () => {
   });
 });
 
+describe("runSingleIssue auto-merge (WI-6 T3, FR-003/FR-004 wiring)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+
+  it("opted-in + verification green: mergePr called exactly once with the created PR url; outcome carries merged", async () => {
+    const deps = makeDeps({ mergeCommit: "deadbeef" });
+    const outcome = await run(deps, optedIn);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledWith({
+      repoDir: "/tmp/repo",
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+    });
+    expect(outcome.merged).toEqual({
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+      mergeCommit: "deadbeef",
+    });
+    // FR-003 at the same seam: the opted-in PR body states the machine gate
+    // chain, never the human-review sentence.
+    const body = deps.createPr.mock.calls[0]![0] as { body: string };
+    expect(body.body).toContain("canary");
+    expect(body.body).not.toContain("A human reviews and merges this");
+  });
+
+  it("opted-out (no autoMerge in profile): mergePr NEVER called; outcome shape identical to today's", async () => {
+    const deps = makeDeps();
+    const outcome = await run(deps, profile);
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      branch: "fix/gh-1",
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+    });
+    // and the body keeps today's human-review closing (pinned in buildPrBody tests)
+    const body = deps.createPr.mock.calls[0]![0] as { body: string };
+    expect(body.body).toContain("A human reviews and merges this");
+  });
+
+  it("opted-in but mergePr throws (conflict/API error): no merged, a loud mergeFailure, the run does not throw, PR still returned", async () => {
+    const deps = makeDeps({ mergeThrows: "gh: merge conflict — base branch moved" });
+    const outcome = await run(deps, optedIn); // resolves — a merge failure never throws
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.mergeFailure).toContain("merge conflict");
+    expect(outcome.prUrl).toBe("https://github.com/manjula25/loop-fixtures-py/pull/9");
+  });
+});
+
 describe("buildPrBody", () => {
   it("produces a body that itself passes the secrets guard", () => {
-    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] });
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, false);
     expect(() => assertNoSecrets([body], { CLI_PROXY_API_URL: "http://x.local:1" })).not.toThrow();
+  });
+
+  it("autoMerge=true: states the machine gate chain (canary) and never the human-review sentence (WI-6 T3, FR-003)", () => {
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, true);
+    expect(body).toContain("canary");
+    expect(body).not.toContain("A human reviews and merges this");
+  });
+
+  it("autoMerge=false: ends with exactly today's human-review sentence (FR-003: byte-identical default)", () => {
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, false);
+    expect(
+      body.endsWith(
+        "A human reviews and merges this — please judge whether the reproduced symptom matches the report.",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -337,6 +409,8 @@ interface QueueDepsConfig {
   triageThrows?: string;
   /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
   pathCommittedOnBranch?: boolean;
+  /** Opted-in runs: merge fails (conflict/API error) for PRs whose url contains this token. */
+  mergeThrowsFor?: string;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -375,6 +449,12 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     }),
     deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {}),
     createPr: vi.fn(async (args: { head: string }) => ({ url: `https://example/pr/${args.head}` })),
+    mergePr: vi.fn(async (input: { prUrl: string }) => {
+      if (config.mergeThrowsFor !== undefined && input.prUrl.includes(config.mergeThrowsFor)) {
+        throw new Error("gh: merge conflict — base branch moved");
+      }
+      return { mergeCommit: "mdef456" };
+    }),
     // QueueDeps
     ghJson: vi.fn((_args: string[], _cwd: string) =>
       JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
@@ -447,6 +527,35 @@ describe("runQueue (WI-2 T4)", () => {
     const counts = formatSummary(summary).split("\n")[0]!;
     expect(counts).toContain("| skipped-duplicate: 0");
     expect(counts).toContain("| skipped-merged: 1");
+  });
+
+  it("opted-in queue: merged outcomes land in mergedPrs; a merge failure still counts as fixed and is surfaced loudly (WI-6 T3)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      mergeThrowsFor: "fix/gh-2",
+    });
+    const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(summary.mergedPrs).toEqual([["gh-1", "https://example/pr/fix/gh-1", "mdef456"]]);
+    // Deliberate choice (WI-6 T3): a merge failure is NOT an issue failure — the
+    // fix is verified and the PR is real work, so it stays `fixed`, and the
+    // failure gets its own loud summary surface instead of the FAILED line.
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.failed).toEqual([]);
+    expect(summary.mergeFailures).toHaveLength(1);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-2");
+    expect(summary.mergeFailures[0]![1]).toContain("merge conflict");
+
+    const lines = formatSummary(summary).split("\n");
+    const prAt = lines.findIndex((l) => l.startsWith("PR: "));
+    const mergedAt = lines.findIndex((l) => l === "MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456");
+    const failedAt = lines.findIndex((l) => l.startsWith("MERGE FAILED gh-2:"));
+    expect(prAt).toBeGreaterThanOrEqual(0);
+    expect(mergedAt).toBeGreaterThan(prAt); // MERGED lines come after the PR: lines
+    expect(failedAt).toBeGreaterThan(mergedAt);
+    expect(lines[failedAt]).toContain("merge conflict");
   });
 
   it("aborts the whole queue on a harness-level failure (stale baseline), attempting nothing further", async () => {

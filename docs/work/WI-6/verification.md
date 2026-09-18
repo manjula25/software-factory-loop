@@ -58,3 +58,34 @@ No live `gh pr list --state merged` call (T7 territory). A merged-then-reverted 
 is still deduped away at this checkpoint — the `mainRevertsPr` guard is Task 4,
 spec'd and tracked. Not claimed: any behavior of the merge machinery itself (T3+).
 
+## T3 — merge machinery + conditional PR body (FR-003, FR-004 wiring)
+
+**Claim.** On `autoMerge: true` profiles, after verification green and PR
+creation (and after the verification sandbox closes — D3), the loop squash-merges
+the PR via the `mergePr` seam; any merge failure records a loud `mergeFailure`
+with the PR left open and the run continuing. Opted-out profiles: `mergePr` never
+invoked, outcome and PR body byte-identical to pre-WI-6. Opted-in PR bodies state
+the machine gate chain. Queue summary surfaces `MERGED`/`MERGE FAILED` lines.
+
+**Commands (controller, fresh on the final candidate, working tree vs `14b8c32`):**
+
+- `npx vitest run src/loop.test.ts` → 61/61 passed, exit 0 (6 new tests:
+  merge-invoked-once opted-in, opted-out never-invoked + outcome/body pins,
+  merge-failure fallback, both PR bodies, queue `mergedPrs`/`mergeFailures`
+  surfacing with line ordering).
+- `npm run typecheck` → exit 0.
+- `npm test` → 10 files / 161 tests passed, exit 0 (155 + 6 new).
+
+**RED evidence.** Leaf observed 4 failing tests pre-GREEN (mergePr called 0
+times; body missing `canary`; `mergedPrs` undefined) — deterministic on the
+base; the two opted-out pins passed pre-GREEN as expected (they pin today's
+behavior).
+
+**Boundary.** Unit evidence at the loop seam with a stubbed `mergePr`. The real
+`gh pr merge`/`gh pr view` wiring is typechecked but NOT exercised live (T7).
+Not implemented at this checkpoint by design: pre-merge review pass (T6 gap
+comment marks the slot), canary/revert/halt/notify (T4), issue closing (T5).
+`merged` means "merge command succeeded", not "canary green". The
+`main()`-level override console behavior is untested (not an exported seam).
+
+

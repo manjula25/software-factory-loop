@@ -72,4 +72,43 @@ at `b8ec2a1` before T1 dispatch: clean tree, `npm run typecheck` exit 0,
      `mainRevertsPr` guard lands (spec'd, tracked, not a gap at this
      checkpoint).
 
+### T3 — merge machinery + conditional PR body (FR-003, FR-004 wiring, slice 3)
+
+- **Dispatched:** 2026-09-18. Size: medium. Risk: elevated (tail restructure of
+  `runSingleIssue`; PR-body signature change; new `mergePr` dep). Budget: one
+  leaf session; focused loop vitest + typecheck + full `npm test`.
+- **Result:** ACCEPTED. Controller re-ran everything fresh on the final tree:
+  focused `src/loop.test.ts` 61/61 exit 0; typecheck exit 0; full suite 10
+  files / 161 tests (155 + 6 new), exit 0. Candidate = working tree vs base
+  `14b8c32`; 3 changed paths, all within the allowed set.
+- **Reviews (same identity, sequential):** specification review APPROVED
+  (FR-003 complete, FR-004 wiring portion complete, D1/D3/D9 conformance,
+  opted-out byte-identity, secrets-guard coverage verified at every emit
+  point); code-quality review APPROVED (no hard violations; judgement calls
+  below).
+- **Leaf deviation (accepted):** `buildPrBody`'s `autoMerge` param defaults to
+  `false` rather than being required — TS1016 forbids a required parameter
+  after optional `attachmentFailures`; the default keeps every existing call
+  site byte-identical, pinned by test. Documented in the param's doc comment.
+- **Conservative decision (reviewed):** a `mergeFailure` outcome still counts
+  as `fixed` in the queue (the fix is verified and PR'd; the PR is real work)
+  with its own loud `MERGE FAILED` summary surface — not an issue failure.
+  `--issue N` override prints `auto-merge failed: <reason>` (secrets-guarded)
+  with exit 0.
+- **Semantic note for later tasks:** `merged` on the outcome means "merge
+  command succeeded" — NOT "canary green" until T4 lands. No consumer may read
+  it as green-on-main before then.
+- **Follow-ups (non-blocking, recorded):**
+  1. `docs/agents/workflow.md` loop row describes the full auto-merge chain
+     (review pass, canary, revert) while T4/T6 are still landing on this
+     branch — accurate by delivery time (whole chain lands in this work
+     item); re-check the wording at `verification-before-completion`.
+  2. `LoopOutcome.branch` still names the (now deleted) fix branch on the
+     merged path — no consumer today; revisit if a future consumer checks it
+     out.
+  3. Hygiene (predates this work item): the override path's
+     `Loop finished without a PR` console.error bypasses `assertNoSecrets`;
+     route it through the guard alongside the new guarded line.
+
+
 
