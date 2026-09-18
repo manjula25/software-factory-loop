@@ -5,6 +5,17 @@
  * "suite is green" can never be the gate.
  */
 
+/**
+ * A pytest summary token anywhere in stdout (`3 passed in 0.01s`,
+ * `1 failed, 2 passed`, `2 errors`, `4 skipped`, …) is the evidence a suite
+ * executed. Counted outcomes only — pytest's "no tests ran" has no count and
+ * must not pass. The ONE definition shared by the verification gate
+ * (`parseSuiteOrReject` in loop.ts), onboarding (`parseSuiteBaseline` in
+ * onboard-profile.ts), and the preflight script — silence is still rejected;
+ * a counted outcome of any kind is readable.
+ */
+export const SUITE_SUMMARY_RE = /\b\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/;
+
 /** Parse `pytest -q` output into failing test node ids. */
 export function parsePytestFailures(output: string): string[] {
   const failures: string[] = [];

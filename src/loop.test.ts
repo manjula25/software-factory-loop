@@ -223,6 +223,16 @@ describe("runSingleIssue", () => {
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
   });
 
+  it("reads a skipped-only verification suite — any counted outcome is execution evidence (WI-4 T3)", async () => {
+    // A suite reporting only "4 skipped" carries a counted outcome: the gate
+    // must treat it as readable (no failure lines → no new failures), not
+    // reject it as unreadable the way silence is rejected.
+    const deps = makeDeps({ sandbox: sandboxHandle("4 skipped in 0.01s") });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(outcome.failure).toBeUndefined();
+    expect(outcome.prUrl).toContain("/pull/");
+  });
+
   it("installs the project in every fresh sandbox before running any test", async () => {
     const deps = makeDeps();
     const results = deps.createFixSandbox.mock.results as unknown as { value: Promise<FixSandboxHandle & { commands: string[] }> }[];

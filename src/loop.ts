@@ -32,7 +32,7 @@ import {
   type AgentSpec,
   type TriageRunInput,
 } from "./sandcastle-adapter.js";
-import { diffVerification, parsePytestFailures } from "./verify.js";
+import { diffVerification, parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 import {
   admitIssues,
   buildTriagePrompt,
@@ -152,13 +152,12 @@ function preflightBranch(issue: NormalizedIssue): string {
   return `loop/preflight-${issue.id}`;
 }
 
-/** A pytest summary line ("N passed/failed/error…") — proof the output is readable. */
-const SUITE_SUMMARY_RE = /\b\d+ (?:passed|failed|error)/;
-
 /**
  * Parse full-suite output, or reject it as unreadable. "No failure lines" from
  * a command that never ran (exit 127, empty output) must not read as "no new
- * failures" — silence is not success for the gate.
+ * failures" — silence is not success for the gate. The shared
+ * `SUITE_SUMMARY_RE` accepts any counted outcome (onboarding's definition):
+ * a skipped-only suite is readable, `no tests ran` is not.
  */
 function parseSuiteOrReject(stdout: string): { ok: true; failures: string[] } | { ok: false; reason: string } {
   if (!SUITE_SUMMARY_RE.test(stdout)) {
