@@ -136,6 +136,11 @@ attachedLog?, sourceType }` — shape-identical to a GitHub issue's normalizatio
 L90). Slug collision yields `spec-<slug>-2`. Zero-heading input rejects loudly.
 *Evidence: `unit` (vitest at the normalizer seam).*
 
+> **Revision (WI-3b, 2026-09-18):** the collision counter separator changed from
+> `-2` to `--2` (`spec-<slug>--2`), and the same applies to plain-list `list-<slug>--2`.
+> `slugify` output can never contain `--`, so a counter id can no longer collide with
+> the id of a literal "Foo 2" entry. Records: `docs/work/WI-3b/implementation-notes.md`.
+
 **Boundary and errors.** Retitling a heading creates a new identity (accepted semantics,
 decision 2) — the old id's PR dedup no longer matches, which is intended. `#`/`###`
 headings are not issue boundaries. The parser rejects, never silently partially ingests.
