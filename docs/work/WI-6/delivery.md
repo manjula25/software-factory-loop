@@ -119,6 +119,11 @@ Authorized by the user 2026-09-18 ("Push + open PR"), executed and observed:
 2. `gh pr create --base main --head worktree-wi-6 …` →
    **https://github.com/manjula25/software-factory-loop/pull/10**, read back
    `gh pr view 10`: state OPEN, base main, head worktree-wi-6, 19 commits.
+3. Post-delivery (authorized 2026-09-19): pushed the T7b evidence commit
+   (`9352fa4..af2abb1`) — PR #10 read back at 21 commits, state OPEN. T7b
+   re-ran the canary-red chain through the production CLI with a real
+   agent-authored fix (see `verification.md` T7b; closes the canary-red
+   non-claim above).
 
 No merge performed — a human merges this PR (the harness's own repository never
 auto-merges, constraint 1). WI-6's live-pipeline evidence touched only the fixtures
