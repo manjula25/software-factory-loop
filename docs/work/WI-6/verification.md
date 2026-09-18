@@ -357,3 +357,57 @@ an explicit fetch (fresh in the proof only because the revert was pushed from
 the same clone) — recorded follow-up. Stale refs from HUMAN merges +
 remote branch deletion on non-opted repos remain out of scope (FR-004
 non-claims), to be named at delivery.
+
+## Final completion verification (candidate `aa6f2e0`, 2026-09-18)
+
+**Exact claim.** WI-6 — opt-in auto-merge (FR-001…FR-010) — is fully
+implemented on branch `worktree-wi-6` at commit `aa6f2e0`: the harness-source
+surface passes typecheck and the full vitest suite at the public seam; the
+pipeline-integration surface is proven live in local Docker (green chain,
+canary-red revert/halt, re-queue); opted-out behavior stays byte-identical;
+the Sandcastle import boundary is untouched; every emitted string on the new
+paths passes the secrets guard.
+
+**Fresh proving commands (all run at `aa6f2e0`, clean tree, from the
+worktree root; broad evidence):**
+
+- `git rev-parse HEAD` → `aa6f2e0960964bc4b4e7571be827061aad1b2049`,
+  branch `worktree-wi-6`, `git status --short` → empty.
+- `npm run typecheck` → exit 0.
+- `npm test` → **10 files / 195 tests passed**, exit 0 (baseline at plan
+  approval was 10/145; +50 tests across T1–T6 and the T4b defect fixes).
+- `git diff main...HEAD --stat` → 31 files, +3996/−45 (src/ + docs/work/WI-6
+  planning and evidence artifacts); `git diff main...HEAD --
+  src/sandcastle-adapter.boundary.test.ts` → **empty** (boundary file
+  byte-unchanged, still passing in the suite above).
+- `docker images sandcastle-loop` → `sandcastle-loop:latest` present (the
+  image the live runs in the T7 section used; no rebuild needed — no
+  Dockerfile change in this work item).
+- Runtime/external evidence: carried by the T7 section (live gh/git/Docker
+  runs with verbatim logs and independent end-state checks) — not re-run
+  here; it was collected AT this candidate (`7664e47` tree = `aa6f2e0`
+  minus docs-only commits; the code surfaces are identical, verified by
+  `git diff 7664e47 aa6f2e0 --stat` → docs/work/WI-6 only).
+
+**Prior unknowns reconciled.** Closed with evidence: T3 #1 (workflow.md loop
+row re-checked — the auto-merge wording is now accurate with the full chain
+landed); T4 #1 (canary green surfaced in the MERGED summary line — closed in
+T5); T5 #3 (CLAUDE.md loop.ts row — closed in T6). Explicitly deferred with
+recorded effect (all in implementation-notes follow-ups, targeted at the
+pre-delivery cosmetics batch or the delivery notes): syncMain-throw
+propagation and human-merge stale refs (FR-004 non-claims, to be named at
+delivery), `mainRevertsPr` fetch freshness, guard-ordering negative test,
+`CANARY_RED_*` dedup, `advanceUpstream()` extraction, `runSingleIssue`
+extraction at threshold, `BoundedRunOptions` named type, throw-path
+`loop/review` deletion test, fetch-ref-path divergence test, minor wording
+nits. None is a material unknown for the completion claim; all are recorded
+with owners (this work item's delivery notes / cosmetics batch).
+
+**Non-claims (explicit).** No lint surface exists — nothing is claimed about
+style beyond the review records. A canary-red driven by a REAL agent fix run
+(pre-authored branch stands in) and merger-agent conflict resolution are
+out of scope (FR-004 non-claims). The harness's own repository never
+auto-merges (constraint 1) — nothing in this work item merges anything
+outside the fixtures repo; verified in the T7 cleanup. Fix-run token usage
+is not precisely metered by the POC. Cloud sandboxes are unclaimed
+(constraint 6 — local Docker only, as evidenced).
