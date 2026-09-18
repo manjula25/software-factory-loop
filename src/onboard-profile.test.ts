@@ -39,6 +39,18 @@ describe("onboardProfile (T1, FR-002)", () => {
   });
 });
 
+describe("onboardProfile auto-merge flag (WI-6 T1, FR-001)", () => {
+  it("records autoMerge: true when --auto-merge is present (valueless)", () => {
+    const profile = onboardProfile(["/repos/client-web", "--auto-merge"], RUN_FACTS);
+    expect(profile.autoMerge).toBe(true);
+  });
+
+  it("omits autoMerge entirely when the flag is absent — never false, never inferred", () => {
+    const profile = onboardProfile(["/repos/client-web"], RUN_FACTS);
+    expect("autoMerge" in profile).toBe(false);
+  });
+});
+
 describe("parseSuiteBaseline (born-red guard replacement: execution evidence, not failure evidence)", () => {
   it("accepts a green suite: exit 0 with a summary line yields an empty baseline", () => {
     expect(parseSuiteBaseline(0, "....\n3 passed in 0.01s")).toEqual([]);

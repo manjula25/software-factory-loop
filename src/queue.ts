@@ -15,10 +15,32 @@ export interface OpenPr {
   readonly body: string;
 }
 
+/**
+ * A merged fix PR (WI-6 FR-002). Carries `number`/`url` so later tasks
+ * (the revert net) can identify it; dedup itself only reads the
+ * `OpenPr` fields.
+ */
+export interface MergedPr extends OpenPr {
+  readonly number: number;
+  readonly url: string;
+}
+
 export interface QueueDeps {
   /** Runs `gh` with JSON output; throws on a non-zero exit. */
   ghJson(args: string[], cwd: string): string;
   listOpenPrs(repoDir: string): Promise<OpenPr[]>;
+  /**
+   * Merged PRs — a merged fix means the issue is done (WI-6 FR-002), UNLESS
+   * main has since reverted that PR (WI-6 T4, FR-006: a reverted merged PR
+   * restores its issue to todo). Consulted only for the covering PR.
+   */
+  listMergedPrs(repoDir: string): Promise<MergedPr[]>;
+  /**
+   * WI-6 (D4, FR-006): true when main's history contains a `Revert "…"`
+   * commit naming this PR (`(#<number>)`) — the merge is undone on main and
+   * the issue must NOT be skipped as merged.
+   */
+  mainRevertsPr(input: { repoDir: string; pr: MergedPr }): Promise<boolean>;
   /** Local and remote `fix/*` branch names that exist right now. */
   listFixBranches(repoDir: string): Promise<string[]>;
   /** `git push origin --delete`; resolves even if the branch is absent. */
@@ -43,23 +65,28 @@ export const ISSUE_PAGE_LIMIT = 30;
 
 /**
  * The dedup signal's own page bound. `gh pr list` silently defaults to 30: on a
- * repo with more open PRs than that, a fix already in flight on page 2 reads as
- * absent, so the issue is re-run and a competing PR opened. The bound is
- * explicit here and never narrower than the queue it filters.
+ * repo with more PRs than that, a fix already in flight (open) or already done
+ * (merged) on page 2 reads as absent, so the issue is re-run and a competing PR
+ * opened. The bound is explicit here, shared by both listings, and never
+ * narrower than the queue it filters.
  */
 export const OPEN_PR_PAGE_LIMIT = 100;
 
-/** Args for the open-PR dedup listing — exported so the bound above is testable. */
-export function openPrListArgs(): string[] {
+/**
+ * Args for a dedup PR listing — exported so the bound above is testable.
+ * `open` keeps exactly the historical fields; `merged` adds `number,url`
+ * (the revert net's identifiers) to the same shape.
+ */
+export function prListArgs(state: "open" | "merged"): string[] {
   return [
     "pr",
     "list",
     "--state",
-    "open",
+    state,
     "--limit",
     String(OPEN_PR_PAGE_LIMIT),
     "--json",
-    "headRefName,body",
+    state === "open" ? "headRefName,body" : "headRefName,body,number,url",
   ];
 }
 
@@ -115,7 +142,9 @@ export interface SplitResult {
   readonly eligible: NormalizedIssue[];
   /** Ids of issues an open PR already covers — skipped, costing nothing. */
   readonly skippedDuplicate: string[];
-  /** Stale `fix/<id>` branches deleted (no open PR owns them). */
+  /** Ids of issues a MERGED PR already fixed — done, never re-admitted (WI-6). */
+  readonly skippedMerged: string[];
+  /** Stale `fix/<id>` branches deleted (no open or merged PR owns them). */
   readonly staleBranchesDeleted: string[];
 }
 
@@ -129,11 +158,18 @@ function escapeRegExp(literal: string): string {
 }
 
 /**
- * Splits the normalized queue into eligible / skipped-duplicate, deleting
- * stale `fix/<id>` branches along the way. An issue is in flight when an
- * open PR's head branch is its fix branch or its body references the issue
- * by exact id token (`gh-1` never matches `gh-11`). Local stale-branch
- * deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
+ * Splits the normalized queue into eligible / skipped-duplicate /
+ * skipped-merged, deleting stale `fix/<id>` branches along the way. A MERGED
+ * fix PR means the issue is done: matched by head branch or body id token
+ * under the same exact-token, case-insensitive rule as open PRs, checked
+ * BEFORE the open-PR check and before any branch deletion — a merged PR's
+ * branch is never delete-and-retried (WI-6 FR-002) — UNLESS main has since
+ * reverted that PR (`mainRevertsPr`, WI-6 T4 FR-006): a reverted merged PR
+ * restores its issue to todo. The revert check is consulted only for the PR
+ * that actually covers the issue, never per-PR over the whole list. An issue
+ * is in flight when an open PR's head branch is its fix branch or its body
+ * references the issue by exact id token (`gh-1` never matches `gh-11`).
+ * Local stale-branch deletion reuses the WI-1 `LoopDeps.deleteBranch` seam.
  */
 export async function splitQueue(
   deps: QueueDeps & Pick<LoopDeps, "deleteBranch">,
@@ -141,18 +177,21 @@ export async function splitQueue(
   issues: readonly NormalizedIssue[],
 ): Promise<SplitResult> {
   let prs: OpenPr[];
+  let mergedPrs: MergedPr[];
   let branches: string[];
   try {
+    mergedPrs = await deps.listMergedPrs(repoDir);
     prs = await deps.listOpenPrs(repoDir);
     branches = await deps.listFixBranches(repoDir);
   } catch (error) {
     throw new QueueAcquisitionError(
-      `listing open PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
+      `listing PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
   const eligible: NormalizedIssue[] = [];
   const skippedDuplicate: string[] = [];
+  const skippedMerged: string[] = [];
   const staleBranchesDeleted: string[] = [];
 
   for (const issue of issues) {
@@ -160,6 +199,19 @@ export async function splitQueue(
     // Case-insensitive: a human PR body writes "Fixes GH-1" as often as "gh-1",
     // and skipping an issue costs nothing — it reappears in the next queue.
     const token = new RegExp(`\\b${escapeRegExp(issue.id)}\\b`, "i");
+    // Merged first: a merged fix is stronger than an in-flight one (a reopened
+    // PR keeps its head branch), and its branch must never reach deletion —
+    // unless main reverted it (WI-6 T4, FR-006): the issue goes back to todo.
+    const mergedCover = mergedPrs.find(
+      (pr) => pr.headRefName === branch || token.test(pr.body),
+    );
+    const done =
+      mergedCover !== undefined &&
+      !(await deps.mainRevertsPr({ repoDir, pr: mergedCover }));
+    if (done) {
+      skippedMerged.push(issue.id);
+      continue;
+    }
     const inFlight = prs.some(
       (pr) => pr.headRefName === branch || token.test(pr.body),
     );
@@ -175,7 +227,7 @@ export async function splitQueue(
     eligible.push(issue);
   }
 
-  return { eligible, skippedDuplicate, staleBranchesDeleted };
+  return { eligible, skippedDuplicate, skippedMerged, staleBranchesDeleted };
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +270,24 @@ export function parseTriageOutput(
   }
   const covers = ids.every((id) => parsed.data.scores[id] !== undefined);
   return covers ? parsed.data : undefined;
+}
+
+/**
+ * WI-6 T6 (FR-009): the pre-merge review pass's three verdicts. `approve` is
+ * the only verdict that lets a merge proceed; `wrong` (wrong root cause /
+ * wrong test) and `uncertain` (cannot tell) both block it.
+ */
+export type ReviewVerdict = "approve" | "wrong" | "uncertain";
+
+/**
+ * Extract the `<review>…</review>` verdict (WI-6 T6, FR-009). Only the three
+ * contract verdicts parse; a missing block, empty output, or any other content
+ * is `uncertain` — the blocking class (FR-009: a verdict that fails to parse
+ * counts as uncertain).
+ */
+export function parseReviewOutput(stdout: string): ReviewVerdict {
+  const match = stdout.match(/<review>\s*(approve|wrong|uncertain)\s*<\/review>/);
+  return match === null ? "uncertain" : (match[1] as ReviewVerdict);
 }
 
 /** Short scoring prompt — one block, per-issue score and likely-touched files. */

@@ -6,7 +6,7 @@
  *
  * Usage: npx tsx scripts/onboard.ts <repoDir> [--install <cmd>] [--test <cmd>]
  *                                                 [--single-test <cmd>]
- *                                                 [--confidentiality-cleared]
+ *                                                 [--confidentiality-cleared] [--auto-merge]
  *
  * The install/test commands default to the pip-editable convention; override
  * them for repos that install differently (filtered requirements files,

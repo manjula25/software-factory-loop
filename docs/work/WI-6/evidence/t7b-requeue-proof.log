@@ -1,0 +1,8 @@
+open issues: gh-20
+merged cover: PR #21 (fix/gh-20) — without the revert guard, gh-20 would be skipped-merged
+mainRevertsPr(#21): true
+eligible: gh-20
+skipped-duplicate: (none)
+skipped-merged: (none)
+stale branches deleted: (none)
+RE-QUEUE PROVEN: gh-20 is eligible again

@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import {
   SourceSelectionError,
   buildFixPrompt,
   buildPrBody,
+  buildReviewPrompt,
   fixBranch,
   formatSummary,
   parseCap,
@@ -19,9 +21,16 @@ import {
   runOverrideIssue,
   runQueue,
   runSingleIssue,
+  syncMainToOrigin,
   type ProjectProfile,
 } from "./loop.js";
-import type { AgentSpec, FixRunOutcome, FixSandboxHandle } from "./sandcastle-adapter.js";
+import {
+  REVIEW_BRANCH,
+  boundedRunOptions,
+  type AgentSpec,
+  type FixRunOutcome,
+  type FixSandboxHandle,
+} from "./sandcastle-adapter.js";
 import type { NormalizedIssue } from "./issues.js";
 
 const agent: AgentSpec = { engine: "claude-code", model: "claude-haiku-4-5-20251001" };
@@ -95,6 +104,19 @@ function sandboxHandle(suiteOutput: string, reproExit = 0, installExit = 0): Fix
   };
 }
 
+/**
+ * WI-6 T4: a canary sandbox whose close() is observable — the canary must be
+ * closed and its branch deleted on EVERY path (green, red, install failure).
+ */
+function trackedCanary(suiteOutput: string, installExit = 0): {
+  handle: FixSandboxHandle & { commands: string[] };
+  close: ReturnType<typeof vi.fn>;
+} {
+  const base = sandboxHandle(suiteOutput, 0, installExit);
+  const close = vi.fn(async () => ({}));
+  return { handle: { ...base, close }, close };
+}
+
 interface DepOverrides {
   fixOutcome?: FixRunOutcome;
   /** Verification (second) sandbox; the preflight sandbox defaults to a matching baseline. */
@@ -104,6 +126,24 @@ interface DepOverrides {
   env?: Record<string, string>;
   /** Override to simulate a committed `.loop-harness` on the base branch. */
   pathCommittedOnBranch?: (repoDir: string, branch: string, path: string) => Promise<boolean>;
+  /** mergePr result (opted-in runs); defaults to a fixed merge commit. */
+  mergeCommit?: string;
+  /** Simulated merge failure (conflict / API error) on opted-in runs. */
+  mergeThrows?: string;
+  /** Canary (post-merge) sandbox; defaults to a green suite (failures ⊆ baseline). */
+  canary?: FixSandboxHandle;
+  /** revertMerge result; defaults to a fixed revert commit. */
+  revertCommit?: string;
+  /** Simulated revert failure (conflict / push error) on canary-red runs. */
+  revertThrows?: string;
+  /** Simulated issue-close failure (gh error) on canary-green merged runs (WI-6 T5). */
+  closeThrows?: string;
+  /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
+  reviewVerdict?: "approve" | "wrong" | "uncertain";
+  /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
+  reviewStdout?: string;
+  /** The review run itself throws (API down / budget refusal). */
+  reviewThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -112,7 +152,13 @@ function makeDeps(overrides: DepOverrides = {}) {
   return {
     env,
     runFixRun: vi.fn(async (_input: { branch: string; prompt: string }) => overrides.fixOutcome ?? fixOutcome()),
-    createFixSandbox: vi.fn(async () => {
+    createFixSandbox: vi.fn(async (input: { branch: string }) => {
+      // The canary sandbox is distinguished by its branch (loop/canary-<id>),
+      // not by call order — the preflight (loop/preflight-<id>) also forks
+      // from main, so baseBranch alone cannot tell them apart.
+      if (input.branch.startsWith("loop/canary-")) {
+        return overrides.canary ?? sandboxHandle(SUITE_AFTER_FIX);
+      }
       sandboxCalls += 1;
       return sandboxCalls === 1
         ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
@@ -123,6 +169,35 @@ function makeDeps(overrides: DepOverrides = {}) {
       url: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       ...args,
     })),
+    mergePr: vi.fn(async () => {
+      if (overrides.mergeThrows !== undefined) {
+        throw new Error(overrides.mergeThrows);
+      }
+      return { mergeCommit: overrides.mergeCommit ?? "m0ckmerge" };
+    }),
+    // WI-6 T4 seams
+    syncMain: vi.fn(async (_repoDir: string) => {}),
+    revertMerge: vi.fn(async () => {
+      if (overrides.revertThrows !== undefined) {
+        throw new Error(overrides.revertThrows);
+      }
+      return { revertCommit: overrides.revertCommit ?? "r3vert0000" };
+    }),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
+    // WI-6 T5 seam
+    closeIssue: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _comment: string) => {
+      if (overrides.closeThrows !== undefined) {
+        throw new Error(overrides.closeThrows);
+      }
+    }),
+    // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
+    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
+    runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
+      if (overrides.reviewThrows !== undefined) {
+        throw new Error(overrides.reviewThrows);
+      }
+      return overrides.reviewStdout ?? `<review>${overrides.reviewVerdict ?? "approve"}</review>`;
+    }),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
   };
 }
@@ -283,10 +358,615 @@ describe("runSingleIssue", () => {
   });
 });
 
+describe("runSingleIssue auto-merge (WI-6 T3, FR-003/FR-004 wiring)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+
+  it("opted-in + verification green: mergePr called exactly once with the created PR url; outcome carries merged", async () => {
+    const deps = makeDeps({ mergeCommit: "deadbeef" });
+    const outcome = await run(deps, optedIn);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledWith({
+      repoDir: "/tmp/repo",
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+    });
+    expect(outcome.merged).toEqual({
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+      mergeCommit: "deadbeef",
+      canaryGreen: true, // WI-6 T4: `merged` now implies the canary ran and was green
+    });
+    // FR-003 at the same seam: the opted-in PR body states the machine gate
+    // chain, never the human-review sentence.
+    const body = deps.createPr.mock.calls[0]![0] as { body: string };
+    expect(body.body).toContain("canary");
+    expect(body.body).not.toContain("A human reviews and merges this");
+  });
+
+  it("opted-out (no autoMerge in profile): mergePr NEVER called; outcome shape identical to today's", async () => {
+    const deps = makeDeps();
+    const outcome = await run(deps, profile);
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      branch: "fix/gh-1",
+      prUrl: "https://github.com/manjula25/loop-fixtures-py/pull/9",
+    });
+    // and the body keeps today's human-review closing (pinned in buildPrBody tests)
+    const body = deps.createPr.mock.calls[0]![0] as { body: string };
+    expect(body.body).toContain("A human reviews and merges this");
+  });
+
+  it("opted-in but mergePr throws (conflict/API error): no merged, a loud mergeFailure, the run does not throw, PR still returned", async () => {
+    const deps = makeDeps({ mergeThrows: "gh: merge conflict — base branch moved" });
+    const outcome = await run(deps, optedIn); // resolves — a merge failure never throws
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.mergeFailure).toContain("merge conflict");
+    expect(outcome.prUrl).toBe("https://github.com/manjula25/loop-fixtures-py/pull/9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-6 T4: post-merge canary, auto-revert, run halt, @-mention notification
+// (FR-005/006/007). The canary is a THIRD sandbox, on `loop/canary-<id>` from
+// synced main, created only after a successful merge on an opted-in profile.
+// ---------------------------------------------------------------------------
+
+describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)", () => {
+  const optedInNotify: ProjectProfile = { ...profile, autoMerge: true, notifyHandle: "manjula25" };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+  /** Suite with a failure the baseline does not have — the canary-red trigger. */
+  const CANARY_RED_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
+
+  it("(a) merged success: syncMain first; canary sandbox created on loop/canary-<id> from main; install + testCmd run inside; result recorded; sandbox closed and canary branch deleted", async () => {
+    const canary = trackedCanary(SUITE_AFTER_FIX); // green: failures ⊆ baseline
+    const deps = makeDeps({ canary: canary.handle });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.syncMain).toHaveBeenCalledTimes(1);
+    expect(deps.syncMain).toHaveBeenCalledWith("/tmp/repo");
+    expect(deps.createFixSandbox).toHaveBeenCalledWith({
+      cwd: "/tmp/repo",
+      branch: "loop/canary-gh-1",
+      baseBranch: "main",
+      imageName: "sandcastle-loop",
+    });
+    expect(canary.handle.commands).toEqual([profile.installCmd, profile.testCmd]);
+    expect(canary.close).toHaveBeenCalledTimes(1);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/canary-gh-1");
+    expect(outcome.merged).toEqual({ prUrl: PR_URL, mergeCommit: "m0ckmerge", canaryGreen: true });
+    expect(outcome.failure).toBeUndefined();
+    expect(deps.revertMerge).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(b) canary green: outcome keeps merged and the queue proceeds to the next issue", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      deps,
+    );
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]); // no halt after a green canary
+    expect(summary.mergedPrs).toEqual([
+      ["gh-1", "https://example/pr/fix/gh-1", "mdef456"],
+      ["gh-2", "https://example/pr/fix/gh-2", "mdef456"],
+    ]);
+    expect(summary.reverted).toEqual([]);
+    expect(deps.syncMain).toHaveBeenCalledWith("/tmp/repo");
+    expect(deps.createFixSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "loop/canary-gh-1", baseBranch: "main" }),
+    );
+    expect(deps.revertMerge).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(c) canary red (a failure NOT in baseline): revertMerge called with exactly the merge commit from the merge step; outcome is a harness-level REVERTED failure with the canary evidence", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+    expect(deps.revertMerge).toHaveBeenCalledWith({ repoDir: "/tmp/repo", mergeCommit: "m0ckmerge" });
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.prUrl).toBeUndefined(); // not counted fixed — the merge was reverted
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toContain("REVERTED");
+    expect(outcome.failure).toContain("gh-1");
+    expect(outcome.failure).toContain("tests/test_contract.py::test_zero_contract"); // canary evidence
+    expect(outcome.reverted).toMatchObject({
+      id: "gh-1",
+      prUrl: PR_URL,
+      mergeCommit: "m0ckmerge",
+      revertCommit: "r3vert0000",
+      evidence: expect.stringContaining("tests/test_contract.py::test_zero_contract"),
+    });
+  });
+
+  it("(c) canary red halts the queue: runQueue throws QueueAbortedError and no further admitted issue is attempted", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
+    expect(deps.createPr).toHaveBeenCalledTimes(1);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("(d) canary red: exactly one comment on the merged PR, its body carrying @<notifyHandle> and REVERTED", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) });
+
+    await run(deps, optedInNotify);
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
+    expect(call.repoDir).toBe("/tmp/repo");
+    expect(call.prUrl).toBe(PR_URL);
+    expect(call.body).toContain("@manjula25");
+    expect(call.body).toContain("REVERTED");
+  });
+
+  it("(d) commentOnPr is never called on green, opted-out, or merge-failure paths (syncMain/revertMerge likewise inert)", async () => {
+    const green = makeDeps(); // default canary is green
+    await run(green, optedInNotify);
+    expect(green.commentOnPr).not.toHaveBeenCalled();
+
+    const optedOut = makeDeps();
+    await run(optedOut, { ...profile, notifyHandle: "manjula25" }); // no autoMerge
+    expect(optedOut.mergePr).not.toHaveBeenCalled();
+    expect(optedOut.syncMain).not.toHaveBeenCalled();
+    expect(optedOut.commentOnPr).not.toHaveBeenCalled();
+
+    const mergeFailed = makeDeps({ mergeThrows: "gh: conflict" });
+    await run(mergeFailed, optedInNotify);
+    expect(mergeFailed.syncMain).not.toHaveBeenCalled(); // no merge landed → no canary
+    expect(mergeFailed.revertMerge).not.toHaveBeenCalled();
+    expect(mergeFailed.commentOnPr).not.toHaveBeenCalled();
+  });
+
+  it("(e) canary red with notifyHandle ABSENT: the comment still posts, carries no @, and the summary says the notify handle is not configured (D6)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).toContain("REVERTED");
+    expect(body).not.toContain("@"); // no configured handle → no mention token at all
+    const aborted = error as QueueAbortedError;
+    expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
+  });
+
+  it("(f) canary install failure → red path: reverted, harness-level, with the install failure named (D2)", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(SUITE_AFTER_FIX, 0, /* installExit */ 1) });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toContain("install");
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+  });
+
+  it("(f) canary suite output unreadable (no summary token) → red path (D2: silence is not success)", async () => {
+    const deps = makeDeps({ canary: sandboxHandle("") });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toBeUndefined();
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.failure).toMatch(/unreadable|summary/i);
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+  });
+
+  it("(g) revertMerge throws: the run still halts (QueueAbortedError), the revert failure is recorded, and the comment is still attempted", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+      canaryRevertThrows: "git: revert conflict on main",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // halt is unconditional on red
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toContain("revert conflict on main");
+    expect(aborted.summary.attempted).toEqual(["gh-1"]);
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // notification is best-effort, still attempted
+    expect(aborted.summary.reverted[0]!.revertCommit).toBeUndefined();
+    expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
+  });
+
+  it("(h) formatSummary for a reverted run: ⚠️ REVERTED section names issue id, PR url, merge commit, revert commit, and canary evidence", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      deps,
+    ).catch((e: unknown) => e);
+
+    const aborted = error as QueueAbortedError;
+    const text = formatSummary(aborted.summary);
+    expect(text).toContain(
+      "⚠️ REVERTED gh-1: pr https://example/pr/fix/gh-1 merge mdef456 revert rvrt789",
+    );
+    expect(text).toContain("canary:");
+    expect(text).toContain("tests/test_contract.py::test_zero_contract");
+    expect(text).toContain("notify: @manjula25");
+  });
+
+  it("--issue N override: a reverted outcome has no prUrl — the existing CLI failure path prints it and exits 1 (verified at the runOverrideIssue seam)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [issue],
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const result = await runOverrideIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: { ...profile, autoMerge: true } },
+      deps,
+    );
+
+    expect(result.kind).toBe("run");
+    const outcome = result.kind === "run" ? result.outcome : undefined;
+    expect(outcome?.prUrl).toBeUndefined(); // the CLI's "no PR" branch: prints the failure, exit 1
+    expect(outcome?.failureKind).toBe("harness");
+    expect(outcome?.failure).toContain("REVERTED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-6 T5: issue closing on merge (FR-008). Ordering is fixed by D3:
+// merge → canary green → close. Only gh-sourced issues are closed (file
+// sources have nothing external to close); a canary-red issue was reverted
+// and stays queued — never closed.
+// ---------------------------------------------------------------------------
+
+describe("issue closing on merge (WI-6 T5, FR-008)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, issueToRun: NormalizedIssue, p: ProjectProfile = optedIn) =>
+    runSingleIssue({ issue: issueToRun, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+
+  /** File-sourced fixtures — the repro path differs from the module-level gh fixture, so their runs use the per-issue sandbox. */
+  const specIssue: NormalizedIssue = { id: "spec-slug-first-char", description: "# slug symptom", sourceType: "spec-doc" };
+  const plainIssue: NormalizedIssue = { id: "list-stale-pin", description: "stale pin after restart", sourceType: "plain-list" };
+  /** Suite with a failure the baseline does not have — the canary-red trigger. */
+  const CANARY_RED = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
+
+  it("(a) merged + canary green + github-issue: closeIssue called exactly once with the issue and a comment naming the PR url and merge commit", async () => {
+    const deps = makeDeps({ mergeCommit: "c105e777" });
+
+    const outcome = await run(deps, issue);
+
+    expect(deps.closeIssue).toHaveBeenCalledTimes(1);
+    const [repoDir, closedIssue, comment] = deps.closeIssue.mock.calls[0]!;
+    expect(repoDir).toBe("/tmp/repo");
+    expect(closedIssue).toBe(issue);
+    expect(comment).toContain(PR_URL);
+    expect(comment).toContain("c105e777");
+    expect(comment).toContain("canary"); // FR-008: the comment carries the canary result
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, mergeCommit: "c105e777", canaryGreen: true });
+    expect(outcome.closeFailure).toBeUndefined();
+  });
+
+  it("(b) merged + green + spec-doc / plain-list: closeIssue never called, no error — nothing external to close", async () => {
+    for (const target of [specIssue, plainIssue]) {
+      const deps = makeDeps({ sandbox: issueSandbox(target, SUITE_AFTER_FIX) });
+
+      const outcome = await run(deps, target);
+
+      expect(deps.closeIssue).not.toHaveBeenCalled();
+      expect(outcome.merged).toMatchObject({ canaryGreen: true });
+      expect(outcome.closeFailure).toBeUndefined();
+      expect(outcome.failure).toBeUndefined();
+    }
+  });
+
+  it("(c) reverted (canary red): closeIssue never called even for a github-issue — the issue was reverted and stays queued (FR-006)", async () => {
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED) });
+
+    await run(deps, issue);
+
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1);
+    expect(deps.closeIssue).not.toHaveBeenCalled();
+  });
+
+  it("(d) closeIssue throws: failure recorded loudly, outcome still merged, queue continues past it", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], closeThrowsFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]); // the queue continued past the failed close
+    expect(summary.mergedPrs).toHaveLength(2);
+    expect(summary.closeFailures).toEqual([["gh-1", expect.stringContaining("issue close failed")]]);
+    expect(formatSummary(summary)).toContain("ISSUE CLOSE FAILED gh-1");
+
+    // single-issue seam: the merged outcome stands, the failure is a note on it
+    const single = makeDeps({ closeThrows: "gh: issue close failed — network" });
+    const outcome = await run(single, issue);
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true });
+    expect(outcome.closeFailure).toContain("network");
+  });
+
+  it("formatSummary MERGED line shows the canary result (T4 spec-review follow-up, sanctioned)", () => {
+    const text = formatSummary({
+      attempted: ["gh-1"],
+      fixed: ["gh-1"],
+      failed: [],
+      skippedDuplicate: [],
+      skippedMerged: [],
+      notAdmitted: [],
+      attachmentFailures: [],
+      prUrls: ["https://example/pr/fix/gh-1"],
+      mergedPrs: [["gh-1", "https://example/pr/fix/gh-1", "mdef456"]],
+      mergeFailures: [],
+      closeFailures: [],
+      reviewSkipped: [],
+      reverted: [],
+    });
+    expect(text).toContain("MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-6 T6: pre-merge diff-review pass (FR-009, completes FR-004's blocking
+// order: verification → review → merge). One bounded cheap-model call judging
+// `git diff main...fix/<id>` against the report; only an explicit approve
+// reaches mergePr — anything else (wrong, uncertain, reviewer unavailable)
+// leaves the PR open with a skip comment, and the queue continues.
+// ---------------------------------------------------------------------------
+
+describe("pre-merge review pass (WI-6 T6, FR-009)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile = optedIn) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+
+  it("the review pass is bounded: one iteration on the throwaway loop/review branch, never a fix branch (D7, R2)", () => {
+    const options = boundedRunOptions("review", REVIEW_BRANCH);
+    expect(options.maxIterations).toBe(1); // constraint 5 — asserted once at the shared factory
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: "loop/review" });
+  });
+
+  it("buildReviewPrompt states the three-verdict contract, the reported issue, and the diff under review", () => {
+    const prompt = buildReviewPrompt(issue, "+ def slugify(s):\n-     return s.lower()");
+    expect(prompt).toContain(issue.description); // the report the diff is judged against
+    expect(prompt).toContain("+ def slugify(s):"); // the diff itself
+    for (const verdict of ["approve", "wrong", "uncertain"]) {
+      expect(prompt).toContain(`<review>${verdict}</review>`);
+    }
+  });
+
+  it("approve: the reviewer runs once on the guarded prompt with the diff, loop/review is deleted, and mergePr proceeds", async () => {
+    const deps = makeDeps();
+    const outcome = await run(deps);
+
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    const call = deps.runReview.mock.calls[0]![0] as { cwd: string; prompt: string; diff: string };
+    expect(call.cwd).toBe("/tmp/repo");
+    expect(call.diff).toBe("diff-under-review");
+    expect(call.prompt).toContain(issue.description);
+    expect(call.prompt).toContain("diff-under-review");
+    expect(call.prompt).toContain("<review>approve</review>");
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/review");
+    expect(deps.mergePr).toHaveBeenCalledTimes(1); // FR-004: review green → merge
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true });
+    expect(outcome.reviewSkip).toBeUndefined();
+  });
+
+  it("wrong: mergePr NEVER called (no canary either), the skip reason is commented on the PR, the run continues with a PR'd outcome and a loud reviewSkip", async () => {
+    const deps = makeDeps({ reviewVerdict: "wrong" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.syncMain).not.toHaveBeenCalled(); // no merge landed → no canary spend
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
+    expect(call.repoDir).toBe("/tmp/repo");
+    expect(call.prUrl).toBe(PR_URL);
+    expect(call.body).toContain("wrong");
+    expect(outcome.prUrl).toBe(PR_URL); // the PR is the deliverable — the run continues
+    expect(outcome.failure).toBeUndefined(); // never an issue failure
+    expect(outcome.reviewSkip).toContain("wrong");
+  });
+
+  it("a verdict that fails to parse counts as uncertain: no merge, skip comment, PR stays open (FR-009 boundary)", async () => {
+    const deps = makeDeps({ reviewStdout: "<review>maybe</review>" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    expect((deps.commentOnPr.mock.calls[0]![0] as { body: string }).body).toContain("uncertain");
+    expect(outcome.reviewSkip).toContain("uncertain");
+    expect(outcome.prUrl).toBe(PR_URL);
+  });
+
+  it("a thrown review run maps to uncertain (D7): no merge, skip comment, run continues", async () => {
+    const deps = makeDeps({ reviewThrows: "provider: 503 unavailable" });
+    const outcome = await run(deps);
+
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    expect((deps.commentOnPr.mock.calls[0]![0] as { body: string }).body).toContain("uncertain");
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.reviewSkip).toContain("503 unavailable");
+  });
+
+  it("opted-out repo: the reviewer is never invoked — no review spend, even on a would-be-wrong verdict (FR-009)", async () => {
+    const deps = makeDeps({ reviewVerdict: "wrong" });
+    const outcome = await run(deps, profile); // no autoMerge
+
+    expect(deps.fixDiff).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.reviewSkip).toBeUndefined();
+  });
+
+  it("the queue records the skip loudly and continues: reviewSkipped in the summary, REVIEW SKIP lines, never a failed entry", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      reviewVerdict: "uncertain",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]); // the run continued past both skips
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]); // PR'd = fixed, exactly like a merge failure
+    expect(summary.failed).toEqual([]); // a review skip is never an issue failure
+    expect(summary.mergedPrs).toEqual([]);
+    expect(summary.reviewSkipped).toEqual([
+      ["gh-1", expect.stringContaining("uncertain")],
+      ["gh-2", expect.stringContaining("uncertain")],
+    ]);
+    const text = formatSummary(summary);
+    expect(text).toContain("REVIEW SKIP gh-1:");
+    expect(text).toContain("REVIEW SKIP gh-2:");
+  });
+});
+
+describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)", () => {
+  // The T7 live run proved `git fetch origin main:main` can never sync a main
+  // that is CHECKED OUT (git refuses the ref update) — and loop target clones
+  // always sit on main. These tests drive the real wiring against throwaway
+  // git repositories: no stubs can catch this class.
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  const makeRepoPair = async () => {
+    const root = await mkdtemp(join(tmpdir(), "syncmain-"));
+    const upstream = join(root, "upstream");
+    const target = join(root, "target");
+    mkdirSync(upstream);
+    git(upstream, "init", "-q", "-b", "main");
+    writeFileSync(join(upstream, "a.txt"), "one\n");
+    git(upstream, "add", "a.txt");
+    git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one");
+    git(upstream, "clone", "-q", upstream, target);
+    return { root, upstream, target };
+  };
+
+  it("fast-forwards a CHECKED-OUT main to origin (the case the loop always hits)", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        expect(git(target, "rev-parse", "HEAD")).not.toBe(git(upstream, "rev-parse", "HEAD"));
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("syncs main via the fetch-ref form when main is NOT the current branch", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        git(target, "checkout", "-q", "-b", "fix/other");
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "rev-parse", "main")).toBe(git(upstream, "rev-parse", "HEAD"));
+        expect(git(target, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("fix/other");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("throws loudly on a divergent main — no canary on a main we cannot sync", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        writeFileSync(join(target, "b.txt"), "local\n");
+        git(target, "add", "b.txt");
+        git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local");
+        expect(() => syncMainToOrigin(target)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("prunes stale remote-tracking refs — gh --delete-branch after a merge leaves them, and the next run on the same issue forks its fix branch from the stale ref (T7 live finding #2)", () => {
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        // Simulate the post-merge state: a fix branch pushed, then deleted on
+        // the remote WITHOUT a prune (exactly what `gh pr merge
+        // --delete-branch` leaves behind in the target clone).
+        git(target, "checkout", "-q", "-b", "fix/gh-1");
+        writeFileSync(join(target, "c.txt"), "fix\n");
+        git(target, "add", "c.txt");
+        git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "fix");
+        git(target, "push", "-q", "origin", "fix/gh-1");
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        git(upstream, "branch", "-D", "fix/gh-1");
+        expect(git(target, "branch", "-r")).toContain("origin/fix/gh-1"); // stale ref present
+        expect(() => syncMainToOrigin(target)).not.toThrow();
+        expect(git(target, "branch", "-r")).not.toContain("origin/fix/gh-1"); // pruned
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
 describe("buildPrBody", () => {
   it("produces a body that itself passes the secrets guard", () => {
-    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] });
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, false);
     expect(() => assertNoSecrets([body], { CLI_PROXY_API_URL: "http://x.local:1" })).not.toThrow();
+  });
+
+  it("autoMerge=true: states the machine gate chain (canary) and never the human-review sentence (WI-6 T3, FR-003)", () => {
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, true);
+    expect(body).toContain("canary");
+    expect(body).not.toContain("A human reviews and merges this");
+  });
+
+  it("autoMerge=false: ends with exactly today's human-review sentence (FR-003: byte-identical default)", () => {
+    const body = buildPrBody(issue, RED, GREEN, { passed: true, newFailures: [] }, undefined, false);
+    expect(
+      body.endsWith(
+        "A human reviews and merges this — please judge whether the reproduced symptom matches the report.",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -303,13 +983,14 @@ function issueSandbox(
   target: NormalizedIssue,
   suite: string,
   reproExit = 0,
+  installExit = 0,
 ): FixSandboxHandle {
   return {
     branch: fixBranch(target),
     worktreePath: "/tmp/wt",
     async exec(command: string) {
       if (command === profile.installCmd) {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: installExit, stdout: "", stderr: installExit === 0 ? "" : "pip: build failed" };
       }
       if (command.includes(reproTestPath(target))) {
         return { exitCode: reproExit, stdout: reproExit === 0 ? GREEN : RED, stderr: "" };
@@ -325,6 +1006,7 @@ function issueSandbox(
 interface QueueDepsConfig {
   issues?: NormalizedIssue[];
   prs?: { headRefName: string; body: string }[];
+  mergedPrs?: { number: number; url: string; headRefName: string; body: string }[];
   /** Id whose verification sandbox fails the reproduction test (issue-level failure). */
   failReproFor?: string;
   /** Preflight reports a stale baseline for every issue (harness-level abort). */
@@ -336,7 +1018,31 @@ interface QueueDepsConfig {
   triageThrows?: string;
   /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
   pathCommittedOnBranch?: boolean;
+  /** Opted-in runs: merge fails (conflict/API error) for PRs whose url contains this token. */
+  mergeThrowsFor?: string;
+  /** Canary (post-merge) suite shows a NEW failure for this id — the red path. */
+  canaryNewFailureFor?: string;
+  /** Canary suite output has no summary token — unreadable → red path (D2). */
+  canaryUnreadableFor?: string;
+  /** Canary install command fails for this id — red path (D2). */
+  canaryInstallFailFor?: string;
+  /** revertMerge throws (conflict/push error) — best-effort revert fails loudly. */
+  canaryRevertThrows?: string;
+  /** Issue close throws (gh error) for this id — bookkeeping failure on a merged outcome (WI-6 T5). */
+  closeThrowsFor?: string;
+  /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
+  reviewVerdict?: "approve" | "wrong" | "uncertain";
+  /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
+  reviewStdout?: string;
+  /** The review run itself throws for every issue (API down / budget refusal). */
+  reviewThrows?: string;
 }
+
+/** Canary-red suite for the queue harness: one failure outside the baseline. */
+const CANARY_RED_QUEUE_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
   const issues = config.issues ?? [issue];
@@ -364,6 +1070,15 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       // preflight sandbox resolves to its own issue rather than the previous
       // one — `runFixRun` has not been reached yet when preflight runs.
       active = issues.find((i) => input.branch.endsWith(i.id)) ?? active;
+      // The canary also forks from main, so dispatch on its branch prefix.
+      if (input.branch.startsWith("loop/canary-")) {
+        const suite = config.canaryUnreadableFor === active.id
+          ? ""
+          : config.canaryNewFailureFor === active.id
+            ? CANARY_RED_QUEUE_SUITE
+            : SUITE_AFTER_FIX;
+        return track(issueSandbox(active, suite, 0, config.canaryInstallFailFor === active.id ? 1 : 0));
+      }
       if (input.baseBranch === "main") {
         // baseline preflight
         const stale = config.staleBaseline === true || config.staleBaselineFor === active.id;
@@ -374,10 +1089,41 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     }),
     deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {}),
     createPr: vi.fn(async (args: { head: string }) => ({ url: `https://example/pr/${args.head}` })),
+    mergePr: vi.fn(async (input: { prUrl: string }) => {
+      if (config.mergeThrowsFor !== undefined && input.prUrl.includes(config.mergeThrowsFor)) {
+        throw new Error("gh: merge conflict — base branch moved");
+      }
+      return { mergeCommit: "mdef456" };
+    }),
+    // WI-6 T4 seams
+    syncMain: vi.fn(async (_repoDir: string) => {}),
+    revertMerge: vi.fn(async () => {
+      if (config.canaryRevertThrows !== undefined) {
+        throw new Error(config.canaryRevertThrows);
+      }
+      return { revertCommit: "rvrt789" };
+    }),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
+    // WI-6 T5 seam
+    closeIssue: vi.fn(async (_repoDir: string, target: NormalizedIssue, _comment: string) => {
+      if (config.closeThrowsFor !== undefined && target.id === config.closeThrowsFor) {
+        throw new Error("gh: issue close failed — network");
+      }
+    }),
+    // WI-6 T6 seams (FR-009)
+    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
+    runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
+      if (config.reviewThrows !== undefined) {
+        throw new Error(config.reviewThrows);
+      }
+      return config.reviewStdout ?? `<review>${config.reviewVerdict ?? "approve"}</review>`;
+    }),
     // QueueDeps
     ghJson: vi.fn((_args: string[], _cwd: string) =>
       JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
     listOpenPrs: vi.fn(async () => config.prs ?? []),
+    listMergedPrs: vi.fn(async () => config.mergedPrs ?? []),
+    mainRevertsPr: vi.fn(async () => false),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
     runTriage: vi.fn(async () => {
@@ -427,6 +1173,55 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-2");
     // strictly one sandbox at a time
     expect(maxOpen()).toBe(1);
+  });
+
+  it("skips a merged-covered issue as done and carries it into the summary counts line (WI-6 T2)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      mergedPrs: [
+        { number: 4, url: "https://example/pr/4", headRefName: "fix/gh-1", body: "" },
+      ],
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.skippedMerged).toEqual(["gh-1"]);
+    expect(summary.attempted).toEqual(["gh-2"]);
+    expect(summary.skippedDuplicate).toEqual([]);
+    const counts = formatSummary(summary).split("\n")[0]!;
+    expect(counts).toContain("| skipped-duplicate: 0");
+    expect(counts).toContain("| skipped-merged: 1");
+  });
+
+  it("opted-in queue: merged outcomes land in mergedPrs; a merge failure still counts as fixed and is surfaced loudly (WI-6 T3)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      mergeThrowsFor: "fix/gh-2",
+    });
+    const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(summary.mergedPrs).toEqual([["gh-1", "https://example/pr/fix/gh-1", "mdef456"]]);
+    // Deliberate choice (WI-6 T3): a merge failure is NOT an issue failure — the
+    // fix is verified and the PR is real work, so it stays `fixed`, and the
+    // failure gets its own loud summary surface instead of the FAILED line.
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.failed).toEqual([]);
+    expect(summary.mergeFailures).toHaveLength(1);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-2");
+    expect(summary.mergeFailures[0]![1]).toContain("merge conflict");
+
+    const lines = formatSummary(summary).split("\n");
+    const prAt = lines.findIndex((l) => l.startsWith("PR: "));
+    const mergedAt = lines.findIndex(
+      (l) => l === "MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green)",
+    );
+    const failedAt = lines.findIndex((l) => l.startsWith("MERGE FAILED gh-2:"));
+    expect(prAt).toBeGreaterThanOrEqual(0);
+    expect(mergedAt).toBeGreaterThan(prAt); // MERGED lines come after the PR: lines
+    expect(failedAt).toBeGreaterThan(mergedAt);
+    expect(lines[failedAt]).toContain("merge conflict");
   });
 
   it("aborts the whole queue on a harness-level failure (stale baseline), attempting nothing further", async () => {
@@ -595,6 +1390,20 @@ describe("runOverrideIssue (--issue N single-issue mode, WI-2 T4)", () => {
     );
 
     expect(result).toEqual({ kind: "skipped-duplicate", id: "gh-1" });
+    expect(deps.runFixRun).not.toHaveBeenCalled();
+  });
+
+  it("skips the issue as done when a merged PR already covers it — no agent spend (WI-6 T2)", async () => {
+    const { deps } = makeQueueDeps({
+      mergedPrs: [{ number: 4, url: "https://example/pr/4", headRefName: "fix/gh-1", body: "" }],
+    });
+
+    const result = await runOverrideIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(result).toEqual({ kind: "skipped-merged", id: "gh-1" });
     expect(deps.runFixRun).not.toHaveBeenCalled();
   });
 

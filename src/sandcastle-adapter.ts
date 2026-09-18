@@ -164,22 +164,38 @@ export interface TriageRunInput {
 /** Throwaway branch the triage pass runs on — never a `fix/*` branch. */
 export const TRIAGE_BRANCH = "loop/triage";
 
+/** WI-6 T6 (D7): throwaway branch the pre-merge review pass runs on. */
+export const REVIEW_BRANCH = "loop/review";
+
+/**
+ * The shared cost-control factory for every bounded one-shot pass (WI-6 R2):
+ * `maxIterations: 1` is what makes an auxiliary pass cheap enough to be worth
+ * running at all (constraint 5) — a pass that could iterate would be an
+ * unbounded second agent. Both the triage pass and the pre-merge review pass
+ * build their options here, so the budget bound lives (and is asserted) once.
+ */
+export function boundedRunOptions(name: string, branch: string): {
+  readonly name: string;
+  readonly maxIterations: number;
+  readonly branchStrategy: NamedBranchStrategy;
+} {
+  return {
+    name,
+    maxIterations: 1,
+    branchStrategy: { type: "branch", branch },
+  };
+}
+
 /**
  * The triage pass's cost controls, as a value rather than an inline literal, so
- * they are assertable without spending a model call. `maxIterations: 1` is what
- * makes the pass cheap enough to be worth opting into (constraint 5): a scoring
- * run that could iterate would be an unbounded second agent.
+ * they are assertable without spending a model call (see `boundedRunOptions`).
  */
 export function triageRunOptions(): {
   readonly name: string;
   readonly maxIterations: number;
   readonly branchStrategy: NamedBranchStrategy;
 } {
-  return {
-    name: "triage",
-    maxIterations: 1,
-    branchStrategy: { type: "branch", branch: TRIAGE_BRANCH },
-  };
+  return boundedRunOptions("triage", TRIAGE_BRANCH);
 }
 
 /**
@@ -192,7 +208,27 @@ export async function runTriage(input: TriageRunInput): Promise<string> {
     prompt: input.prompt,
     agent: agentProvider(input.agent),
     sandbox: sandboxProvider(input.imageName, input.env),
-    ...triageRunOptions(),
+    ...boundedRunOptions("triage", TRIAGE_BRANCH),
+  });
+  return result.stdout;
+}
+
+/**
+ * One bounded pre-merge review pass (WI-6 T6, FR-009, D7), cloned from
+ * `runTriage`: a single `run({...})` on the throwaway `loop/review` branch,
+ * stdout returned for `<review>` extraction. The prompt is prebuilt by the
+ * caller (`buildReviewPrompt`: issue description + the diff, three-verdict
+ * contract) and secrets-guarded before the call; the caller deletes the branch
+ * afterwards. `diff` rides the seam per D7 so the review input is complete at
+ * the adapter boundary.
+ */
+export async function runReview(input: TriageRunInput & { readonly diff: string }): Promise<string> {
+  const result = await run({
+    cwd: input.cwd,
+    prompt: input.prompt,
+    agent: agentProvider(input.agent),
+    sandbox: sandboxProvider(input.imageName, input.env),
+    ...boundedRunOptions("review", REVIEW_BRANCH),
   });
   return result.stdout;
 }

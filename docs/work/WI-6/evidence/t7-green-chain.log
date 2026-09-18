@@ -1,0 +1,27 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy --issue 14
+
+[gh-14] Started on branch fix/gh-14
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-14-gh-14.log
+remote: 
+remote: Create a pull request for 'fix/gh-14' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-14        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-14 -> fix/gh-14
+branch 'fix/gh-14' set up to track 'origin/fix/gh-14'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+fatal: refusing to fetch into branch 'refs/heads/main' checked out at '/home/bitcot/Documents/projects/loop-fixtures-py'
+Error: Command failed: git fetch origin main:main
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at checkExecSyncError (node:child_process:925:11)
+    at execFileSync (node:child_process:961:15)
+    at Object.syncMain (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-6/src/loop.ts:1354:7)
+    at runSingleIssue (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-6/src/loop.ts:748:16)
+    at async runOverrideIssue (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-6/src/loop.ts:1217:34)
+    at async main (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-6/src/loop.ts:1429:20)
+    at async <anonymous> (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-6/src/loop.ts:1550:5)
+loop exit: 1

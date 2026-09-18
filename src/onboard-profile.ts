@@ -49,6 +49,7 @@ export function onboardProfile(
   const testCmd = optValue(argv, "--test") ?? "pytest -q";
   const singleTestCmd = optValue(argv, "--single-test") ?? "pytest -q {test}";
   const cleared = argv.includes("--confidentiality-cleared");
+  const autoMerge = argv.includes("--auto-merge");
   return {
     language: "python",
     installCmd,
@@ -57,5 +58,6 @@ export function onboardProfile(
     baselineFailures: runFacts.baselineFailures,
     expectedDurationSec: runFacts.durationSec,
     ...(cleared ? { confidentialityCleared: true } : {}),
+    ...(autoMerge ? { autoMerge: true } : {}),
   };
 }
