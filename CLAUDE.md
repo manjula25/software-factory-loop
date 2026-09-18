@@ -8,7 +8,9 @@ A proof of concept for an **issue-driven test & fix loop**: a harness that takes
 already-known issues (GitHub Issues, a spec document, or a plain list — each often with an
 attached log or stack trace), writes a regression test that reproduces the reported failure,
 fixes the code in an isolated sandbox, independently re-verifies the fix, and opens a PR for
-human review. Built on Sandcastle (`@ai-hero/sandcastle`), local Docker only for the POC.
+human review — or, on repos explicitly opted in at onboarding, squash-merges the verified PR
+itself under a revert net (see hard constraint 1). Built on Sandcastle (`@ai-hero/sandcastle`),
+local Docker only for the POC.
 
 The plan of record is **`harness-prd-v2.md`**. Read it before proposing anything that
 contradicts it; changes to it go through `grilling` first, not silent edits.
@@ -41,8 +43,15 @@ in the same PR that adds it.
 
 These come from `harness-prd-v2.md` and are invariants every review enforces:
 
-1. **Never auto-merge.** Every fix lands as a PR a human reviews. Full autonomy is explicitly out
-   of scope — even a verified fix can be the wrong root cause.
+1. **No auto-merge unless the repo opted in; this repo never auto-merges itself.** Every fix
+   lands as a PR. On repos without the explicit `autoMerge: true` profile flag (set only via
+   `--auto-merge` at onboarding), a human merges every PR — default and unchanged. On opted-in
+   repos the harness squash-merges verified PRs, gated by: a pre-merge diff-review pass
+   (uncertain → PR stays open for a human), a post-merge fresh-sandbox suite on main (the
+   canary), and on red: auto-revert, run halt, immediate @-mention notification. The harness's
+   own repository always keeps human merge regardless. Even a verified fix can be the wrong
+   root cause — the opt-in flag and revert net are the compensating controls, not a cure.
+   *(Amended 2026-09-18, owner — grilling record `docs/work/WI-5/prd.md`.)*
 2. **Never trust the agent's own completion signal.** Verification means re-running the
    reproduction test AND the full suite in a fresh sandbox. An agent's "done" is never evidence.
 3. **Confidentiality gate.** No client repo, client issue list, or client log is pointed at this
