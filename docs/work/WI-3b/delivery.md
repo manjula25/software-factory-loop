@@ -85,30 +85,25 @@ never a bitcot repo). Base commit `f53be15`.
 ## Requested external actions
 
 Push `worktree-wi-3b` to origin and open a PR to `main` on
-`manjula25/software-factory-loop`. **Authorization pending** — exact scope
-stated in conversation 2026-09-18; awaiting the user's explicit yes. Merge
-NOT requested and NOT performed (hard constraint 1).
+`manjula25/software-factory-loop`. Explicitly authorized by the user
+2026-09-18 ("yes, push and open the pr") after the exact scope was stated
+in conversation. Merge NOT requested and NOT performed (hard constraint 1).
 
 ## Executed external actions and observed results
 
 - (fixtures repo, earlier with user consent) `git push` of `009a404` to
   `loop-fixtures-py` main — observed: fast-forward, working tree clean
   after.
+- `git push -u origin worktree-wi-3b` (2026-09-18, authorized) — observed:
+  `* [new branch] worktree-wi-3b -> worktree-wi-3b`, tracking set.
+- `gh pr create --repo manjula25/software-factory-loop --base main --head
+  worktree-wi-3b` (2026-09-18, authorized) — observed URL:
+  https://github.com/manjula25/software-factory-loop/pull/7
 
 ## Pending actions
 
-- Explicit authorization → push + PR (commands prepared below).
-- Human review + merge of the PR (terminal for the harness; never
+- Human review + merge of PR #7 (terminal for the harness; never
   auto-merged).
 - Post-merge cleanup when the user chooses: remove worktrees
   `.claude/worktrees/wi-3` and `.claude/worktrees/wi-3b` and their
-  branches (PRs #6 and this one merged).
-
-## Prepared commands (NOT executed)
-
-1. `git push -u origin worktree-wi-3b`
-2. `gh pr create --repo manjula25/software-factory-loop --base main
-   --head worktree-wi-3b --title "WI-3b: nesting guard, collision-proof
-   slug ids, onboarding fresh-fork + green-repo acceptance" --body <…>`
-   (body: the summary above + review/verification pointers, ending with
-   the Claude Code attribution line)
+  branches (PRs #6 and #7 merged).
