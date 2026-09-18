@@ -100,6 +100,11 @@ export interface LoopDeps {
   }>;
   /** Removes the loop's own leftover branches; resolves even if absent. */
   deleteBranch(repoDir: string, branch: string): Promise<void>;
+  /**
+   * Whether `path` is committed on `branch` of the target repo — the nesting
+   * guard's evidence (`git ls-tree --name-only <branch> -- <path>`).
+   */
+  pathCommittedOnBranch(repoDir: string, branch: string, path: string): Promise<boolean>;
   createPr(args: { repoDir: string; title: string; body: string; base: string; head: string }): Promise<{
     url: string;
   }>;
@@ -285,10 +290,11 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   // suffix — the plain-list normalizer moves it out of the description into
   // attachedLog, so a description-only scan would let that URL reach the
   // prompt ungated (and never fetch it when cleared). The other sources stay
-  // description-only: a spec-doc `log:` URL already stays in the description
-  // (scanning its attachedLog too would double-discover the same URL), and a
-  // GitHub issue's attachedLog is fenced log content, which FR-001
-  // deliberately does not scan.
+  // description-only: a spec-doc `log:` URL is already in the description
+  // verbatim (the section body keeps the `log:` line), and a GitHub issue's
+  // fenced blocks stay in the description too (`normalizeGitHubIssue` copies
+  // the body verbatim; attachedLog is just an extracted copy of the longest
+  // one), so their URLs are already scanned there.
   const scanText = input.issue.sourceType === "plain-list" && input.issue.attachedLog !== undefined
     ? `${input.issue.description}\n${input.issue.attachedLog}`
     : input.issue.description;
@@ -316,6 +322,25 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     } else {
       staged.push(result);
     }
+  }
+
+  // Nesting guard: fix worktrees fork from main, so a committed
+  // `.loop-harness` there pre-creates the copyToWorktree destination and
+  // Sandcastle's `cp -R <repoDir>/.loop-harness <wt>/.loop-harness` copies the
+  // staged copy INSIDE it — the attachment would land at
+  // `.loop-harness/.loop-harness/attachments/...` while the prompt promises
+  // `.loop-harness/attachments/...`. Abort loudly with the remediation
+  // instead: zero sandboxes, zero agent spend. Repo-wide condition, so the
+  // failure is harness-level (the queue aborts, it does not grind on).
+  if (staged.length > 0 && (await deps.pathCommittedOnBranch(input.repoDir, "main", ".loop-harness"))) {
+    return {
+      branch,
+      failure:
+        "attachment delivery blocked: main has .loop-harness committed — the sandbox copy would nest " +
+        "(.loop-harness/.loop-harness) and the promised attachment path would not exist. Remove it from " +
+        "the target repo (git rm -r --cached .loop-harness, commit, push) and re-run.",
+      failureKind: "harness",
+    };
   }
 
   const prompt = buildFixPrompt(input.issue, input.profile, { staged, failedUrls: attachmentFailures });
@@ -801,6 +826,16 @@ async function main(): Promise<void> {
       } catch {
         // already absent — nothing to clean up
       }
+    },
+    // Nesting-guard evidence: ls-tree lists the path only when it is committed
+    // on the named branch (the working tree and untracked staging never show).
+    async pathCommittedOnBranch(repoDir, branch, path) {
+      const stdout = execFileSync("git", ["ls-tree", "--name-only", branch, "--", path], {
+        cwd: repoDir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return stdout.trim().length > 0;
     },
     // The PR opens on the TARGET repo, under the owner's own gh auth; the fix
     // branch is pushed first because gh pr create needs it on the remote.
