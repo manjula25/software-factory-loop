@@ -307,6 +307,28 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     }
     return { branch, failure: error.message };
   }
+  // Nesting guard: fix worktrees fork from main, so a committed
+  // `.loop-harness` there pre-creates the copyToWorktree destination and
+  // Sandcastle's `cp -R <repoDir>/.loop-harness <wt>/.loop-harness` copies the
+  // staged copy INSIDE it — the attachment would land at
+  // `.loop-harness/.loop-harness/attachments/...` while the prompt promises
+  // `.loop-harness/attachments/...`. Abort loudly with the remediation
+  // instead, BEFORE the fetch loop: the refusal is zero-side-effect — no
+  // fetch, no staged files, no sandbox, no agent spend. Accepted trade
+  // (WI-4): a run whose every fetch would have failed previously proceeded
+  // body-only; it now refuses pre-fetch. Repo-wide condition, so the failure
+  // is harness-level (the queue aborts, it does not grind on).
+  if (attachmentUrls.length > 0 && (await deps.pathCommittedOnBranch(input.repoDir, "main", ".loop-harness"))) {
+    return {
+      branch,
+      failure:
+        "attachment delivery blocked: main has .loop-harness committed — the sandbox copy would nest " +
+        "(.loop-harness/.loop-harness) and the promised attachment path would not exist. Remove it from " +
+        "the target repo (git rm -r --cached .loop-harness, commit, push) and re-run.",
+      failureKind: "harness",
+    };
+  }
+
   // FR-003/FR-004: fetch what the report uploaded. A failed URL never blocks
   // the others and never blocks the issue — it is recorded loudly instead.
   const staged: StagedAttachment[] = [];
@@ -322,25 +344,6 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     } else {
       staged.push(result);
     }
-  }
-
-  // Nesting guard: fix worktrees fork from main, so a committed
-  // `.loop-harness` there pre-creates the copyToWorktree destination and
-  // Sandcastle's `cp -R <repoDir>/.loop-harness <wt>/.loop-harness` copies the
-  // staged copy INSIDE it — the attachment would land at
-  // `.loop-harness/.loop-harness/attachments/...` while the prompt promises
-  // `.loop-harness/attachments/...`. Abort loudly with the remediation
-  // instead: zero sandboxes, zero agent spend. Repo-wide condition, so the
-  // failure is harness-level (the queue aborts, it does not grind on).
-  if (staged.length > 0 && (await deps.pathCommittedOnBranch(input.repoDir, "main", ".loop-harness"))) {
-    return {
-      branch,
-      failure:
-        "attachment delivery blocked: main has .loop-harness committed — the sandbox copy would nest " +
-        "(.loop-harness/.loop-harness) and the promised attachment path would not exist. Remove it from " +
-        "the target repo (git rm -r --cached .loop-harness, commit, push) and re-run.",
-      failureKind: "harness",
-    };
   }
 
   const prompt = buildFixPrompt(input.issue, input.profile, { staged, failedUrls: attachmentFailures });
