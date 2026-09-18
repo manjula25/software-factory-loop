@@ -7,10 +7,13 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createFixSandbox } from "../src/sandcastle-adapter.js";
-import { parsePytestFailures } from "../src/verify.js";
+import { parseSuiteBaseline } from "../src/onboard-profile.js";
 import type { ProjectProfile } from "../src/loop.js";
 
-const repoDir = "/Users/manju/Documents/loop-fixtures-py";
+const repoDir = process.argv[2];
+if (repoDir === undefined) {
+  throw new Error("missing <repo-dir> argument — usage: tsx scripts/preflight-check.ts <path-to-fixtures-clone>");
+}
 const profile = JSON.parse(readFileSync(join(repoDir, ".loop-harness", "profile.json"), "utf8")) as ProjectProfile;
 
 const sandbox = await createFixSandbox({
@@ -23,14 +26,16 @@ try {
   const install = await sandbox.exec(profile.installCmd);
   if (install.exitCode !== 0) throw new Error(`install failed: ${install.stderr}`);
   const suite = await sandbox.exec(profile.testCmd);
-  const actual = parsePytestFailures(suite.stdout);
+  // parseSuiteBaseline throws SuiteDidNotRunError unless the output carries a
+  // counted-outcome summary token — the same execution-evidence bar as the
+  // onboarding and verification gates.
+  const actual = parseSuiteBaseline(suite.exitCode, suite.stdout);
   const recorded = profile.baselineFailures;
   const same =
     actual.length === recorded.length && actual.every((f, i) => f === recorded[i]);
   console.log("recorded baseline:", recorded);
   console.log("fresh run found:  ", actual);
   console.log(same ? "MATCH — preflight passes" : "MISMATCH — profile would be flagged stale");
-  console.log(`summary line present: ${/\d+ (passed|failed|error)/.test(suite.stdout)}`);
 } finally {
   await sandbox.close();
 }

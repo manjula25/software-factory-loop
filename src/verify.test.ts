@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffVerification, parsePytestFailures } from "./verify.js";
+import { diffVerification, parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 
 const baselineOutput = `..F..F
 =================================== FAILURES ===================================
@@ -28,6 +28,25 @@ describe("parse pytest output (FR-104)", () => {
     expect(parsePytestFailures("ERROR tests/test_broken.py - ImportError: no module\n1 error in 0.1s")).toEqual([
       "tests/test_broken.py",
     ]);
+  });
+});
+
+describe("SUITE_SUMMARY_RE (shared execution-evidence definition, WI-4 T3)", () => {
+  it("matches a skipped-only summary — any counted outcome proves the suite ran", () => {
+    expect(SUITE_SUMMARY_RE.test("4 skipped in 0.01s")).toBe(true);
+  });
+
+  it("does not match pytest's 'no tests ran' — no count, no execution evidence", () => {
+    expect(SUITE_SUMMARY_RE.test("no tests ran in 0.01s")).toBe(false);
+  });
+
+  it("matches a mixed `pytest -q` summary line anywhere in stdout", () => {
+    expect(SUITE_SUMMARY_RE.test("..F.\n1 failed, 2 passed, 3 skipped, 1 xfailed in 0.42s")).toBe(true);
+  });
+
+  it("does not match empty or count-free output", () => {
+    expect(SUITE_SUMMARY_RE.test("")).toBe(false);
+    expect(SUITE_SUMMARY_RE.test("some random output")).toBe(false);
   });
 });
 

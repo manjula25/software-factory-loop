@@ -49,6 +49,10 @@ describe("parseSuiteBaseline (born-red guard replacement: execution evidence, no
     expect(parseSuiteBaseline(1, stdout)).toEqual(["tests/x.py::T::t"]);
   });
 
+  it("accepts a skipped-only suite: a counted outcome is execution evidence (shared definition)", () => {
+    expect(parseSuiteBaseline(0, "ssss\n4 skipped in 0.01s")).toEqual([]);
+  });
+
   it("throws SuiteDidNotRunError when stdout is empty — no evidence the suite ran", () => {
     expect(() => parseSuiteBaseline(0, "")).toThrow(SuiteDidNotRunError);
   });

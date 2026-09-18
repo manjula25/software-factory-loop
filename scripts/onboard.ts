@@ -25,10 +25,19 @@ async function main(): Promise<void> {
 
   // Sandcastle reuses an existing branch instead of re-forking, so a persisted
   // loop/onboard made re-onboarding test stale code (observed live 2026-09-18).
+  // Only absence is tolerable here: a branch that survives deletion means a
+  // stale fork, so that failure must throw — never silently proceed.
+  let branchExists = true;
   try {
-    execFileSync("git", ["branch", "-D", "loop/onboard"], { cwd: repoDir, stdio: "ignore" });
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", "refs/heads/loop/onboard"], {
+      cwd: repoDir,
+      stdio: "ignore",
+    });
   } catch {
-    // Absent branch is fine — nothing to clean up.
+    branchExists = false;
+  }
+  if (branchExists) {
+    execFileSync("git", ["branch", "-D", "loop/onboard"], { cwd: repoDir, stdio: "pipe" });
   }
 
   const sandbox = await createFixSandbox({

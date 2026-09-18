@@ -7,7 +7,7 @@
  */
 
 import type { ProjectProfile } from "./loop.js";
-import { parsePytestFailures } from "./verify.js";
+import { parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 
 /**
  * Thrown when suite output carries no evidence a test suite executed at all.
@@ -21,18 +21,13 @@ export class SuiteDidNotRunError extends Error {
   }
 }
 
-// A pytest summary token anywhere in stdout (`3 passed in 0.01s`,
-// `1 failed, 2 passed`, `2 errors`, …) is the evidence of execution. Counted
-// outcomes only — pytest's "no tests ran" has no count and must not pass.
-const SUMMARY_TOKEN = /\b\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/;
-
 /**
  * Derive the onboarding baseline from a suite run. A green suite is valid and
  * onboards with `[]`; output with no summary token means the suite never
  * executed and throws `SuiteDidNotRunError`.
  */
 export function parseSuiteBaseline(exitCode: number, stdout: string): string[] {
-  if (!SUMMARY_TOKEN.test(stdout)) throw new SuiteDidNotRunError(exitCode);
+  if (!SUITE_SUMMARY_RE.test(stdout)) throw new SuiteDidNotRunError(exitCode);
   return parsePytestFailures(stdout);
 }
 

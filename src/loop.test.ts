@@ -1,5 +1,5 @@
 import { mkdtemp } from "node:fs/promises";
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -221,6 +221,16 @@ describe("runSingleIssue", () => {
     expect(deps.createPr).not.toHaveBeenCalled();
     expect(outcome.failure).toMatch(/unreadable|summary/i);
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+  });
+
+  it("reads a skipped-only verification suite — any counted outcome is execution evidence (WI-4 T3)", async () => {
+    // A suite reporting only "4 skipped" carries a counted outcome: the gate
+    // must treat it as readable (no failure lines → no new failures), not
+    // reject it as unreadable the way silence is rejected.
+    const deps = makeDeps({ sandbox: sandboxHandle("4 skipped in 0.01s") });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+    expect(outcome.failure).toBeUndefined();
+    expect(outcome.prUrl).toContain("/pull/");
   });
 
   it("installs the project in every fresh sandbox before running any test", async () => {
@@ -885,7 +895,8 @@ describe("attachments in the loop (WI-3 T2)", () => {
   });
 
   it("aborts loudly with zero spend when main has .loop-harness committed (nesting guard)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
+    const fetchMock = vi.fn(async () => new Response(ATTACHMENT_BODY));
+    vi.stubGlobal("fetch", fetchMock);
     const repoDir = await mkdtemp(join(tmpdir(), "loop-nest-guard-"));
     try {
       const deps = makeDeps({ pathCommittedOnBranch: async () => true });
@@ -900,12 +911,63 @@ describe("attachments in the loop (WI-3 T2)", () => {
       expect(outcome.failure).toMatch(/committed|git rm/);
       expect(outcome.failure).toContain(".loop-harness");
       expect(outcome.failureKind).toBe("harness"); // repo-wide: the queue must abort too
+      expect(fetchMock).not.toHaveBeenCalled(); // WI-4 T1: zero network side effect — the guard fires before the fetch
       expect(deps.createFixSandbox).not.toHaveBeenCalled(); // zero Docker spend
       expect(deps.runFixRun).not.toHaveBeenCalled(); // zero agent spend
+      expect(deps.createPr).not.toHaveBeenCalled();
+      // nothing staged: the refusal leaves no .loop-harness behind in the repo
+      expect(existsSync(join(repoDir, ".loop-harness"))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("WI-4 T1: the guard gates on the discovered URL, not on staged output — even a fetch that would have failed never runs", async () => {
+    // A doomed fetch (404) still proves the ordering: the refusal is decided
+    // before any network leaves the harness, so nothing is fetched or staged.
+    const fetchMock = vi.fn(async () => new Response("gone", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const repoDir = await mkdtemp(join(tmpdir(), "loop-nest-guard-prefetch-"));
+    try {
+      const deps = makeDeps({ pathCommittedOnBranch: async () => true });
+
+      const outcome = await runSingleIssue(
+        { issue: issueWithAttachment, repoDir, imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      expect(outcome.prUrl).toBeUndefined();
+      expect(outcome.failure).toContain(".loop-harness");
+      expect(outcome.failureKind).toBe("harness");
+      expect(fetchMock).not.toHaveBeenCalled(); // no fetch before the guard
+      expect(deps.createFixSandbox).not.toHaveBeenCalled();
+      expect(deps.runFixRun).not.toHaveBeenCalled();
       expect(deps.createPr).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
       rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it("WI-4 T1: no attachment URLs + committed .loop-harness — the guard is inert and the run proceeds exactly as today", async () => {
+    const fetchMock = vi.fn(async () => new Response(ATTACHMENT_BODY));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const deps = makeDeps({ pathCommittedOnBranch: async () => true });
+
+      const outcome = await runSingleIssue(
+        { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: clearedProfile },
+        deps,
+      );
+
+      // attachment-free issues are governed by the WI-1/WI-2 seam, not the guard
+      expect(outcome.prUrl).toBeTruthy();
+      expect(outcome.failure).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled(); // nothing to fetch
+      expect(deps.createPr).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 
