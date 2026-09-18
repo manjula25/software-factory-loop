@@ -1,6 +1,6 @@
 # WI-6 Specification — auto-merge implementation
 
-**Status:** Draft — presented for approval 2026-09-18.
+**Status:** Approved 2026-09-18 (owner).
 
 ## Source artifacts
 
@@ -321,4 +321,4 @@ and restated in FR-004's non-claims.
 
 ## Approval
 
-- [ ] Owner approval — pending
+- [x] Owner approved this specification (2026-09-18)
