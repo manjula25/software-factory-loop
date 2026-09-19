@@ -247,3 +247,88 @@ MERGED line suffix `(canary: green; teardown: <reason>)`; REVERTED line suffix
 Docker/gh run of a teardown failure. Teardown is not retried; leftover
 throwaway branches from a failed teardown are tolerated (next run's
 stale-branch pass cleans them) — not proven here.
+
+---
+
+## Task 4 — negative-path test pins for wired guard behaviors (FR-004, ticket 4)
+
+- **Size:** small (test-only slice, `src/loop.test.ts` only; no production
+  change; expect +3 tests).
+- **Risk:** low-medium — mutation checks temporarily edit production wiring
+  (remove `assertNoSecrets` before `runReview`; remove the `finally` branch
+  deletion) and must be restored exactly; pin 3 extends the real-git
+  `syncMainToOrigin` describe.
+- **Budget:** one leaf implementer session; vitest + real-git throwaway repos.
+- **Evidence boundary:** pins existing wiring only, adds no new guard rules;
+  pin 3 is a documented boundary-pin (stdlib git behavior — RED not
+  constructible without mutating git itself).
+- **Fixed point:** `436f47b` (clean tree, T3 accepted).
+- **Intended candidate:** working tree vs `436f47b`; commit message
+  `test(WI-7): pin guard wiring — secret-diff blocks review, throw-path deletion, divergent-base refusal (FR-004)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `2bbca7d` (commit `test(WI-7): pin guard wiring — secret-diff
+blocks review, throw-path deletion, divergent-base refusal (FR-004)`), base
+`436f47b`. Changed path: `src/loop.test.ts` ONLY (+65/−1); `git diff` on
+`src/loop.ts` empty (production untouched — restoration of the temporary
+mutation edits proven by the committed diff).
+
+**Leaf report:** one leaf session (~25 min, ~10 tool calls). One sanctioned
+deviation: the plan's `readEnvFile` fixture parenthetical didn't match the
+file (the actual sibling idiom is an inline `env: {...}` override — the seam
+`deps.env` is exactly what the loop hands `assertNoSecrets`); followed the
+real idiom. Added a `reviewDiff?: string` DepOverrides knob (no sibling
+`fixDiff` override existed; default string unchanged so the approve-path
+sibling pin still holds).
+
+**Mutation check 1 (pin 1, secret-diff block):** mutation = removed
+`assertNoSecrets([reviewPrompt], deps.env);` (+ its 2-line comment) before the
+`runReview` call in `src/loop.ts`. Observed RED: `runReview` WAS called —
+`Number of calls: 1` at `expect(deps.runReview).not.toHaveBeenCalled()`;
+1 failed / 98 skipped. Restored via `git checkout -- src/loop.ts`; single
+test re-run green. Statically re-confirmed by the spec reviewer against
+`loop.ts:762-766` (the diff is embedded in `reviewPrompt` before the guard).
+
+**Mutation check 2 (pin 2, throw-path deletion):** first attempt (removing the
+whole `finally`) produced a PARSE ERROR — discarded as not a behavioral
+mutation. Valid mutation = emptied the `finally` body (removed only the
+`await deps.deleteBranch(input.repoDir, REVIEW_BRANCH);` line). Observed RED:
+`deleteBranch` fired only for `loop/preflight-gh-1`, never `loop/review` —
+assertion diff showed exactly that substitution; 1 failed / 98 skipped.
+Restored via `git checkout`; re-run green.
+
+**Pin 3 (boundary-pin):** divergent non-checked-out main → `syncMainToOrigin`
+throws (`! [rejected] main -> main (non-fast-forward)` observed live), local
+main never clobbered, HEAD unchanged. In-test comment documents the
+boundary-pin status (the refusal is stock git behavior; no natural RED).
+Quality-review nit recorded below on the comment's wording.
+
+**Controller gate re-run fresh at `2bbca7d`:** focused `src/loop.test.ts`
+99/99 (96+3); `npm run typecheck` exit 0; full `npm test` 10 files / 207 tests
+(204+3) exit 0. `git diff src/loop.ts` = 0 lines.
+
+**Reviews (fixed package base `436f47b` → candidate `2bbca7d`):**
+- Specification review: **PASS**, zero blocking (all three pins verified
+  against the real production wiring; knob assessed minimal; scope clean).
+  Its one Unverified item — evidence-of-execution of the mutation checks —
+  is closed by this record (mutations leave no repo trace by design).
+- Code-quality review: **APPROVED**, zero critical/important. Confirmed the
+  synthetic-secret hygiene (key-not-value on every surface) and the shared
+  `REVIEW_BRANCH` import (no drifting literal).
+
+**Adjacent follow-ups (recorded, not fixed):**
+- Pin 2 overlaps the pre-existing "thrown review → uncertain" test except for
+  the load-bearing `deleteBranch(REVIEW_BRANCH)` assertion; standalone pin
+  sanctioned by the plan as its own mutation target.
+- Pin 3's comment slightly overstates ("would require mutating git itself"):
+  a forced refspec (`+main:main`) in OUR wiring would also turn it red.
+  Comment-accuracy nit only.
+- `makeQueueDeps`'s `fixDiff` mock cannot be overridden — a queue-seam
+  secret-diff pin would need the same knob there.
+
+**Evidence boundary / non-claims:** pins existing wiring only; no new guard
+rules. Pins 1–2 pass on the unmutated tree BY DESIGN (already-wired
+behavior); their justification is the recorded mutation checks. Pin 3 is a
+boundary-pin. The secret is a synthetic in-test string; no `.env` value was
+read, printed, or echoed.

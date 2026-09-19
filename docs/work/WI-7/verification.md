@@ -111,3 +111,42 @@ Evidence boundary:
 
 Reviews: specification PASS, code-quality APPROVED, both at the fixed package
 `0dcf132` → `23f0a35` (record in implementation-notes.md).
+
+## T4 — negative-path test pins (FR-004)
+
+Claim: three already-wired guard behaviors gain failing-first pins —
+(1) a fix diff carrying a configured secret value never reaches the
+pre-merge review call (review skipped, PR stays open, surfaces name the key
+never the value); (2) the throwaway `loop/review` branch is deleted when the
+review run throws; (3) the sync path for a non-checked-out base refuses a
+divergent base (real git, throwaway repos).
+
+Exact candidate: `2bbca7d` (base `436f47b`), branch `worktree-wi-7`.
+Test-only: `git diff 436f47b..2bbca7d -- src/loop.ts` is empty.
+
+| Check | Command | Result |
+|---|---|---|
+| Focused suite | `npm test -- src/loop.test.ts` | 1 file / 99 tests passed (96+3), exit 0 |
+| Typecheck | `npm run typecheck` (tsc --noEmit) | exit 0 |
+| Full suite | `npm test` | 10 files / 207 tests passed (204+3), exit 0 |
+
+RED justification: pins 1–2 pass on the unmutated tree BY DESIGN; their RED
+evidence is the recorded mutation checks — mutation 1 (guard removed before
+`runReview`): `runReview` called once, pin failed; mutation 2 (`finally`
+deletion emptied): `deleteBranch` fired only for the preflight branch, never
+`loop/review`, pin failed; both restored via `git checkout` (byte-clean
+production proven by the committed diff) and re-run green. Pin 3 is a
+documented BOUNDARY-PIN (stock git refusal of a non-fast-forward ref update;
+no natural RED without mutating our own wiring into a forced refspec).
+Verbatim outputs in implementation-notes.md.
+
+Evidence boundary:
+- Pins existing wiring only; adds no new guard rules. Secret is a synthetic
+  in-test fixture; no `.env` value was read, printed, or echoed.
+- Non-claim: mutation-check executions leave no repository trace by design;
+  their record lives in implementation-notes.md (closes the spec reviewer's
+  evidence-of-execution question).
+- Pin 3 exercises real git in a throwaway clone, not the Docker sandbox path.
+
+Reviews: specification PASS, code-quality APPROVED, both at the fixed package
+`436f47b` → `2bbca7d` (record in implementation-notes.md).
