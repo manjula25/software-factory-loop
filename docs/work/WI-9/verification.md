@@ -104,3 +104,53 @@ real LLM fix runs, through the complete opt-in chain, twice.
 - Old `origin/fix/gh-{1,2,3,10}` branches from prior work items remain on
   the fixtures repo (adjacent observation; tolerated by the stale-branch
   pass).
+
+---
+
+## Work-item completion verification — WI-9
+
+Claim (exact): at candidate `ffc64c0` (worktree-wi-9 HEAD, clean tree), the
+harness's delivered tree has run the complete opt-in auto-merge chain live
+twice with real LLM fix runs; both seeded issues are closed with merged,
+evidence-bearing PRs; the deferral/re-admission path behaved per design
+decision (b); spend matched FR-003 exactly; no harness `src/` changed; the
+standing pipeline-integration non-claim is closed.
+
+Proving commands, fresh at `ffc64c0` (2026-09-19):
+
+| Check | Command | Result |
+|---|---|---|
+| Full suite (broad) | `npm test` | 10 files / 216 tests, exit 0 |
+| Typecheck | `npm run typecheck` | exit 0 |
+| Tree | `git status --short` | clean |
+| Branch diff scope | `git diff --stat 278bbf7..HEAD` | 7 files, all docs/evidence under `docs/work/WI-9/` — zero `src/` changes |
+| Issue #22 end-state | `gh issue view 22` | CLOSED |
+| Issue #23 end-state | `gh issue view 23` | CLOSED |
+| PR #24 end-state | `gh pr view 24` | MERGED |
+| PR #25 end-state | `gh pr view 25` | MERGED |
+| Fixtures main | `git log origin/main` | `b46c9ef (#25)` → `5f372b6 (#24)` → `88a18c3 seed` |
+
+(External gh/git reads above are the runtime/external evidence class; the
+run logs `run1.log`/`run2.log` and per-task evidence files carry the
+in-run detail, including born-red RED sections in both PR bodies — read
+back fresh at T-task time and recorded in `run1-endstates.md` /
+`run2-endstates.md`.)
+
+Unknown reconciliation: none open. Both approved design decisions were
+exercised as decided — (b) deferral/re-admission ran live (gh-23 deferred in
+run 1, admitted and completed in run 2); (a) red-canary handling was never
+triggered (both canaries green) — it remains a defined posture, not claimed
+as live-proven on this tree (matches the stated remaining risk).
+
+Deferred (explicit, owner: follow-up backlog): stale
+`origin/fix/gh-{1,2,3,10}` fixtures branches from prior work items;
+naturally-red-canary/revert live proof on the current tree.
+
+Remaining risks: none within the claimed boundary. Hard constraints all
+held live: opt-in chain only on the fixtures repo (1), fresh-sandbox gates
+real (2), self-authored synthetic data only (3), repro tests retained (4),
+spend exactly as ledgered (5), local Docker only (6).
+
+Non-claims (final): failure-path surfaces not exercised live (no fault
+injection; none arose naturally); spend claims are invocation counts; no
+cost figures; no claims about the naturally-red-canary path on this tree.
