@@ -26,7 +26,7 @@ ingestion) are implemented in `src/`, under vitest, with a committed Docker sand
 
 | Module | What it owns |
 |---|---|
-| `src/loop.ts` | The per-issue loop, the queue runner, and the CLI entry — incl. the opt-in pre-merge diff-review pass → squash-merge → post-merge canary → auto-revert/halt/@-notify → gh-issue closing chain (WI-6); the uncanaried-merge failure surface (sync failure after merge: comment, summary line, halt, no blind revert) and canary-teardown failure recording that never decides/erases the verdict (WI-7) |
+| `src/loop.ts` | The per-issue loop, the queue runner, and the CLI entry — incl. the opt-in pre-merge diff-review pass → squash-merge → post-merge canary → auto-revert/halt/@-notify → gh-issue closing chain (WI-6); the uncanaried-merge failure surface (sync failure after merge: comment, summary line, halt, no blind revert) and canary-teardown failure recording that never decides/erases the verdict (WI-7); teardown-failure recording extended to the preflight and verification sandboxes with its queue FAILED-line suffix and single-issue report line (the exported `formatSingleIssueResult` builder), and the uncanaried merge's notify-handle @-ping (WI-8) |
 | `src/queue.ts` | Acquisition (incl. the acquisition-time remote refresh via the required `refreshRemoteRefs` dep, WI-7), dedup against open and merged PRs (incl. the revert re-queue guard) and stale branches, capped admission, triage parsing, review-verdict parsing |
 | `src/sandcastle-adapter.ts` | The **only** file permitted to import `@ai-hero/sandcastle` — a boundary test enforces this |
 | `src/issues.ts`, `src/verify.ts` | Issue normalization; the verification gate over fresh-sandbox output, incl. the shared suite-summary execution-evidence regex (`SUITE_SUMMARY_RE`) |

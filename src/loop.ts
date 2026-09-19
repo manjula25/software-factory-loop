@@ -231,11 +231,15 @@ export interface LoopOutcome {
    */
   readonly closeFailure?: string;
   /**
-   * WI-7 (FR-003): set when the canary sandbox's TEARDOWN failed — close()
-   * threw, or the canary branch delete refused — after the suite had already
-   * decided the verdict. Pure bookkeeping beside that verdict, never over it:
-   * a green canary stays merged (the failure rides the MERGED summary line)
-   * and a red one still reverts (the failure is named in the RevertedRecord).
+   * WI-7 (FR-003) / WI-8 (FR-001): set when a sandbox's TEARDOWN failed after
+   * the suite had already decided the verdict — the canary (close() threw, or
+   * the canary branch delete refused), the baseline preflight, or the fresh
+   * verification sandbox. Pure bookkeeping beside that verdict, never over it:
+   * a green canary stays merged (the failure rides the MERGED summary line), a
+   * red one still reverts (the failure is named in the RevertedRecord), and a
+   * preflight/verification teardown failure rides the stale abort, the fail()
+   * outcome, or the PR'd outcome (and its FAILED/MERGED summary line) without
+   * changing any of them.
    */
   readonly teardownFailure?: string;
   /**
@@ -278,6 +282,8 @@ export interface UncanariedRecord {
   readonly syncFailure: string;
   /** `posted`, or `FAILED (<reason>)` when the best-effort comment threw. */
   readonly commentNote: string;
+  /** The profile's notifyHandle at uncanaried time; absent = not configured (D6). */
+  readonly notifyHandle?: string;
 }
 
 /**
@@ -285,7 +291,12 @@ export interface UncanariedRecord {
  * so the outcome's failure string and `formatSummary` agree byte-for-byte.
  */
 function uncanariedDetail(record: UncanariedRecord): string {
-  return `pr ${record.prUrl} merge ${record.mergeCommit} — main sync failed: ${record.syncFailure}; comment: ${record.commentNote}`;
+  return (
+    `pr ${record.prUrl} merge ${record.mergeCommit} — main sync failed: ${record.syncFailure}; comment: ${record.commentNote}` +
+    // WI-8 (FR-003): the detail's notify posture is unconditional — the same
+    // vocabulary as the reverted summary line.
+    (record.notifyHandle !== undefined ? `; notify: @${record.notifyHandle}` : "; notify handle not configured")
+  );
 }
 
 /**
@@ -616,6 +627,11 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     imageName: input.imageName,
   });
   let baselineProblem: string | undefined;
+  // WI-8 (FR-001): preflight teardown parity with the WI-7 FR-003 canary
+  // idiom — a close()/branch-delete failure AFTER the baseline suite ran is
+  // bookkeeping beside the staleness verdict, never over it. One catch covers
+  // both steps: a failed close still skips the branch delete, as before.
+  let preflightTeardown: string | undefined;
   try {
     const install = await pre.exec(input.profile.installCmd);
     if (install.exitCode !== 0) {
@@ -638,14 +654,19 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
       }
     }
   } finally {
-    await pre.close();
-    await deps.deleteBranch(input.repoDir, preBranch);
+    try {
+      await pre.close();
+      await deps.deleteBranch(input.repoDir, preBranch);
+    } catch (error) {
+      preflightTeardown = error instanceof Error ? error.message : String(error);
+    }
   }
   if (baselineProblem) {
     return {
       branch,
       failure: `Aborted before the fix run — ${baselineProblem}.`,
       failureKind: "harness",
+      ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
     };
   }
 
@@ -675,6 +696,9 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
       failure: reason,
       ...(newFailures ? { newFailures } : {}),
       ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+      // WI-8 (FR-001): a green-baseline run that later fails verification
+      // still carries a preflight teardown failure, if there was one.
+      ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
     };
   };
 
@@ -693,6 +717,11 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     imageName: input.imageName,
   });
   let prUrl: string | undefined;
+  // WI-8 (FR-001): verification teardown parity. A close() throw in the
+  // finally below is caught, never propagated: on a `fail()`-returned path the
+  // fail outcome was already decided and is returned untouched (the field is
+  // simply not attached there); on the green path it rides the PR'd outcome.
+  let sandboxTeardown: string | undefined;
   try {
     // Each sandbox is a fresh container: the agent's `pip install -e .` (or
     // equivalent) lived in ITS site-packages, not this one's. Without the
@@ -734,17 +763,25 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
     prUrl = pr.url;
   } finally {
-    await sandbox.close();
+    try {
+      await sandbox.close();
+    } catch (error) {
+      sandboxTeardown = error instanceof Error ? error.message : String(error);
+    }
   }
 
   // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
   // finally has closed it — merging (with --delete-branch) deletes the very
   // branch that sandbox sits on. Every failed/gated path above returned inside
   // the try; reaching here with prUrl set means verification green + PR open.
+  // WI-8 (FR-001): whichever early sandbox teardown failed rides every PR'd
+  // return below — the preflight wins if both did (it happened first).
+  const earlyTeardown = preflightTeardown ?? sandboxTeardown;
   const prOutcome: LoopOutcome = {
     branch,
     prUrl,
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}),
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
     // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
@@ -868,9 +905,13 @@ async function runCanary(
     await deps.syncMain(input.repoDir);
   } catch (error) {
     const syncFailure = error instanceof Error ? error.message : String(error);
+    // WI-8 (FR-003): when a notify handle is configured, the comment pings it —
+    // an uncanaried merge is exactly the "needs a human" case the handle is for.
+    const handle = input.profile.notifyHandle;
     const commentBody =
       `⚠️ UNCANARIED: this merge (${mergeCommit}) was NOT canaried — syncing the local clone to the merged base failed: ${syncFailure}. ` +
-      `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.`;
+      `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.` +
+      (handle !== undefined ? ` cc @${handle} — this merge needs a human decision.` : "");
     let commentNote: string;
     try {
       assertNoSecrets([commentBody], deps.env);
@@ -885,6 +926,7 @@ async function runCanary(
       mergeCommit,
       syncFailure,
       commentNote,
+      ...(handle !== undefined ? { notifyHandle: handle } : {}),
     };
     return {
       branch,
@@ -1275,7 +1317,12 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     }
     // A repo-wide preflight abort (stale baseline) will fail every remaining
     // issue identically — that is a harness-level failure, not this issue's.
-    failed.push([issue.id, outcome.failure ?? "unknown failure"]);
+    // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
+    // line as a suffix — the reason itself stands untouched.
+    failed.push([
+      issue.id,
+      `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
+    ]);
     if (outcome.failureKind === "harness") {
       throw new QueueAbortedError(`Queue aborted — ${issue.id}: ${outcome.failure}`, snapshot());
     }
@@ -1410,6 +1457,74 @@ export async function runOverrideIssue(
     return { kind: "skipped-merged", id: input.issue.id };
   }
   return { kind: "run", outcome: await runSingleIssue(input, deps) };
+}
+
+/**
+ * WI-8 (FR-002): the single-issue CLI report as a PURE builder — `main()` emits
+ * `stdout` via console.log and guards EACH `stderr` line through
+ * `assertNoSecrets` before console.error (the guard stays at the emission
+ * seam, never in here). The branch logic is `main()`'s former print block,
+ * moved verbatim: exitCode 1 only on the no-PR branch, every skipped kind a
+ * single stdout line at exit 0.
+ */
+export function formatSingleIssueResult(result: OverrideOutcome): {
+  stdout: string[];
+  stderr: string[];
+  exitCode: 0 | 1;
+} {
+  if (result.kind === "skipped-duplicate") {
+    return {
+      stdout: [`[${result.id}] skipped — an open PR already covers it`],
+      stderr: [],
+      exitCode: 0,
+    };
+  }
+  if (result.kind === "skipped-merged") {
+    return {
+      stdout: [`[${result.id}] skipped — a merged PR already covers it`],
+      stderr: [],
+      exitCode: 0,
+    };
+  }
+  if (result.outcome.prUrl) {
+    const stdout = [`PR opened: ${result.outcome.prUrl}`];
+    const stderr: string[] = [];
+    // WI-6: there is always a prUrl on the merge-failure path — the PR is the
+    // deliverable, so the run stays green (exit 0) and a human can still
+    // merge it. The failure is loud, never silent, but never fatal here.
+    if (result.outcome.mergeFailure !== undefined) {
+      stderr.push(`auto-merge failed: ${result.outcome.mergeFailure}`);
+    }
+    if (result.outcome.merged !== undefined) {
+      stdout.push(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
+    }
+    // WI-6 (FR-008): a failed close is bookkeeping noise on a merged outcome
+    // — loud (guarded, stderr), never fatal.
+    if (result.outcome.closeFailure !== undefined) {
+      stderr.push(`issue close failed: ${result.outcome.closeFailure}`);
+    }
+    // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
+    // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,
+    // the run stays green.
+    if (result.outcome.teardownFailure !== undefined) {
+      stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+    }
+    return { stdout, stderr, exitCode: 0 };
+  }
+  // Code-review finding (WI-6, standards axis): the failure text quotes
+  // subprocess errors (the WI-6 revert path made this string class much
+  // richer), so this emission passes the guard like its siblings above.
+  const stderr = [`Loop finished without a PR — ${result.outcome.failure}`];
+  // WI-8 (FR-002): the teardown line rides after the failure line — recorded,
+  // never deciding the outcome that was already earned.
+  if (result.outcome.teardownFailure !== undefined) {
+    stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+  }
+  return {
+    stdout: [],
+    stderr,
+    exitCode: 1,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1633,43 +1748,18 @@ async function main(): Promise<void> {
       { issue, repoDir, imageName, agent, profile },
       allDeps,
     );
-    if (result.kind === "skipped-duplicate") {
-      console.log(`[${result.id}] skipped — an open PR already covers it`);
-      return;
+    const report = formatSingleIssueResult(result);
+    for (const line of report.stdout) {
+      console.log(line);
     }
-    if (result.kind === "skipped-merged") {
-      console.log(`[${result.id}] skipped — a merged PR already covers it`);
-      return;
-    }
-    if (result.outcome.prUrl) {
-      console.log(`PR opened: ${result.outcome.prUrl}`);
-      // WI-6: there is always a prUrl on the merge-failure path — the PR is the
-      // deliverable, so the run stays green (exit 0) and a human can still
-      // merge it. The failure is loud, never silent, but never fatal here.
-      // The reason quotes a subprocess error, so it passes the secrets guard
-      // like every other emitted string.
-      if (result.outcome.mergeFailure !== undefined) {
-        const line = `auto-merge failed: ${result.outcome.mergeFailure}`;
-        assertNoSecrets([line], guardEnv);
-        console.error(line);
-      }
-      if (result.outcome.merged !== undefined) {
-        console.log(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
-      }
-      // WI-6 (FR-008): a failed close is bookkeeping noise on a merged outcome
-      // — loud (guarded, stderr), never fatal.
-      if (result.outcome.closeFailure !== undefined) {
-        const line = `issue close failed: ${result.outcome.closeFailure}`;
-        assertNoSecrets([line], guardEnv);
-        console.error(line);
-      }
-    } else {
-      // Code-review finding (WI-6, standards axis): the failure text quotes
-      // subprocess errors (the WI-6 revert path made this string class much
-      // richer), so this emission passes the guard like its siblings above.
-      const line = `Loop finished without a PR — ${result.outcome.failure}`;
+    // WI-8 (FR-002): each stderr line is guarded at the emission seam — the
+    // builder is pure and never sees the guard env (same posture as the
+    // former inline block: the reason strings quote subprocess errors).
+    for (const line of report.stderr) {
       assertNoSecrets([line], guardEnv);
       console.error(line);
+    }
+    if (report.exitCode === 1) {
       process.exitCode = 1;
     }
     return;

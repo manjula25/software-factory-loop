@@ -14,6 +14,7 @@ import {
   buildPrBody,
   buildReviewPrompt,
   fixBranch,
+  formatSingleIssueResult,
   formatSummary,
   parseCap,
   parseSourceArgs,
@@ -22,6 +23,7 @@ import {
   runQueue,
   runSingleIssue,
   syncMainToOrigin,
+  type OverrideOutcome,
   type ProjectProfile,
 } from "./loop.js";
 import {
@@ -149,6 +151,12 @@ interface DepOverrides {
   closeThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
+  /** Preflight reports a stale baseline — shorthand for a SUITE_AFTER_FIX preflight (WI-8 FR-001). */
+  staleBaseline?: boolean;
+  /** Simulated preflight-sandbox close() failure (WI-8 FR-001). */
+  preflightCloseThrows?: string;
+  /** Simulated verification-sandbox close() failure (WI-8 FR-001). */
+  sandboxCloseThrows?: string;
   /** Simulated canary-branch delete failure on opted-in runs (WI-7 FR-003). */
   canaryDeleteBranchThrows?: string;
   /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
@@ -180,9 +188,24 @@ function makeDeps(overrides: DepOverrides = {}) {
         return base;
       }
       sandboxCalls += 1;
-      return sandboxCalls === 1
-        ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
-        : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
+      if (sandboxCalls === 1) {
+        const base =
+          overrides.preflight ?? sandboxHandle(overrides.staleBaseline === true ? SUITE_AFTER_FIX : BASELINE_SUITE);
+        // WI-8 FR-001: the preflight sandbox's close() can be made to refuse —
+        // one catch in production must cover the branch delete too.
+        if (overrides.preflightCloseThrows !== undefined) {
+          const message = overrides.preflightCloseThrows;
+          return { ...base, async close() { throw new Error(message); } };
+        }
+        return base;
+      }
+      const verification = overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX);
+      // WI-8 FR-001: same knob for the fresh verification sandbox.
+      if (overrides.sandboxCloseThrows !== undefined) {
+        const message = overrides.sandboxCloseThrows;
+        return { ...verification, async close() { throw new Error(message); } };
+      }
+      return verification;
     }),
     deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {
       // WI-7 FR-003: teardown failure knob — the canary branch delete refuses.
@@ -690,6 +713,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
       mergeCommit: "m0ckmerge",
       syncFailure: "divergent main",
       commentNote: "posted",
+      notifyHandle: "manjula25", // WI-8 FR-003: optedInNotify carries a handle — the record mirrors it
     });
     expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
     const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
@@ -718,11 +742,11 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(aborted.summary.uncanariedMerges).toEqual([
       [
         "gh-1",
-        "pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+        "pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify handle not configured",
       ],
     ]);
     expect(formatSummary(aborted.summary)).toContain(
-      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify handle not configured",
     );
   });
 
@@ -741,6 +765,48 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     const aborted = error as QueueAbortedError;
     expect(aborted.summary.uncanariedMerges[0]![1]).toContain("comment: FAILED (gh: comment failed — network)");
     expect(formatSummary(aborted.summary)).toContain("UNCANARIED MERGE gh-1");
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-8 (FR-003): the uncanaried merge pings the notify handle. The comment
+  // body appends the cc ONLY when a handle is configured, and the shared
+  // detail (outcome failure string = queue summary line) always states the
+  // notify posture — `notify: @<handle>` or `notify handle not configured`,
+  // the reverted summary line's vocabulary.
+  // -------------------------------------------------------------------------
+
+  it("(n) WI-8 FR-003: uncanaried with notifyHandle configured — the comment pings @manjula25 (keeping the human-decision sentence) and both the outcome failure and the queue summary line carry notify: @manjula25", async () => {
+    const deps = makeDeps({ syncThrows: "divergent main" });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).toContain("cc @manjula25 — this merge needs a human decision.");
+    expect(body).toContain("A human must decide: revert the merge manually or re-verify after fixing the clone."); // the sentence stays verbatim
+    expect(outcome.uncanaried?.notifyHandle).toBe("manjula25");
+    expect(outcome.failure).toContain("notify: @manjula25");
+
+    // Queue-mode variant: the same detail rides the ⚠️ UNCANARIED MERGE line.
+    const { deps: queueDeps } = makeQueueDeps({ issues: [queueIssue(1)], syncMainThrowsFor: "gh-1" });
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      queueDeps,
+    ).catch((e: unknown) => e);
+    expect(formatSummary((error as QueueAbortedError).summary)).toContain(
+      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify: @manjula25",
+    );
+  });
+
+  it("(o) WI-8 FR-003: uncanaried with notifyHandle ABSENT — the comment carries no @ at all and the detail says the notify handle is not configured", async () => {
+    const deps = makeDeps({ syncThrows: "divergent main" });
+
+    const outcome = await run(deps, { ...profile, autoMerge: true });
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // the comment is still attempted
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).not.toContain("@"); // no configured handle → no mention token at all
+    expect(outcome.failure).toContain("notify handle not configured");
   });
 
   it("--issue N override: an uncanaried outcome has no prUrl — the existing CLI failure path prints it and exits 1 (verified at the runOverrideIssue seam)", async () => {
@@ -811,6 +877,75 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(record.evidence).not.toContain("sandbox failed to run");
     expect(record.teardownFailure).toContain("git: branch -D refused — worktree busy");
     expect(formatSummary(aborted.summary)).toContain("teardown: git: branch -D refused — worktree busy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-8 (FR-001): preflight & verification teardown parity. The canary idiom
+// (WI-7 FR-003) is extended to the other two sandboxes: a close() that throws
+// AFTER the suite already decided is bookkeeping, never a verdict — the stale
+// abort reason, the fix run, and the PR'd outcome all stand, with the teardown
+// failure riding beside them.
+// ---------------------------------------------------------------------------
+
+describe("preflight & verification teardown parity (WI-8, FR-001)", () => {
+  const TEARDOWN = "docker: container rm failed — busy";
+
+  it("(a) green verification + throwing verification-sandbox close: the PR'd outcome stands and carries the teardown failure", async () => {
+    const deps = makeDeps({ sandboxCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.prUrl).toContain("/pull/");
+    expect(outcome.failure).toBeUndefined();
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(b) stale baseline + throwing preflight close: the abort reason is preserved and the teardown failure rides beside it", async () => {
+    const deps = makeDeps({ staleBaseline: true, preflightCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.failure).toContain("Aborted before the fix run");
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // the abort still gates spend
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(c) green baseline + throwing preflight close: the run continues and the PR'd outcome carries the teardown failure", async () => {
+    const deps = makeDeps({ preflightCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1); // teardown never kills the run
+    expect(outcome.prUrl).toContain("/pull/");
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(d) queue mode: a stale-baseline preflight whose close throws aborts the queue and the FAILED line names the teardown", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      staleBaselineFor: "gh-1",
+      preflightCloseThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput(), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(formatSummary(aborted.summary)).toContain(
+      "FAILED gh-1: Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run " +
+        "(recorded but not failing: tests/test_textops.py::TestSlugify::test_basic_phrase; failing but not recorded: none). " +
+        "Re-run onboarding.. (teardown: docker: preflight container rm failed — busy)",
+    );
   });
 });
 
@@ -1264,6 +1399,8 @@ interface QueueDepsConfig {
   closeThrowsFor?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
+  /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
+  preflightCloseThrowsFor?: string;
   /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1317,7 +1454,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (input.baseBranch === "main") {
         // baseline preflight
         const stale = config.staleBaseline === true || config.staleBaselineFor === active.id;
-        return track(issueSandbox(active, stale ? SUITE_AFTER_FIX : BASELINE_SUITE));
+        const handle = issueSandbox(active, stale ? SUITE_AFTER_FIX : BASELINE_SUITE);
+        // WI-8 FR-001: the preflight sandbox's close() can be made to refuse —
+        // mirrors the canaryCloseThrowsFor idiom above.
+        if (config.preflightCloseThrowsFor === active.id) {
+          return track({ ...handle, async close() { throw new Error("docker: preflight container rm failed — busy"); } });
+        }
+        return track(handle);
       }
       const fails = config.failReproFor === active.id;
       return track(issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0));
@@ -1666,6 +1809,65 @@ describe("runOverrideIssue (--issue N single-issue mode, WI-2 T4)", () => {
 
     expect(result.kind).toBe("run");
     expect(result.kind === "run" && result.outcome.prUrl).toBe("https://example/pr/fix/gh-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-8 (FR-002): the single-issue report is built purely — the teardown
+// failure recorded by FR-001 rides stderr as bookkeeping (never fatal, never
+// an exit-code change), on both the PR'd and the no-PR branch. The skipped-*
+// kinds carry no outcome, so no teardown line exists for them.
+// ---------------------------------------------------------------------------
+
+describe("formatSingleIssueResult (WI-8, FR-002)", () => {
+  const PR_URL = "https://example/pr/fix/gh-1";
+  const TEARDOWN = "docker: container rm failed — busy";
+
+  it("(i) a PR'd outcome with teardownFailure: the teardown line rides stderr, the PR line stays on stdout, exit 0", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: { branch: "fix/gh-1", prUrl: PR_URL, teardownFailure: TEARDOWN },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toContain(`sandbox teardown failed: ${TEARDOWN}`);
+    expect(report.stdout).toContain(`PR opened: ${PR_URL}`);
+    expect(report.exitCode).toBe(0);
+  });
+
+  it("(ii) a PR'd outcome WITHOUT teardownFailure: stderr empty, stdout byte-identical to the pre-WI-8 shape — no teardown line anywhere", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: { branch: "fix/gh-1", prUrl: PR_URL },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toEqual([]);
+    expect(report.stdout).toEqual([`PR opened: ${PR_URL}`]);
+    expect(report.stdout.join("\n")).not.toContain("sandbox teardown failed");
+    expect(report.stderr.join("\n")).not.toContain("sandbox teardown failed");
+    expect(report.exitCode).toBe(0);
+  });
+
+  it("(iii) a no-PR failure outcome with teardownFailure: stderr carries the failure line then the appended teardown line, exit 1", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: {
+        branch: "fix/gh-1",
+        failure: "REVERTED gh-1: canary red — test_zero_contract",
+        teardownFailure: TEARDOWN,
+      },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toEqual([
+      "Loop finished without a PR — REVERTED gh-1: canary red — test_zero_contract",
+      `sandbox teardown failed: ${TEARDOWN}`,
+    ]);
+    expect(report.exitCode).toBe(1);
   });
 });
 
