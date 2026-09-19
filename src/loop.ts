@@ -731,50 +731,58 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   });
   let prUrl: string | undefined;
   // WI-8 (FR-001): verification teardown parity. A close() throw in the
-  // finally below is caught, never propagated: on a `fail()`-returned path the
-  // fail outcome was already decided and is returned untouched (the field is
-  // simply not attached there); on the green path it rides the PR'd outcome.
+  // finally below is caught, never propagated: it rides whichever outcome the
+  // try decided — the fail outcome after the finally (WI-11 FR-002), or the
+  // PR'd outcome on the green path.
   let sandboxTeardown: string | undefined;
+  // WI-11 (FR-002): the three verification failure sites used to return from
+  // INSIDE the try, before the finally captured `sandboxTeardown` — a close()
+  // throw on those fail() paths was silently dropped. Each now stores its
+  // outcome and exits the try; the return happens after the finally, with the
+  // teardown reason attached.
+  let failOutcome: LoopOutcome | undefined;
   try {
     // Each sandbox is a fresh container: the agent's `pip install -e .` (or
     // equivalent) lived in ITS site-packages, not this one's. Without the
     // install, every test file errors at collection and reads as new failures.
     const install = await sandbox.exec(input.profile.installCmd);
     if (install.exitCode !== 0) {
-      return fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
-    }
-    const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
-    const repro = await sandbox.exec(reproCmd);
-    const suite = await sandbox.exec(input.profile.testCmd);
-    const parsed = parseSuiteOrReject(suite.stdout);
-    if (!parsed.ok) {
-      return fail(`Verification failed — ${parsed.reason}.`);
-    }
-    const verification = diffVerification({
-      baselineFailures: input.profile.baselineFailures,
-      postFixFailures: parsed.failures,
-      reproTestPassed: repro.exitCode === 0,
-    });
-    if (!verification.passed) {
-      const reason = verification.newFailures.length > 0
-        ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
-        : "reproduction test did not pass in the fresh sandbox";
-      return fail(`Verification failed — ${reason}.`, verification.newFailures);
-    }
+      failOutcome = await fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
+    } else {
+      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
+      const repro = await sandbox.exec(reproCmd);
+      const suite = await sandbox.exec(input.profile.testCmd);
+      const parsed = parseSuiteOrReject(suite.stdout);
+      if (!parsed.ok) {
+        failOutcome = await fail(`Verification failed — ${parsed.reason}.`);
+      } else {
+        const verification = diffVerification({
+          baselineFailures: input.profile.baselineFailures,
+          postFixFailures: parsed.failures,
+          reproTestPassed: repro.exitCode === 0,
+        });
+        if (!verification.passed) {
+          const reason = verification.newFailures.length > 0
+            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
+            : "reproduction test did not pass in the fresh sandbox";
+          failOutcome = await fail(`Verification failed — ${reason}.`, verification.newFailures);
+        } else {
+          const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
+          const body = buildPrBody(
+            input.issue,
+            redEvidence,
+            greenEvidence,
+            verification,
+            attachmentFailures,
+            input.profile.autoMerge === true,
+          );
+          assertNoSecrets([title, body], deps.env);
 
-    const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-    const body = buildPrBody(
-      input.issue,
-      redEvidence,
-      greenEvidence,
-      verification,
-      attachmentFailures,
-      input.profile.autoMerge === true,
-    );
-    assertNoSecrets([title, body], deps.env);
-
-    const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-    prUrl = pr.url;
+          const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
+          prUrl = pr.url;
+        }
+      }
+    }
   } finally {
     try {
       await sandbox.close();
@@ -785,11 +793,18 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
 
   // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
   // finally has closed it — merging (with --delete-branch) deletes the very
-  // branch that sandbox sits on. Every failed/gated path above returned inside
-  // the try; reaching here with prUrl set means verification green + PR open.
+  // branch that sandbox sits on. The failed paths returned just above; reaching
+  // here means verification green + PR open.
   // WI-8 (FR-001): whichever early sandbox teardown failed rides every PR'd
   // return below — the preflight wins if both did (it happened first).
   const earlyTeardown = preflightTeardown ?? sandboxTeardown;
+  if (failOutcome !== undefined) {
+    // WI-11 (FR-002): the fail()-path teardown failure rides the decided
+    // outcome instead of being dropped. The failure reason and failure-kind
+    // are untouched; when both early teardowns failed the preflight still
+    // wins, exactly as on the PR'd path.
+    return { ...failOutcome, ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}) };
+  }
   const prOutcome: LoopOutcome = {
     branch,
     prUrl,

@@ -987,6 +987,47 @@ describe("preflight & verification teardown parity (WI-8, FR-001)", () => {
         "Re-run onboarding.. (teardown: docker: preflight container rm failed — busy)",
     );
   });
+
+  it("(e2) WI-11 FR-002: verification rejected + throwing verification close — the FAILED line carries the failure plus a `(teardown: …)` suffix and the single-issue report emits the teardown stderr line", async () => {
+    const CLOSE = "docker: verification container rm failed — busy";
+
+    // Single-issue seam: the suite is green but the reproduction test fails
+    // (reproExit 1) → the verification fail() path, while close() throws.
+    const deps = makeDeps({
+      sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1),
+      sandboxCloseThrows: CLOSE,
+    });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toContain("Verification failed"); // the failure reason itself is unchanged
+    expect(outcome.teardownFailure).toContain(CLOSE); // WI-11 FR-002: no longer dropped on the fail() path
+
+    // Single-issue report: the teardown line rides stderr after the failure line.
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.exitCode).toBe(1);
+    expect(report.stderr).toContain(`sandbox teardown failed: ${CLOSE}`);
+
+    // Queue seam: the FAILED line ends with the teardown suffix.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      failReproFor: "gh-1",
+      sandboxCloseThrowsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput(), queueDeps);
+
+    expect(summary.failed).toHaveLength(1);
+    expect(summary.failed[0]![1]).toContain("Verification failed");
+    expect(summary.failed[0]![1].endsWith(` (teardown: ${CLOSE})`)).toBe(true);
+    expect(formatSummary(summary)).toContain(
+      `FAILED gh-1: Verification failed — reproduction test did not pass in the fresh sandbox. (teardown: ${CLOSE})`,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
