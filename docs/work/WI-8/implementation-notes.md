@@ -91,3 +91,48 @@ Docker/gh/pipeline-integration run; teardown not retried.
 - **Fixed point:** `dff96ff` (clean tree, T1 accepted).
 - **Intended candidate:** working tree vs `dff96ff`; commit message
   `feat(WI-8): single-issue report carries a recorded teardown failure line (FR-002)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `8b4ff3f` (commit `feat(WI-8): single-issue report carries a
+recorded teardown failure line (FR-002)`), base `dff96ff`. Changed paths:
+`src/loop.ts`, `src/loop.test.ts` (the only two permitted; the notes file in
+the package range is the controller's T2 preamble).
+
+**Leaf report:** one leaf session. Scaffold-first honored: stub wired into
+main() verified 103/103 green BEFORE the tests were added (stub changes
+nothing observable). Deviations: (1) test (ii) is structurally a no-change
+regression pin — it cannot fail against a stub that reproduces current output
+(plan's own "byte-identical" wording); the genuine REDs are (i) and (iii);
+(2) the plan's focused/full count arithmetic (106 focused / 214 full is what
+holds).
+
+**RED (leaf-observed, against the stub, 2 failed / 104 passed):** (i)
+`AssertionError: expected [] to include 'sandbox teardown failed: docker:
+cont…'`; (iii) `expected [ Array(1) ] to deeply equal [ …(2) ]` — stderr
+missing the appended teardown line. Both behavioral, as planned.
+
+**GREEN (leaf, re-run fresh by the controller at `8b4ff3f`):** focused
+`src/loop.test.ts` 106/106 exit 0; `npm run typecheck` exit 0; full `npm test`
+10 files / 214 tests (211+3) exit 0.
+
+**Reviews (fixed package base `dff96ff` → candidate `8b4ff3f`):**
+- Specification review: **PASS**, zero blocking. Verbatim-move proof (every
+  carried line byte-identical in content, order, conditionality), teardown
+  line strictly conditional on both branches, guard per-stderr-line in main(),
+  regression-pin justification for (ii) assessed sound, scope clean. Adjacent:
+  cross-stream ordering shifts (old code interleaved stderr/stdout; two-array
+  signature emits stdout then stderr) — never an ordered contract.
+- Code-quality review: **APPROVED**, zero critical/important. Placement/export
+  hygiene match `formatSummary` posture; no orphaned comments; no gratuitous
+  knobs. Minor: duplicated teardown template (n=2, below threshold); stale
+  wording in a verbatim-moved WI-6 comment ("this emission passes the guard" —
+  guarding moved to main, meaning survives). Adjacent: `formatSingleIssueResult`
+  naming (Result vs Outcome) — defensible.
+
+**Adjacent follow-ups (recorded, not fixed):** cross-stream emit ordering;
+stale WI-6 comment wording; naming tension. None blocking.
+
+**Evidence boundary / non-claims:** the builder is unit-proven; main()'s thin
+emit loop is typechecked + seam-verified (house precedent), not CLI-executed
+in tests. No queue-mode output change; exit-code semantics unchanged.

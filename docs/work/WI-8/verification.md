@@ -40,3 +40,36 @@ Evidence boundary:
 
 Reviews: specification PASS, code-quality APPROVED, both at the fixed package
 `8693da2` → `a30c4ac` (record in implementation-notes.md).
+
+## T2 — single-issue report carries the teardown line (FR-002)
+
+Claim: a single-issue-override run carrying a recorded `teardownFailure` names
+it in the terminal output (`sandbox teardown failed: <reason>` on stderr,
+guarded at the emission seam) on both the PR'd and no-PR branches; runs
+without one print nothing new (byte-stable); exit-code semantics unchanged.
+
+Exact candidate: `8b4ff3f` (base `dff96ff`), branch `worktree-wi-8`.
+
+| Check | Command | Result |
+|---|---|---|
+| Scaffold check (stub ≡ current output) | `npm test -- src/loop.test.ts` (pre-test) | 103/103, exit 0 — stub changes nothing observable |
+| Focused suite | `npm test -- src/loop.test.ts` | 1 file / 106 tests passed (103+3), exit 0 |
+| Typecheck | `npm run typecheck` (tsc --noEmit) | exit 0 |
+| Full suite | `npm test` | 10 files / 214 tests passed (211+3), exit 0 |
+
+RED evidence (leaf-observed against the stub): tests (i)/(iii) failed on the
+missing teardown line (`expected [] to include 'sandbox teardown failed: …'`;
+`expected [ Array(1) ] to deeply equal [ …(2) ]`); test (ii) is a documented
+no-change regression pin (cannot fail against the stub by design — the plan's
+own "byte-identical" wording). Verbatim lines in implementation-notes.md.
+
+Evidence boundary:
+- The exported builder is unit-proven at its seam; `main()`'s emit loop is
+  typechecked + seam-verified, not CLI-executed in tests (house precedent —
+  same non-claim class as WI-7's `main()` wiring).
+- Non-claim: no queue-mode output change; no exit-code change; cross-stream
+  (stdout/stderr) ordering differs from the old interleaved emission —
+  recorded adjacent, never an ordered contract.
+
+Reviews: specification PASS (verbatim-move proof), code-quality APPROVED, both
+at the fixed package `dff96ff` → `8b4ff3f` (record in implementation-notes.md).
