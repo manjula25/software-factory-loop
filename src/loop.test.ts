@@ -843,6 +843,42 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(outcome?.failure).toContain("UNCANARIED");
   });
 
+  it("(q2) WI-12 FR-001: uncanaried merge + throwing verification close — the early teardown reason rides the outcome, the FAILED suffix, and the report stderr line", async () => {
+    const CLOSE = "docker: verification container rm failed — busy";
+
+    // Single-issue seam: syncMain throws after the merge (uncanaried) while the
+    // verification sandbox's close() also threw — the early teardown reason must
+    // ride the uncanaried outcome, not be dropped by it.
+    const deps = makeDeps({ syncThrows: "divergent main", sandboxCloseThrows: CLOSE });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.uncanaried).toBeDefined();
+    expect(outcome.teardownFailure).toContain(CLOSE); // the early origin keeps its own field
+
+    // Single-issue report: the labeled stderr line, same as the other fail() paths.
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain(`sandbox teardown failed: ${CLOSE}`);
+
+    // Queue seam: the FAILED line keeps the ⚠️ UNCANARIED MERGE reason and ends
+    // with the teardown suffix.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      syncMainThrowsFor: "gh-1",
+      sandboxCloseThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true } }),
+      queueDeps,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // an uncanaried merge still halts the queue
+    const aborted = error as QueueAbortedError;
+    expect(aborted.summary.failed[0]![1]).toContain("UNCANARIED MERGE");
+    expect(aborted.summary.failed[0]![1].endsWith(` (teardown: ${CLOSE})`)).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // WI-7 (FR-003): canary teardown failures. close() or the canary-branch
   // delete can fail AFTER the suite already decided the verdict — teardown is

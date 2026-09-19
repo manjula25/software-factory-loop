@@ -961,6 +961,10 @@ async function runCanary(
       failure: `⚠️ UNCANARIED MERGE ${input.issue.id}: ${uncanariedDetail(uncanaried)}`,
       failureKind: "harness",
       ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+      // WI-12 (FR-001, d2): the EARLY origin's teardown reason rides the
+      // outcome too — the uncanaried verdict above stands untouched, but the
+      // verification sandbox's close() failure is not dropped by it.
+      ...(prOutcome.teardownFailure !== undefined ? { teardownFailure: prOutcome.teardownFailure } : {}),
       uncanaried,
     };
   }
