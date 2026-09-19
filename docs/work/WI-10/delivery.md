@@ -80,22 +80,27 @@ commits.
 
 ## Commit range
 
-`93ec308..7b0eb53` — 10 commits: 4 planning (carve-out+slices, spec
+`93ec308..4e31643` — 11 commits: 5 planning (carve-out+slices, spec
 draft, spec approval, plan, post-ponytail) + 4 evidence/verification +
 1 review + 1 delivery record.
 
 ## Requested external actions
 
-Pending owner decision: push `worktree-wi-10` to origin and open a PR to
-`main`. Merge stays human (constraint 1 — this repo never auto-merges
-itself).
+Authorized by the owner 2026-09-19 (AskUserQuestion: "Push branch + open
+PR"): push `worktree-wi-10` and open a PR to `main`. Merge stays human
+(constraint 1 — this repo never auto-merges itself).
 
 ## Executed external actions and observed results
 
-None yet (updated with observed results after any authorized action).
+- `git push -u origin worktree-wi-10` — new branch on origin, tracking
+  set up (observed in push output).
+- `gh pr create --base main --head worktree-wi-10 …` —
+  **PR #14** https://github.com/manjula25/software-factory-loop/pull/14
+- Read-back fresh: state **OPEN**, base `main` ← head `worktree-wi-10`,
+  11 commits — matches the intended range exactly.
 
 ## Pending actions
 
-- Owner authorization for push + PR (or instruction otherwise).
+- Human review + merge of PR #14 (owner).
 - Post-merge cleanup (worktree/branch removal, fast-forward local main) —
   only after the human merge, per WI-8/WI-9 precedent.
