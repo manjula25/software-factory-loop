@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft
+Approved (owner, 2026-09-19 — including both flagged design decisions: green
+baseline + preflight teardown failure proceeds; FR-002 terminal line only, no
+exit-code change)
 
 ## Source artifacts
 
