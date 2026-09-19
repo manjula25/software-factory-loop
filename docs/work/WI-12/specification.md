@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Approved (owner, 2026-09-19)
 
 ## Source artifacts
 
