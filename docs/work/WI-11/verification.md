@@ -8,8 +8,14 @@ local main):
 1. **FR-001:** a merged or reverted run's outcome carries teardown
    failures from both origins as distinct fields (`teardownFailure` =
    early, `canaryTeardownFailure` = canary); the queue MERGED line and
-   single-issue report name both when both fail; single-failure rendering
-   is byte-identical to pre-WI-11.
+   single-issue report name both when both fail. Single-failure rendering
+   is byte-identical to pre-WI-11 on the MERGED summary line and every
+   early-origin surface. One surface legitimately changed: a CANARY-only
+   teardown on a merged run now renders on the single-issue report as
+   `canary teardown failed: <reason>` (previously `sandbox teardown
+   failed: <reason>`) — origin-labeling per d1; no test pinned the old
+   line, and the four-axis review records it as ADJACENT finding A1
+   against FR-001's "output is unchanged" letter.
 2. **FR-002:** a verification failure (install-fail, unreadable suite, or
    verification-rejected) whose sandbox close also throws carries the
    teardown reason beside the failure — FAILED-line suffix + report stderr
