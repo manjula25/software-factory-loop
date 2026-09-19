@@ -10,6 +10,7 @@ Controller ledger (one row per task):
 |---|---|---|---|---|---|
 | T1 | small/low | 61b90e2 | 9b0fd4a | `plan-parse` | ACCEPTED — gates green (8/8 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 9b0fd4a) |
 | T2 | small/low | 2db81d1 | 9ad7654 | `plan-order` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at 9ad7654) |
+| T3 | small/low | 39eba70 | cca5e53 | `planner-wiring` | ACCEPTED — gates green (4/4 focused, 230/230 full, typecheck 0); spec PASS; quality APPROVED (both at cca5e53) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -55,3 +56,36 @@ Controller ledger (one row per task):
     later test-only pass.
   - A7: shared trailing-number tie fallback (`MAX_SAFE_INTEGER`, sort stability)
     inherited verbatim from `admitIssues` — not new to this diff.
+
+## T3 — Adapter + loop wiring: --triage retires
+
+- **Seam:** queue-runner seam (`runQueue`, `QueueLoopDeps`, argv validation) in
+  `src/loop.ts`; adapter exports in `src/sandcastle-adapter.ts`. **Budgets:** one
+  leaf session. **Evidence boundary:** harness-source.
+- **Candidate cca5e53** (base 39eba70). Controller gates re-run fresh: focused
+  `planner-wiring` 4/4; full 230/230 (delta −6: triage tests deleted with their
+  subject, planner tests added); typecheck 0.
+- **Spec review: PASS** (zero blocking). **Quality review: APPROVED** (zero
+  critical; one important = workflow.md still documents `--triage` — T9's scoped
+  work, reviewer agrees it rides the docs pass before delivery).
+- **Deviations accepted:** (1) `AdmitInput.triage` type inlined after `TriageValue`
+  deletion (compiler-forced, behavior untouched); (2) interim admission bridge —
+  runQueue pre-ranks via `orderFromPlan`, feeds `plan.priority` as `scores` into
+  `admitIssues` with empty files (verified comparator-identical; dissolves in T4);
+  (3) warning wording "triage unusable" → "plan unusable" (behavior verbatim);
+  (4) queue-level file-overlap test retired with the flag (dead — its only input
+  producer is gone; function-level pin remains until T4 deletes the surface).
+- **Adjacent findings ledger:**
+  - A8: task-number drift — code comments and the plan's own T3 section say
+    "T5 dissolves admitIssues" but T4 is what deletes it. Comments die with
+    `admitIssues` in T4; no standalone fix needed.
+  - A9: `src/onboard-profile.ts` line 5 uses retired `--triage` as its valueless-
+    flag example — should switch to a live flag (e.g. `--auto-merge`). Non-binding;
+    candidate for T9's docs pass.
+  - A10: stale "triage" wording in test scaffolding titles (`queue.test.ts`
+    admission describe, `loop.test.ts` cap/triage comment) — deleted with
+    `admitIssues` in T4 anyway.
+  - Spec adjacents: boundary-test rename was brief-permitted though the plan header
+    said "untouched" (brief supersedes); transient T3→T4 window with no same-file
+    serialization is planned and closed before delivery; makeQueueDeps' default
+    runPlan stub is no longer a no-op (future queue-test reviewers take note).
