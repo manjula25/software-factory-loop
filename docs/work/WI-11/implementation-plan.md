@@ -54,10 +54,16 @@ canary message (overwritten at `src/loop.ts:1018`) and no
 3. Reverted return (`src/loop.ts:1055-1075`): attach the early reason at
    outcome level (`...(prOutcome.teardownFailure !== undefined ? { teardownFailure: prOutcome.teardownFailure } : {})`)
    and keep `reverted.teardownFailure` as the canary reason.
-4. Queue MERGED tuple (`src/loop.ts:1300-1305`): grow to a 5th element
-   when the canary origin failed; `formatSummary` MERGED line
-   (`:1341-1346`) renders `; teardown: <early>; canary teardown: <canary>`
-   when both, single-origin case byte-identical to today.
+4. Queue MERGED tuple (`src/loop.ts:1300-1305`): keep the 4-slot tuple;
+   the 4th element becomes the pre-composed teardown suffix at push time —
+   `teardown: <early>` / `canary teardown: <canary>` when exactly one
+   origin failed (byte-identical to today's single-failure rendering, with
+   the canary-only case rendering `teardown: <canary>` exactly as now),
+   and `teardown: <early>; canary teardown: <canary>` when both.
+   `formatSummary`'s MERGED line (`:1341-1346`) interpolates the suffix
+   unchanged in shape. *(Ponytail 2026-09-19: replaces a 5-element tuple
+   growth with the pre-composed string — same observable output, tuple
+   shape untouched.)*
 5. Single-issue report (`src/loop.ts:1506-1521`): after the existing
    `sandbox teardown failed:` line, push
    `canary teardown failed: <reason>` when the canary origin failed.
