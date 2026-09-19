@@ -984,6 +984,46 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
         "canary teardown: docker: container rm failed — busy)",
     );
   });
+
+  it("(r) WI-12 FR-003 (characterization): red canary + throwing verification close — the reverted outcome carries the EARLY reason at outcome level, the canary home stays clean, the FAILED suffix names the early reason", async () => {
+    // Distinct from every other test's close literal so a failure here is
+    // attributable to this pin, not a shared fixture.
+    const VERIFY = "docker: verification container rm refused — device busy";
+
+    // Single-issue seam: red canary AND a throwing verification-sandbox close.
+    // WI-11's two-origin recording on the REVERTED path: the EARLY reason rides
+    // the outcome level, the canary teardown home (unused here — the canary
+    // close is clean) stays empty, and neither displaces the other.
+    const outcome = await run(
+      makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE), sandboxCloseThrows: VERIFY }),
+      optedInNotify,
+    );
+
+    expect(outcome.reverted).toBeDefined();
+    expect(outcome.teardownFailure).toContain(VERIFY); // the EARLY reason rides the outcome
+    expect(outcome.reverted?.teardownFailure).toBeUndefined(); // canary teardown clean — its home exists, unused
+
+    // Queue seam: same run shape keyed to gh-1 under the auto-merge profile —
+    // the queue halts, the FAILED line ends with the early-reason suffix, and
+    // the ⚠️ REVERTED evidence still names the canary suite failure.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+      sandboxCloseThrowsFor: "gh-1",
+      sandboxCloseThrowsMsg: VERIFY,
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // red halts the queue, teardown failure or not
+    const aborted = error as QueueAbortedError;
+    const failedLine = aborted.summary.failed[0]![1]!;
+    expect(failedLine.endsWith(` (teardown: ${VERIFY})`)).toBe(true);
+    expect(failedLine).toContain("REVERTED");
+    expect(failedLine).toContain("tests/test_contract.py::test_zero_contract"); // canary evidence, not displaced
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1550,6 +1590,8 @@ interface QueueDepsConfig {
   preflightCloseThrowsFor?: string;
   /** Verification-sandbox close() throws for this id — the early teardown origin on a merged run (WI-11 FR-001). */
   sandboxCloseThrowsFor?: string;
+  /** Message the verification close() throws with — defaults to the WI-11 literal (WI-12 FR-003: distinct literals keep failures attributable). */
+  sandboxCloseThrowsMsg?: string;
   /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1616,7 +1658,8 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       // WI-11 FR-001: same knob for the queue-mode verification sandbox — the
       // early teardown origin, distinct from the canary's own close knob.
       if (config.sandboxCloseThrowsFor === active.id) {
-        return track({ ...handle, async close() { throw new Error("docker: verification container rm failed — busy"); } });
+        const msg = config.sandboxCloseThrowsMsg ?? "docker: verification container rm failed — busy";
+        return track({ ...handle, async close() { throw new Error(msg); } });
       }
       return track(handle);
     }),
