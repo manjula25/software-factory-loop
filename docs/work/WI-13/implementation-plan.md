@@ -75,40 +75,41 @@ Commit: `feat(WI-13): planner pass wired, --triage retired with loud startup err
 
 ## Slice 2 — Wave runner, admission, cap semantics (FR-002..FR-006; decisions 1, 5–7, 9–12)
 
-### T4 — Admission rework: optional ceiling (src/queue.ts, src/queue.test.ts, src/loop.ts)
+### T4 — Admission rework: optional ceiling, admitIssues dissolved (src/queue.ts, src/queue.test.ts, src/loop.ts)
 
-RED: `admitIssues` still requires `cap`. Tests (tag `admission`): with no ceiling all
-ranked issues are admitted; with ceiling 2 of 5, two admitted and three carry reason
-`cap`; file-overlap deferral is gone (two same-file issues both admitted — edges own
-serialization now, FR-002).
+RED: `admitIssues` still requires `cap`. Tests (tag `admission`) move to the queue
+runner's seam: with no ceiling all ranked issues are attempted; with ceiling 2 of 5,
+two attempted and three carry reason `cap`; file-overlap deferral is gone (two
+same-file issues both attempted — edges own serialization now, FR-002).
 
-GREEN: `AdmitInput.cap` becomes optional (`cap?: number`); remove the overlap-deferral
-block and `NotAdmitted`'s overlap reason; `src/loop.ts` `parseCap` keeps validating
-passed values (integer ≥ 1) but `main()` reads `--max-issues` as optional
-(`cap: number | undefined` into `QueueRunInput`), and `runQueue` prints the surfaced
-plan line — `plan: attempted ≤ N | all unblocked` followed by one line per issue
-(attempt / blocked-by `<ids>`) — via `console.log` after admission, before any lane
-starts.
+GREEN (ponytail: `admitIssues` is inlined — its post-triage body is rank + slice):
+delete `admitIssues`, `AdmitInput`, `AdmitResult`, and their tests; the runner
+(shipped in T6, contract pinned here) ranks via `orderFromPlan`, slices at the
+ceiling when present, and emits `notAdmitted` records (`cap`, `blocked by <ids>`)
+inline. `src/loop.ts` `parseCap` keeps validating passed values (integer ≥ 1) but
+`main()` reads `--max-issues` as optional (`cap: number | undefined` into
+`QueueRunInput`), and `runQueue` prints the surfaced plan line —
+`plan: attempted ≤ N | all unblocked` followed by one line per issue (attempt /
+blocked-by `<ids>`) — via `console.log` after ranking, before any lane starts.
 
 Commit: `feat(WI-13): optional attempted-issue ceiling; plan surfaced before spend (FR-005)`
 
 ### T5 — Wave scheduling (src/queue.ts, src/queue.test.ts)
 
-RED: `scheduleWaves` absent. Tests (tag `waves`): given order [A,B,C] with edges
-B←A: non-opted mode yields waves [[A],[B,C-minus-blocked…]] — precisely: wave 1 = all
-issues with no unresolved blockers ([A]), and after A completes, B becomes runnable —
-expressed as `scheduleWaves(order, edges)` returning wave 1 plus a
-`unblockedAfter(completed: Set<string>)` helper (the runner calls it after each lane
-settles or each merge); opted-in semantics are the runner's re-plan (T6), not this
-function's. Also: all-blocked input yields the highest-priority single candidate
-(empty-edge override the planner already encodes — function tolerates edges pointing
-outside the run by ignoring them).
+RED: `unblockedAfter` absent. Tests (tag `waves`): given order [A,B,C] with edges
+B←A — the empty-`completed` call yields [A,C] (the initial wave), and
+`unblockedAfter(…, {A})` yields [B]; edges pointing outside the run are ignored;
+an all-blocked set (every remaining issue blocked by a remaining issue) yields
+`[]` (the runner's fallback — first in deterministic order — is T6's, per the
+planner's all-blocked rule).
 
-GREEN: `export function initialUnblocked(order: readonly NormalizedIssue[], edges: Readonly<Record<string, readonly string[]>>): NormalizedIssue[]`
-and `export function unblockedAfter(remaining, edges, completed: ReadonlySet<string>): NormalizedIssue[]`
-— both pure, both counting only edges whose blocker is itself in the run.
+GREEN (ponytail: one function, the ∅ case is just a call): `export function
+unblockedAfter(order: readonly NormalizedIssue[], edges:
+Readonly<Record<string, readonly string[]>>, completed: ReadonlySet<string>):
+NormalizedIssue[]` — pure, counting only edges whose blocker is itself in the run;
+the runner's initial wave is `unblockedAfter(order, edges, new Set())`.
 
-Commit: `feat(WI-13): wave scheduling — unblocked-set computation over dependency edges (FR-002, FR-003)`
+Commit: `feat(WI-13): wave scheduling — unblockedAfter over dependency edges (FR-002, FR-003)`
 
 ### T6 — runQueue becomes the wave runner (src/loop.ts, src/loop.test.ts)
 
@@ -124,17 +125,20 @@ then a second planner call runs and B is attempted (two `runPlan` calls total);
 admits one issue (sequential dial); (g) the plan line precedes the first
 `runSingleIssue` call in emitted order.
 
-GREEN: rewrite `runQueue`'s execution section: admission → plan line → loop { run
-the current unblocked set concurrently via `Promise.allSettled` over
-`runSingleIssue`; collect per-issue outcomes into the existing summary accumulators
-(reused verbatim: reverted/uncanaried pre-abort collection, merged tuples,
-mergeFailures, fixed/prUrls); after the wave, on opted-in profiles with ≥1 merge:
-re-plan (`runPlan` again, one call per merge wave) and `unblockedAfter`; on
-non-opted: `unblockedAfter` with completed = lanes that settled with a PR; a
-harness-level failure aborts immediately after its wave's collection; terminate when
-the attempted budget hits the ceiling or nothing is unblocked }. `attempted` counts
-lanes started; not-attempted blocked issues ride `notAdmitted` with reason
-`blocked by <ids>`.
+GREEN: rewrite `runQueue`'s execution section: ranking (`orderFromPlan`, inline
+ceiling slice per T4) → plan line → loop { run the current unblocked set —
+`unblockedAfter(order, edges, completed)` — concurrently via `Promise.allSettled`
+over `runSingleIssue`; collect per-issue outcomes into the existing summary
+accumulators (reused verbatim: reverted/uncanaried pre-abort collection, merged
+tuples, mergeFailures, fixed/prUrls); after the wave, on opted-in profiles with
+≥1 merge: re-plan (`runPlan` again, one call per merge wave) and `unblockedAfter`
+with completed = merged issues; on non-opted: `unblockedAfter` with completed =
+lanes that settled with a PR; an empty unblocked set with remaining issues falls
+back to the highest-priority remaining issue (the planner's all-blocked rule, made
+mechanical); a harness-level failure aborts immediately after its wave's
+collection; terminate when the attempted budget hits the ceiling or nothing
+remains }. `attempted` counts lanes started; not-attempted blocked issues ride
+`notAdmitted` with reason `blocked by <ids>`.
 
 Constraint: no new deps beyond renaming T3's — `runSingleIssue` and the summary
 accumulators are reused untouched.
@@ -176,10 +180,13 @@ GREEN: new `LoopDeps` members `branchConflictsWithMain(repoDir, branch): Promise
 the existing verification block of `runSingleIssue` (install → repro → suite →
 `diffVerification`) into a module-private helper `verifyInFreshSandbox(...)` reused
 by both the primary verification and the merger gate — same rules, one
-implementation. Insert, on `autoMerge === true` only, after `runPreMergeReview`
-approves and before `mergePr`: if `branchConflictsWithMain` → `runMerger` (prompt
-guarded by `assertNoSecrets`) → re-run `verifyInFreshSandbox` on the resolved branch
-→ red returns the `mergeFailure`-posture outcome, green proceeds to `mergePr`.
+implementation. Insert, on `autoMerge === true` only, BEFORE `runPreMergeReview`
+(spec FR-008's order — verification precedes the existing chain, and the review
+should judge the post-resolution diff, not one the merger is about to change): if
+`branchConflictsWithMain` → `runMerger` (prompt guarded by `assertNoSecrets`) →
+re-run `verifyInFreshSandbox` on the resolved branch → red returns the
+`mergeFailure`-posture outcome (PR open, loud note, no merge, no review spend),
+green proceeds to the existing chain (`runPreMergeReview` → `mergePr` → canary).
 
 Commit: `feat(WI-13): merger agent on opted-in repos, gated by fresh-sandbox verification (FR-007, FR-008)`
 
