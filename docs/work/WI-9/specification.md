@@ -2,8 +2,10 @@
 
 ## Status
 
-Draft (awaiting owner approval, including the two flagged design decisions
-under Clarifications)
+Approved (owner, 2026-09-19 — including both flagged design decisions: a
+naturally red canary is chain-success evidence; triage deferral is completed
+by a follow-up invocation, total 2 fix runs with one triage pass per
+multi-issue invocation)
 
 ## Source artifacts
 
@@ -141,7 +143,7 @@ under Clarifications)
 ## Clarifications
 
 Two design forks are decided here for approval (same posture as WI-8's two
-decisions):
+decisions). Both approved by the owner, 2026-09-19:
 
 (a) **A naturally red canary is chain-success evidence, not a work-item
 failure.** If a merge's canary fails on the real repo, the chain's
@@ -171,5 +173,5 @@ live deferral evidence.
 
 ## Approval
 
-Pending owner approval. On approval, status → Approved and `writing-plans`
-follows per the lifecycle.
+Approved by the owner, 2026-09-19 (both design decisions above included).
+Next per the lifecycle: `writing-plans`.
