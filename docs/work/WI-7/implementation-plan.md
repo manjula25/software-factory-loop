@@ -13,7 +13,7 @@ spec-then-quality reviews, controller commits with the exact message below.
 
 ---
 
-## Task 1 — acquisition-time remote refresh (FR-001, ticket 1)
+### Task 1: acquisition-time remote refresh (FR-001, ticket 1)
 
 Files: `src/queue.ts`, `src/queue.test.ts`, `src/loop.ts` (main() wiring only).
 
@@ -53,7 +53,7 @@ Files: `src/queue.ts`, `src/queue.test.ts`, `src/loop.ts` (main() wiring only).
 6. **Refactor-while-green:** none (ticket 5 owns consolidations).
 7. **Commit:** `feat(WI-7): acquisition-time remote refresh — fetch/prune before dedup (FR-001)`
 
-## Task 2 — uncanaried-merge failure surface (FR-002, ticket 2)
+### Task 2: uncanaried-merge failure surface (FR-002, ticket 2)
 
 Files: `src/loop.ts`, `src/loop.test.ts`.
 
@@ -88,7 +88,7 @@ Files: `src/loop.ts`, `src/loop.test.ts`.
    suite.
 5. **Commit:** `feat(WI-7): uncanaried-merge failure surface — comment, summary line, halt, no blind revert (FR-002)`
 
-## Task 3 — canary teardown failures (FR-003, ticket 3)
+### Task 3: canary teardown failures (FR-003, ticket 3)
 
 Files: `src/loop.ts`, `src/loop.test.ts`.
 
@@ -115,7 +115,7 @@ Files: `src/loop.ts`, `src/loop.test.ts`.
    suite.
 5. **Commit:** `fix(WI-7): canary teardown failures recorded, never decide/erase the verdict (FR-003)`
 
-## Task 4 — negative-path test pins (FR-004, ticket 4)
+### Task 4: negative-path test pins (FR-004, ticket 4)
 
 Files: `src/loop.test.ts` only.
 
@@ -138,7 +138,7 @@ Files: `src/loop.test.ts` only.
    suite (expect +3 tests).
 5. **Commit:** `test(WI-7): pin guard wiring — secret-diff blocks review, throw-path deletion, divergent-base refusal (FR-004)`
 
-## Task 5 — refactor-while-green, seam-frozen (FR-005, ticket 5)
+### Task 5: refactor-while-green, seam-frozen (FR-005, ticket 5)
 
 Files: `src/loop.ts`, `src/queue.ts`, `src/onboard-profile.ts`,
 `src/loop.test.ts`, `src/queue.test.ts` (helper extraction only).
