@@ -841,16 +841,20 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(outcome.merged).toEqual({ prUrl: PR_URL, mergeCommit: "m0ckmerge", canaryGreen: true });
     expect(deps.revertMerge).not.toHaveBeenCalled(); // a teardown failure never reverts a green merge
     expect(outcome.reverted).toBeUndefined();
-    expect(outcome.teardownFailure).toContain("docker: container rm failed — busy");
+    // WI-11 FR-001 (sanctioned pin update): canary-only failure now records in
+    // the canary-origin field — `teardownFailure` is the early origin's home.
+    expect(outcome.teardownFailure).toBeUndefined();
+    expect(outcome.canaryTeardownFailure).toContain("docker: container rm failed — busy");
 
-    // Queue seam: the failure rides the mergedPrs tuple into the summary line.
+    // Queue seam: the failure rides the mergedPrs tuple into the summary line
+    // (WI-11 FR-001: as the pre-composed `teardown:` suffix, label included).
     const { deps: queueDeps } = makeQueueDeps({ issues: [queueIssue(1)], canaryCloseThrowsFor: "gh-1" });
 
     const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps);
 
     expect(summary.reverted).toEqual([]); // the queue did not treat it as red
     expect(summary.mergedPrs).toEqual([
-      ["gh-1", "https://example/pr/fix/gh-1", "mdef456", "docker: container rm failed — busy"],
+      ["gh-1", "https://example/pr/fix/gh-1", "mdef456", "teardown: docker: container rm failed — busy"],
     ]);
     expect(formatSummary(summary)).toContain(
       "MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green; teardown: docker: container rm failed — busy)",
@@ -877,6 +881,42 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(record.evidence).not.toContain("sandbox failed to run");
     expect(record.teardownFailure).toContain("git: branch -D refused — worktree busy");
     expect(formatSummary(aborted.summary)).toContain("teardown: git: branch -D refused — worktree busy");
+  });
+
+  it("(p) WI-11 FR-001: green merge + throwing verification close AND throwing canary close — the merged outcome carries BOTH teardown reasons as origin-labeled facts and the MERGED line names both", async () => {
+    // Single-issue seam: distinct messages prove neither origin displaces the
+    // other (the pre-WI-11 code overwrote the early reason with the canary's).
+    const VERIFY = "docker: verification container rm failed — busy";
+    const CANARY = "docker: canary container rm failed — busy";
+    const deps = makeDeps({ sandboxCloseThrows: VERIFY, canaryCloseThrows: CANARY });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toEqual({ prUrl: PR_URL, mergeCommit: "m0ckmerge", canaryGreen: true });
+    expect(deps.revertMerge).not.toHaveBeenCalled(); // bookkeeping never flips a green canary
+    expect(outcome.teardownFailure).toContain(VERIFY); // the early origin keeps its own field
+    expect(outcome.canaryTeardownFailure).toContain(CANARY); // ...and the canary origin gets its own
+
+    // Single-issue report: each failed origin gets its own labeled stderr line.
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain(`sandbox teardown failed: ${VERIFY}`);
+    expect(report.stderr).toContain(`canary teardown failed: ${CANARY}`);
+
+    // Queue seam: the MERGED line names both, origin-labeled.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      sandboxCloseThrowsFor: "gh-1",
+      canaryCloseThrowsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps);
+
+    expect(summary.reverted).toEqual([]); // the queue did not treat either teardown failure as red
+    expect(formatSummary(summary)).toContain(
+      "MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 " +
+        "(canary: green; teardown: docker: verification container rm failed — busy; " +
+        "canary teardown: docker: container rm failed — busy)",
+    );
   });
 });
 
@@ -1401,6 +1441,8 @@ interface QueueDepsConfig {
   canaryCloseThrowsFor?: string;
   /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
   preflightCloseThrowsFor?: string;
+  /** Verification-sandbox close() throws for this id — the early teardown origin on a merged run (WI-11 FR-001). */
+  sandboxCloseThrowsFor?: string;
   /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1463,7 +1505,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         return track(handle);
       }
       const fails = config.failReproFor === active.id;
-      return track(issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0));
+      const handle = issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0);
+      // WI-11 FR-001: same knob for the queue-mode verification sandbox — the
+      // early teardown origin, distinct from the canary's own close knob.
+      if (config.sandboxCloseThrowsFor === active.id) {
+        return track({ ...handle, async close() { throw new Error("docker: verification container rm failed — busy"); } });
+      }
+      return track(handle);
     }),
     deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {
       // WI-7 FR-003: the canary branch delete can be made to refuse.

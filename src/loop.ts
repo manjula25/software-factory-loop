@@ -239,9 +239,22 @@ export interface LoopOutcome {
    * red one still reverts (the failure is named in the RevertedRecord), and a
    * preflight/verification teardown failure rides the stale abort, the fail()
    * outcome, or the PR'd outcome (and its FAILED/MERGED summary line) without
-   * changing any of them.
+   * changing any of them. WI-11 (FR-001, decision d1): on a MERGED run this
+   * field is the EARLY origin only (preflight/verification) — the canary's own
+   * teardown failure rides `canaryTeardownFailure` beside it; the two are
+   * distinct origin-labeled facts, never one joined string, and neither
+   * displaces the other.
    */
   readonly teardownFailure?: string;
+  /**
+   * WI-11 (FR-001, decision d1): set when the CANARY sandbox's teardown failed
+   * on a run that ended in a merge — the canary-origin sibling of
+   * `teardownFailure` (which stays the early origin there). Rendered beside it
+   * on every merged surface (queue MERGED line, single-issue report) with its
+   * own `canary teardown` label when both origins failed; on a canary-red run
+   * the canary reason keeps its WI-7 home in `reverted.teardownFailure`.
+   */
+  readonly canaryTeardownFailure?: string;
   /**
    * WI-6 (FR-009): set when the pre-merge review pass did NOT approve — no
    * merge happened, the PR stays open for a human, and the skip reason was
@@ -1015,7 +1028,12 @@ async function runCanary(
       merged: { prUrl, mergeCommit, canaryGreen: true },
       ...(closeFailure !== undefined ? { closeFailure } : {}),
       // FR-003: the merged outcome stands; the teardown failure rides beside it.
-      ...(teardownFailure !== undefined ? { teardownFailure } : {}),
+      // WI-11 (FR-001, decision d1): the canary's teardown failure gets its OWN
+      // origin-labeled field — spreading `prOutcome` keeps the early
+      // `teardownFailure` (preflight/verification) instead of the pre-WI-11
+      // overwrite, so a run where both sandboxes' teardowns failed carries both
+      // reasons, neither displacing the other.
+      ...(teardownFailure !== undefined ? { canaryTeardownFailure: teardownFailure } : {}),
     };
   }
 
@@ -1059,6 +1077,11 @@ async function runCanary(
       `${evidence}; ${revertNote}; ${commentNote}; notify: ${handle ?? "not configured"}`,
     failureKind: "harness",
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    // WI-11 (FR-001, decision d1): the EARLY origin's reason rides the outcome
+    // itself (the FAILED line's teardown suffix and the single-issue report read
+    // it), while the canary reason keeps its WI-7 home in
+    // `reverted.teardownFailure` below — two origins, two labeled homes.
+    ...(prOutcome.teardownFailure !== undefined ? { teardownFailure: prOutcome.teardownFailure } : {}),
     reverted: {
       id: input.issue.id,
       prUrl,
@@ -1119,7 +1142,11 @@ export interface QueueSummary {
    * WI-7 (FR-003) tuple growth: a 4th `teardownFailure` element is appended
    * when the canary's teardown failed on an otherwise-green merge — the MERGED
    * summary line names it inline, so it rides the existing tuple rather than
-   * a parallel summary field.
+   * a parallel summary field. WI-11 (FR-001, ponytail): that 4th element is
+   * the PRE-COMPOSED teardown suffix (label included) naming each failed
+   * origin — `teardown: <reason>` when exactly one origin failed (byte-identical
+   * to the WI-7 rendering), `teardown: <early>; canary teardown: <canary>`
+   * when both did. Still 4 slots, never 5.
    */
   readonly mergedPrs: [string, string, string, string?][];
   /**
@@ -1298,9 +1325,23 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // QueueSummary.mergeFailures for why a merge failure is not an issue
       // failure); both get their own loud summary surfaces.
       if (outcome.merged !== undefined) {
+        // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
+        // PRE-COMPOSED teardown suffix, built here at push time so the tuple
+        // stays 4 slots and formatSummary interpolates it unchanged in shape.
+        // Exactly one failed origin renders `teardown: <reason>` byte-identical
+        // to today's single-failure rendering (whichever origin it was); both
+        // failed renders both, origin-labeled.
+        const earlyTeardown = outcome.teardownFailure;
+        const canaryTeardown = outcome.canaryTeardownFailure;
+        const teardownSuffix =
+          earlyTeardown !== undefined && canaryTeardown !== undefined
+            ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
+            : earlyTeardown !== undefined || canaryTeardown !== undefined
+              ? `teardown: ${earlyTeardown ?? canaryTeardown}`
+              : undefined;
         mergedPrs.push(
-          outcome.teardownFailure !== undefined
-            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, outcome.teardownFailure]
+          teardownSuffix !== undefined
+            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
             : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
         );
       }
@@ -1340,9 +1381,11 @@ export function formatSummary(summary: QueueSummary): string {
     // never reaches this list), so the canary result is pinned here (T4
     // spec-review follow-up): a MERGED line without it hides the gate. WI-7
     // (FR-003): a 4th tuple element names a teardown failure on that merge.
+    // WI-11 (FR-001): that element is now the pre-composed suffix (label
+    // included), so it interpolates unchanged whether one origin failed or both.
     ...summary.mergedPrs.map(
-      ([id, url, mergeCommit, teardown]) =>
-        `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green${teardown !== undefined ? `; teardown: ${teardown}` : ""})`,
+      ([id, url, mergeCommit, teardownSuffix]) =>
+        `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green${teardownSuffix !== undefined ? `; ${teardownSuffix}` : ""})`,
     ),
     ...summary.reverted.map(
       (r) =>
@@ -1508,6 +1551,11 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     // the run stays green.
     if (result.outcome.teardownFailure !== undefined) {
       stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+    }
+    // WI-11 (FR-001): the canary origin gets its own labeled line when it too
+    // failed on a merged run — the line above already names the early origin.
+    if (result.outcome.canaryTeardownFailure !== undefined) {
+      stderr.push(`canary teardown failed: ${result.outcome.canaryTeardownFailure}`);
     }
     return { stdout, stderr, exitCode: 0 };
   }
