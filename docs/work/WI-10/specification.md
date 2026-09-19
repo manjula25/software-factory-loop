@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft (three design decisions flagged below for owner approval)
+Approved (owner, 2026-09-19 — including all three flagged design decisions:
+one re-drive on a mistimed push; single-issue override mode; stop at the
+revert)
 
 ## Source artifacts
 
@@ -133,29 +135,25 @@ Draft (three design decisions flagged below for owner approval)
 
 ## Clarifications
 
-Three design forks decided here for approval:
+Three design forks, all decided by the owner 2026-09-19:
 
-(a) **[NEEDS CLARIFICATION: timing-failure re-drive budget]** — if the
-conflicting-test push lands too early (the branch verification sees it →
-fix fails) or too late (the merge already canaried green → the window was
-missed), how many re-drives are allowed? **Recommended: one re-drive —
-total cap 1 probe + up to 2 fix runs; a second mistiming ends the work
-item with the honest failure recorded** (mirrors WI-9 decision (b)'s
-two-runs posture).
+(a) **One re-drive on a mistimed push; total cap 1 probe + up to 2 fix
+runs.** If the conflicting-test push lands too early (the branch
+verification sees it → fix fails) or too late (the merge already canaried
+green → the window was missed), the orchestrator re-prepares and re-runs
+once. A second mistiming ends the work item with the honest failure
+recorded — no third attempt (mirrors WI-9 decision (b)'s bounded-runs
+posture).
 
-(b) **[NEEDS CLARIFICATION: run mode]** — single-issue override
-(`--issue <n>`: deterministic, no triage spend) vs. queue mode with
-exactly one eligible issue. **Recommended: single-issue override** —
-queue mode and triage are already live-proven (WI-9); this work item
-needs a deterministic, minimal-spend window.
+(b) **Single-issue override mode (`--issue <n>`).** Deterministic target,
+no triage spend, minimal timing window. Queue mode and triage are already
+live-proven by WI-9 and add nothing here.
 
-(c) **[NEEDS CLARIFICATION: post-revert end-state]** — stop at the revert
-evidence (issue open, conflicting test retained on reverted `main`, no
-follow-up fix invocation), vs. re-driving a corrected fix afterwards.
-**Recommended: stop at the revert** — WI-9 Clarification (a) posture: the
-work item does not re-drive past a legitimately red canary; a follow-up
-invocation to actually fix the issue is future work, explicitly not
-claimed here.
+(c) **Stop at the revert.** The revert is the success evidence: the issue
+stays open, the conflicting test stays on reverted `main`, and no
+follow-up fix invocation runs in this work item — that is explicitly
+future work, not claimed here (WI-9 Clarification (a) posture: the work
+item does not re-drive past a legitimately red canary).
 
 ## Traceability matrix
 
@@ -168,4 +166,5 @@ claimed here.
 
 ## Approval
 
-Draft — awaiting owner decision on Clarifications (a)–(c).
+Approved by the owner, 2026-09-19 (all three design decisions above
+included). Next per the lifecycle: `writing-plans`.
