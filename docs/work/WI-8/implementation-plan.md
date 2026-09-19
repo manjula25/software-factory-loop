@@ -32,7 +32,7 @@ Files: `src/loop.ts`, `src/loop.test.ts`.
      here on a `fail()`-returned path is caught — the fail outcome is returned,
      not erased; the field is not attached on those paths: boundary note, below.)
    - `prOutcome` (line 744) gains
-     `...((preflightTeardown ?? sandboxTeardown) !== undefined ? { teardownFailure: preflightTeardown ?? sandboxTeardown } : {})`
+     `const earlyTeardown = preflightTeardown ?? sandboxTeardown; … ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {})`
      — it then flows into every `{...prOutcome, …}` return (reviewSkip, merged,
      and, via runCanary's own conditional spread, the merged line's existing
      4th tuple element, which only fires when the canary's own teardown did not
@@ -44,9 +44,10 @@ Files: `src/loop.ts`, `src/loop.test.ts`.
      to the reason — existing tests unaffected (no `teardownFailure` on their
      outcomes).
 2. **RED (`src/loop.test.ts`, new knobs in `makeDeps`:
-   `preflightCloseThrows`, `preflightDeleteBranchThrows` (keyed on
-   `loop/preflight-` branch), `sandboxCloseThrows` (wrap the 2nd sandbox's
-   close); `makeQueueDeps`: `preflightCloseThrowsFor`):**
+   `preflightCloseThrows`, `sandboxCloseThrows` (wrap the preflight and 2nd
+   sandbox handles' close respectively — the single production catch covers the
+   preflight branch-delete too, no separate knob); `makeQueueDeps`:
+   `preflightCloseThrowsFor`):**
    - (a) green verification + `sandboxCloseThrows` → assert the returned outcome
      has `prUrl` AND `teardownFailure` defined. Pre-fix: the raw throw
      propagates out of `runSingleIssue` — expected RED.
