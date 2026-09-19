@@ -72,3 +72,19 @@ existence) is what landed attempt 1.
   waited for unambiguous agent Bash activity (>2 KB of real tool calls).
   Recorded so the re-drive trigger in the plan is understood as refined,
   not silently changed (Task 2b never ran — attempt 1 landed).
+
+## Addendum (2026-09-19, WI-11 FR-004 — corrections by addition, nothing above rewritten)
+
+- **PR-body and comment evidence (review findings A1/M1):** the durable
+  GitHub-side evidence for the red-canary chain is (a) PR #27's body
+  (`https://github.com/manjula25/loop-fixtures-py/pull/27` — the RED/GREEN
+  sections quoting the repro test's failing-then-passing suite output),
+  and (b) the `@manjula25 ⚠️ REVERTED` comment on that PR
+  (issuecomment-5741234744). The "full chain observed" phrasing in
+  WI-10/verification.md is best read as: every link observed in the
+  artifacts cited here and in the run log — the MERGED/reverted summary
+  lines, revert commit `b113686`, the comment author read-back — with
+  PR #27's body completing the RED/GREEN link.
+- **Exit-code note (review finding A2):** the canonical record of the
+  tee-masked exit-code capture is the Deviations section above; later
+  records citing it should point here rather than restating it.

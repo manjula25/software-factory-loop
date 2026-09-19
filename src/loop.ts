@@ -239,9 +239,22 @@ export interface LoopOutcome {
    * red one still reverts (the failure is named in the RevertedRecord), and a
    * preflight/verification teardown failure rides the stale abort, the fail()
    * outcome, or the PR'd outcome (and its FAILED/MERGED summary line) without
-   * changing any of them.
+   * changing any of them. WI-11 (FR-001, decision d1): on a MERGED run this
+   * field is the EARLY origin only (preflight/verification) — the canary's own
+   * teardown failure rides `canaryTeardownFailure` beside it; the two are
+   * distinct origin-labeled facts, never one joined string, and neither
+   * displaces the other.
    */
   readonly teardownFailure?: string;
+  /**
+   * WI-11 (FR-001, decision d1): set when the CANARY sandbox's teardown failed
+   * on a run that ended in a merge — the canary-origin sibling of
+   * `teardownFailure` (which stays the early origin there). Rendered beside it
+   * on every merged surface (queue MERGED line, single-issue report) with its
+   * own `canary teardown` label when both origins failed; on a canary-red run
+   * the canary reason keeps its WI-7 home in `reverted.teardownFailure`.
+   */
+  readonly canaryTeardownFailure?: string;
   /**
    * WI-6 (FR-009): set when the pre-merge review pass did NOT approve — no
    * merge happened, the PR stays open for a human, and the skip reason was
@@ -718,50 +731,58 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   });
   let prUrl: string | undefined;
   // WI-8 (FR-001): verification teardown parity. A close() throw in the
-  // finally below is caught, never propagated: on a `fail()`-returned path the
-  // fail outcome was already decided and is returned untouched (the field is
-  // simply not attached there); on the green path it rides the PR'd outcome.
+  // finally below is caught, never propagated: it rides whichever outcome the
+  // try decided — the fail outcome after the finally (WI-11 FR-002), or the
+  // PR'd outcome on the green path.
   let sandboxTeardown: string | undefined;
+  // WI-11 (FR-002): the three verification failure sites used to return from
+  // INSIDE the try, before the finally captured `sandboxTeardown` — a close()
+  // throw on those fail() paths was silently dropped. Each now stores its
+  // outcome and exits the try; the return happens after the finally, with the
+  // teardown reason attached.
+  let failOutcome: LoopOutcome | undefined;
   try {
     // Each sandbox is a fresh container: the agent's `pip install -e .` (or
     // equivalent) lived in ITS site-packages, not this one's. Without the
     // install, every test file errors at collection and reads as new failures.
     const install = await sandbox.exec(input.profile.installCmd);
     if (install.exitCode !== 0) {
-      return fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
-    }
-    const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
-    const repro = await sandbox.exec(reproCmd);
-    const suite = await sandbox.exec(input.profile.testCmd);
-    const parsed = parseSuiteOrReject(suite.stdout);
-    if (!parsed.ok) {
-      return fail(`Verification failed — ${parsed.reason}.`);
-    }
-    const verification = diffVerification({
-      baselineFailures: input.profile.baselineFailures,
-      postFixFailures: parsed.failures,
-      reproTestPassed: repro.exitCode === 0,
-    });
-    if (!verification.passed) {
-      const reason = verification.newFailures.length > 0
-        ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
-        : "reproduction test did not pass in the fresh sandbox";
-      return fail(`Verification failed — ${reason}.`, verification.newFailures);
-    }
+      failOutcome = await fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
+    } else {
+      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
+      const repro = await sandbox.exec(reproCmd);
+      const suite = await sandbox.exec(input.profile.testCmd);
+      const parsed = parseSuiteOrReject(suite.stdout);
+      if (!parsed.ok) {
+        failOutcome = await fail(`Verification failed — ${parsed.reason}.`);
+      } else {
+        const verification = diffVerification({
+          baselineFailures: input.profile.baselineFailures,
+          postFixFailures: parsed.failures,
+          reproTestPassed: repro.exitCode === 0,
+        });
+        if (!verification.passed) {
+          const reason = verification.newFailures.length > 0
+            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
+            : "reproduction test did not pass in the fresh sandbox";
+          failOutcome = await fail(`Verification failed — ${reason}.`, verification.newFailures);
+        } else {
+          const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
+          const body = buildPrBody(
+            input.issue,
+            redEvidence,
+            greenEvidence,
+            verification,
+            attachmentFailures,
+            input.profile.autoMerge === true,
+          );
+          assertNoSecrets([title, body], deps.env);
 
-    const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-    const body = buildPrBody(
-      input.issue,
-      redEvidence,
-      greenEvidence,
-      verification,
-      attachmentFailures,
-      input.profile.autoMerge === true,
-    );
-    assertNoSecrets([title, body], deps.env);
-
-    const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-    prUrl = pr.url;
+          const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
+          prUrl = pr.url;
+        }
+      }
+    }
   } finally {
     try {
       await sandbox.close();
@@ -772,11 +793,18 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
 
   // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
   // finally has closed it — merging (with --delete-branch) deletes the very
-  // branch that sandbox sits on. Every failed/gated path above returned inside
-  // the try; reaching here with prUrl set means verification green + PR open.
+  // branch that sandbox sits on. The failed paths returned just above; reaching
+  // here means verification green + PR open.
   // WI-8 (FR-001): whichever early sandbox teardown failed rides every PR'd
   // return below — the preflight wins if both did (it happened first).
   const earlyTeardown = preflightTeardown ?? sandboxTeardown;
+  if (failOutcome !== undefined) {
+    // WI-11 (FR-002): the fail()-path teardown failure rides the decided
+    // outcome instead of being dropped. The failure reason and failure-kind
+    // are untouched; when both early teardowns failed the preflight still
+    // wins, exactly as on the PR'd path.
+    return { ...failOutcome, ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}) };
+  }
   const prOutcome: LoopOutcome = {
     branch,
     prUrl,
@@ -1015,7 +1043,12 @@ async function runCanary(
       merged: { prUrl, mergeCommit, canaryGreen: true },
       ...(closeFailure !== undefined ? { closeFailure } : {}),
       // FR-003: the merged outcome stands; the teardown failure rides beside it.
-      ...(teardownFailure !== undefined ? { teardownFailure } : {}),
+      // WI-11 (FR-001, decision d1): the canary's teardown failure gets its OWN
+      // origin-labeled field — spreading `prOutcome` keeps the early
+      // `teardownFailure` (preflight/verification) instead of the pre-WI-11
+      // overwrite, so a run where both sandboxes' teardowns failed carries both
+      // reasons, neither displacing the other.
+      ...(teardownFailure !== undefined ? { canaryTeardownFailure: teardownFailure } : {}),
     };
   }
 
@@ -1056,9 +1089,19 @@ async function runCanary(
     branch,
     failure:
       `⚠️ REVERTED ${input.issue.id}: merge ${mergeCommit} reverted after canary went red — ` +
-      `${evidence}; ${revertNote}; ${commentNote}; notify: ${handle ?? "not configured"}`,
+      // WI-11 (FR-003): absent handle renders the unified "notify handle not
+      // configured" vocabulary — no colon, matching the uncanaried-merge
+      // detail and the queue's REVERTED line; a present handle stays the bare
+      // `notify: <handle>` (live-observed in WI-10), no @.
+      `${evidence}; ${revertNote}; ${commentNote}; ` +
+      (handle !== undefined ? `notify: ${handle}` : "notify handle not configured"),
     failureKind: "harness",
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    // WI-11 (FR-001, decision d1): the EARLY origin's reason rides the outcome
+    // itself (the FAILED line's teardown suffix and the single-issue report read
+    // it), while the canary reason keeps its WI-7 home in
+    // `reverted.teardownFailure` below — two origins, two labeled homes.
+    ...(prOutcome.teardownFailure !== undefined ? { teardownFailure: prOutcome.teardownFailure } : {}),
     reverted: {
       id: input.issue.id,
       prUrl,
@@ -1119,7 +1162,11 @@ export interface QueueSummary {
    * WI-7 (FR-003) tuple growth: a 4th `teardownFailure` element is appended
    * when the canary's teardown failed on an otherwise-green merge — the MERGED
    * summary line names it inline, so it rides the existing tuple rather than
-   * a parallel summary field.
+   * a parallel summary field. WI-11 (FR-001, ponytail): that 4th element is
+   * the PRE-COMPOSED teardown suffix (label included) naming each failed
+   * origin — `teardown: <reason>` when exactly one origin failed (byte-identical
+   * to the WI-7 rendering), `teardown: <early>; canary teardown: <canary>`
+   * when both did. Still 4 slots, never 5.
    */
   readonly mergedPrs: [string, string, string, string?][];
   /**
@@ -1298,9 +1345,23 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // QueueSummary.mergeFailures for why a merge failure is not an issue
       // failure); both get their own loud summary surfaces.
       if (outcome.merged !== undefined) {
+        // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
+        // PRE-COMPOSED teardown suffix, built here at push time so the tuple
+        // stays 4 slots and formatSummary interpolates it unchanged in shape.
+        // Exactly one failed origin renders `teardown: <reason>` byte-identical
+        // to today's single-failure rendering (whichever origin it was); both
+        // failed renders both, origin-labeled.
+        const earlyTeardown = outcome.teardownFailure;
+        const canaryTeardown = outcome.canaryTeardownFailure;
+        const teardownSuffix =
+          earlyTeardown !== undefined && canaryTeardown !== undefined
+            ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
+            : earlyTeardown !== undefined || canaryTeardown !== undefined
+              ? `teardown: ${earlyTeardown ?? canaryTeardown}`
+              : undefined;
         mergedPrs.push(
-          outcome.teardownFailure !== undefined
-            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, outcome.teardownFailure]
+          teardownSuffix !== undefined
+            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
             : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
         );
       }
@@ -1340,9 +1401,11 @@ export function formatSummary(summary: QueueSummary): string {
     // never reaches this list), so the canary result is pinned here (T4
     // spec-review follow-up): a MERGED line without it hides the gate. WI-7
     // (FR-003): a 4th tuple element names a teardown failure on that merge.
+    // WI-11 (FR-001): that element is now the pre-composed suffix (label
+    // included), so it interpolates unchanged whether one origin failed or both.
     ...summary.mergedPrs.map(
-      ([id, url, mergeCommit, teardown]) =>
-        `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green${teardown !== undefined ? `; teardown: ${teardown}` : ""})`,
+      ([id, url, mergeCommit, teardownSuffix]) =>
+        `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green${teardownSuffix !== undefined ? `; ${teardownSuffix}` : ""})`,
     ),
     ...summary.reverted.map(
       (r) =>
@@ -1509,11 +1572,18 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     if (result.outcome.teardownFailure !== undefined) {
       stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
     }
+    // WI-11 (FR-001): the canary origin gets its own labeled line when it too
+    // failed on a merged run — the line above already names the early origin.
+    if (result.outcome.canaryTeardownFailure !== undefined) {
+      stderr.push(`canary teardown failed: ${result.outcome.canaryTeardownFailure}`);
+    }
     return { stdout, stderr, exitCode: 0 };
   }
   // Code-review finding (WI-6, standards axis): the failure text quotes
   // subprocess errors (the WI-6 revert path made this string class much
-  // richer), so this emission passes the guard like its siblings above.
+  // richer). WI-8 moved guarding to the CLI entry: this builder is pure and
+  // never sees the guard env — each stderr line below is guarded at the
+  // actual emission seam in `main`, like every other emitted string.
   const stderr = [`Loop finished without a PR — ${result.outcome.failure}`];
   // WI-8 (FR-002): the teardown line rides after the failure line — recorded,
   // never deciding the outcome that was already earned.
