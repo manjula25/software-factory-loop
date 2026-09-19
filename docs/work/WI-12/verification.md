@@ -3,7 +3,7 @@
 ## Candidate identity
 
 - Branch `worktree-wi-12`, candidate **`4b09d97`** ("docs(WI-12): T5 module row + implement close-out notes"), base `003fbd1` (post-ponytail plan, local main).
-- Ancestry: `git merge-base` is the base itself; 11 commits, tree clean at time of verification.
+- Ancestry: `git merge-base` is the base itself; 10 commits at the verified candidate (`4b09d97`; the 11th, `be0e016`, is this record itself), tree clean at time of verification.
 - Evidence boundary: **harness source only** (`src/`, vitest at the public seam). No pipeline/Docker run in this batch (spec non-claim).
 
 ## Exact claim

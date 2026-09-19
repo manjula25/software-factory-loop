@@ -107,8 +107,3 @@ Controller: top-level session. Plan: `docs/work/WI-12/implementation-plan.md`
 - All four FRs checkpoint-accepted with sequential spec → code-quality reviews
   (8 review passes, zero BLOCKING). Adjacent findings recorded above; none
   expanded into scope.
-
-
-
-
-
