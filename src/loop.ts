@@ -282,6 +282,8 @@ export interface UncanariedRecord {
   readonly syncFailure: string;
   /** `posted`, or `FAILED (<reason>)` when the best-effort comment threw. */
   readonly commentNote: string;
+  /** The profile's notifyHandle at uncanaried time; absent = not configured (D6). */
+  readonly notifyHandle?: string;
 }
 
 /**
@@ -289,7 +291,12 @@ export interface UncanariedRecord {
  * so the outcome's failure string and `formatSummary` agree byte-for-byte.
  */
 function uncanariedDetail(record: UncanariedRecord): string {
-  return `pr ${record.prUrl} merge ${record.mergeCommit} — main sync failed: ${record.syncFailure}; comment: ${record.commentNote}`;
+  return (
+    `pr ${record.prUrl} merge ${record.mergeCommit} — main sync failed: ${record.syncFailure}; comment: ${record.commentNote}` +
+    // WI-8 (FR-003): the detail's notify posture is unconditional — the same
+    // vocabulary as the reverted summary line.
+    (record.notifyHandle !== undefined ? `; notify: @${record.notifyHandle}` : "; notify handle not configured")
+  );
 }
 
 /**
@@ -898,9 +905,13 @@ async function runCanary(
     await deps.syncMain(input.repoDir);
   } catch (error) {
     const syncFailure = error instanceof Error ? error.message : String(error);
+    // WI-8 (FR-003): when a notify handle is configured, the comment pings it —
+    // an uncanaried merge is exactly the "needs a human" case the handle is for.
+    const handle = input.profile.notifyHandle;
     const commentBody =
       `⚠️ UNCANARIED: this merge (${mergeCommit}) was NOT canaried — syncing the local clone to the merged base failed: ${syncFailure}. ` +
-      `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.`;
+      `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.` +
+      (handle !== undefined ? ` cc @${handle} — this merge needs a human decision.` : "");
     let commentNote: string;
     try {
       assertNoSecrets([commentBody], deps.env);
@@ -915,6 +926,7 @@ async function runCanary(
       mergeCommit,
       syncFailure,
       commentNote,
+      ...(handle !== undefined ? { notifyHandle: handle } : {}),
     };
     return {
       branch,

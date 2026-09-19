@@ -713,6 +713,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
       mergeCommit: "m0ckmerge",
       syncFailure: "divergent main",
       commentNote: "posted",
+      notifyHandle: "manjula25", // WI-8 FR-003: optedInNotify carries a handle — the record mirrors it
     });
     expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
     const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
@@ -741,11 +742,11 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(aborted.summary.uncanariedMerges).toEqual([
       [
         "gh-1",
-        "pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+        "pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify handle not configured",
       ],
     ]);
     expect(formatSummary(aborted.summary)).toContain(
-      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify handle not configured",
     );
   });
 
@@ -764,6 +765,48 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     const aborted = error as QueueAbortedError;
     expect(aborted.summary.uncanariedMerges[0]![1]).toContain("comment: FAILED (gh: comment failed — network)");
     expect(formatSummary(aborted.summary)).toContain("UNCANARIED MERGE gh-1");
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-8 (FR-003): the uncanaried merge pings the notify handle. The comment
+  // body appends the cc ONLY when a handle is configured, and the shared
+  // detail (outcome failure string = queue summary line) always states the
+  // notify posture — `notify: @<handle>` or `notify handle not configured`,
+  // the reverted summary line's vocabulary.
+  // -------------------------------------------------------------------------
+
+  it("(n) WI-8 FR-003: uncanaried with notifyHandle configured — the comment pings @manjula25 (keeping the human-decision sentence) and both the outcome failure and the queue summary line carry notify: @manjula25", async () => {
+    const deps = makeDeps({ syncThrows: "divergent main" });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).toContain("cc @manjula25 — this merge needs a human decision.");
+    expect(body).toContain("A human must decide: revert the merge manually or re-verify after fixing the clone."); // the sentence stays verbatim
+    expect(outcome.uncanaried?.notifyHandle).toBe("manjula25");
+    expect(outcome.failure).toContain("notify: @manjula25");
+
+    // Queue-mode variant: the same detail rides the ⚠️ UNCANARIED MERGE line.
+    const { deps: queueDeps } = makeQueueDeps({ issues: [queueIssue(1)], syncMainThrowsFor: "gh-1" });
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true, notifyHandle: "manjula25" } }),
+      queueDeps,
+    ).catch((e: unknown) => e);
+    expect(formatSummary((error as QueueAbortedError).summary)).toContain(
+      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted; notify: @manjula25",
+    );
+  });
+
+  it("(o) WI-8 FR-003: uncanaried with notifyHandle ABSENT — the comment carries no @ at all and the detail says the notify handle is not configured", async () => {
+    const deps = makeDeps({ syncThrows: "divergent main" });
+
+    const outcome = await run(deps, { ...profile, autoMerge: true });
+
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // the comment is still attempted
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).not.toContain("@"); // no configured handle → no mention token at all
+    expect(outcome.failure).toContain("notify handle not configured");
   });
 
   it("--issue N override: an uncanaried outcome has no prUrl — the existing CLI failure path prints it and exits 1 (verified at the runOverrideIssue seam)", async () => {
