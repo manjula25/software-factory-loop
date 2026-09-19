@@ -10,6 +10,7 @@ import {
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
   PR_PAGE_LIMIT,
+  parsePlanOutput,
   parseReviewOutput,
   parseTriageOutput,
   prListArgs,
@@ -644,5 +645,86 @@ describe("buildTriagePrompt (WI-2 T3)", () => {
 
     expect(prompt).not.toContain("Traceback");
     expect(prompt).not.toContain("/home/someone/secret/path.py");
+  });
+});
+
+describe("plan-parse: parsePlanOutput (WI-13 T1, FR-001)", () => {
+  const ids = ["gh-1", "gh-2"];
+
+  it("parses a well-formed plan block with full id coverage", () => {
+    const stdout =
+      'prose\n<plan>{"priority":{"gh-1":5,"gh-2":3},"blockedBy":{"gh-2":["gh-1"]}}</plan>\nmore prose';
+    const parsed = parsePlanOutput(stdout, ids);
+
+    expect(parsed).toEqual({
+      priority: { "gh-1": 5, "gh-2": 3 },
+      blockedBy: { "gh-2": ["gh-1"] },
+    });
+  });
+
+  it("accepts an empty blockedBy — no issue blocks another", () => {
+    const parsed = parsePlanOutput(
+      '<plan>{"priority":{"gh-1":1,"gh-2":2},"blockedBy":{}}</plan>',
+      ids,
+    );
+    expect(parsed).toEqual({ priority: { "gh-1": 1, "gh-2": 2 }, blockedBy: {} });
+  });
+
+  it("rejects a missing block and bad JSON", () => {
+    expect(parsePlanOutput("no tags at all", ids)).toBeUndefined();
+    expect(parsePlanOutput("<plan>not json</plan>", ids)).toBeUndefined();
+  });
+
+  it("rejects Zod-invalid bodies", () => {
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":9,"gh-2":1},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // 9 out of the 1-5 range
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":3.5,"gh-2":1},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // non-integer
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-2":1},"blockedBy":{"gh-1":"gh-2"}}</plan>', ids),
+    ).toBeUndefined(); // blockedBy value not an array
+  });
+
+  it("rejects an id coverage gap — every queued id must appear in priority", () => {
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":3},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // gh-2 missing from priority
+  });
+
+  it("rejects unknown-id edges — a blocker the queue never held", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined(); // gh-9 not in ids
+  });
+
+  it("rejects self-edges — an issue cannot block itself", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-1":["gh-1"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects any cycle among the edges, direct or indirect", () => {
+    // direct: gh-1 -> gh-2 -> gh-1
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-1":["gh-2"],"gh-2":["gh-1"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+    // indirect: gh-1 -> gh-2 -> gh-3 -> gh-1
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3,"gh-3":3},"blockedBy":{"gh-1":["gh-2"],"gh-2":["gh-3"],"gh-3":["gh-1"]}}</plan>',
+        ["gh-1", "gh-2", "gh-3"],
+      ),
+    ).toBeUndefined();
   });
 });

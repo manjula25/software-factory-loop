@@ -289,6 +289,93 @@ export function parseTriageOutput(
   return covers ? parsed.data : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Plan output (WI-13 FR-001): one planning pass over the whole queue —
+// priorities plus a dependency graph the queue runner walks in parallel.
+// ---------------------------------------------------------------------------
+
+/** Zod-validated plan output — same `Output.object` pattern as triage above. */
+export interface PlanValue {
+  readonly priority: Readonly<Record<string, number>>;
+  readonly blockedBy: Readonly<Record<string, readonly string[]>>;
+}
+
+const PlanOutput = z.object({
+  priority: z.record(z.string(), z.number().int().min(1).max(5)),
+  blockedBy: z.record(z.string(), z.array(z.string())),
+});
+
+/**
+ * Whether the blockedBy edges form any loop (WI-13 FR-001). A cyclic plan can
+ * never be scheduled — some issue waits forever — so it is unusable outright.
+ * Simple DFS walk from every node over edges restricted to known ids.
+ */
+function planHasCycle(blockedBy: Readonly<Record<string, readonly string[]>>): boolean {
+  const VISITING = 1;
+  const DONE = 2;
+  const state = new Map<string, number>();
+
+  function walk(id: string): boolean {
+    const s = state.get(id);
+    if (s === VISITING) {
+      return true; // back-edge: a loop
+    }
+    if (s === DONE) {
+      return false;
+    }
+    state.set(id, VISITING);
+    for (const blocker of blockedBy[id] ?? []) {
+      if (walk(blocker)) {
+        return true;
+      }
+    }
+    state.set(id, DONE);
+    return false;
+  }
+
+  return Object.keys(blockedBy).some(walk);
+}
+
+/**
+ * Extract and validate the `<plan>…</plan>` block (WI-13 FR-001). Returns the
+ * parsed value only when Zod validation passes AND every queued id appears in
+ * `priority`, every blockedBy edge names a queued id (never the issue itself),
+ * and the edges are acyclic; anything else is unusable (the caller takes the
+ * degraded path, same contract as `parseTriageOutput`).
+ */
+export function parsePlanOutput(
+  stdout: string,
+  ids: readonly string[],
+): PlanValue | undefined {
+  const match = stdout.match(/<plan>([\s\S]*?)<\/plan>/);
+  if (!match) {
+    return undefined;
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(match[1] ?? "");
+  } catch {
+    return undefined;
+  }
+  const parsed = PlanOutput.safeParse(json);
+  if (!parsed.success) {
+    return undefined;
+  }
+  const covers = ids.every((id) => parsed.data.priority[id] !== undefined);
+  if (!covers) {
+    return undefined;
+  }
+  const known = new Set(ids);
+  for (const [id, blockers] of Object.entries(parsed.data.blockedBy)) {
+    // An edge to an id the queue never held, or to itself, makes the plan
+    // unusable: the runner could never satisfy it.
+    if (!known.has(id) || blockers.some((b) => b === id || !known.has(b))) {
+      return undefined;
+    }
+  }
+  return planHasCycle(parsed.data.blockedBy) ? undefined : parsed.data;
+}
+
 /**
  * WI-6 T6 (FR-009): the pre-merge review pass's three verdicts. `approve` is
  * the only verdict that lets a merge proceed; `wrong` (wrong root cause /
