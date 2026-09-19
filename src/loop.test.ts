@@ -610,7 +610,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
   });
 
-  it("(f2) canary red with notifyHandle ABSENT: the ⚠️ REVERTED failure line says `notify handle not configured` (WI-11 FR-003; present-handle contrast pinned bare)", async () => {
+  it("(f2) canary red with notifyHandle ABSENT: the ⚠️ REVERTED failure line says `notify handle not configured` (WI-11 FR-003; present-handle contrast arm superseded to @ by WI-12 FR-002)", async () => {
     // Absent handle: the unified vocabulary, matching the uncanaried-merge
     // detail and the queue's REVERTED line — "handle", no colon.
     const absent = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), {
@@ -622,11 +622,22 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(absent.failure).toContain("notify handle not configured");
     expect(absent.failure).not.toContain("notify: not configured"); // the pre-WI-11 rendering
 
-    // Contrast, same seam: handle configured → the bare handle, no @ (the
-    // WI-10 live observation, `notify: manjula25`), pinned unchanged by FR-003.
+    // Contrast, same seam: handle configured → `notify: @<handle>`. The bare
+    // form (the WI-10 live observation, `notify: manjula25`) was pinned by
+    // WI-11 FR-003; WI-12 FR-002 supersedes it, unifying on @ — see (f3).
     const present = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), optedInNotify);
 
-    expect(present.failure).toContain("notify: manjula25");
+    expect(present.failure).toContain("notify: @manjula25");
+  });
+
+  it("(f3) WI-12 FR-002: canary red with notifyHandle configured — the ⚠️ REVERTED failure line renders notify: @<handle>, unified with the uncanaried detail and the queue REVERTED line", async () => {
+    const present = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), optedInNotify);
+
+    expect(present.failure).toContain("notify: @manjula25");
+    // Precise bare-vs-@ distinction: the text right after the "notify: "
+    // marker must start with @ (substring contains() alone cannot tell
+    // `notify: manjula25` from `notify: @manjula25`'s inner "manjula25").
+    expect(present.failure!.split("notify: ")[1]?.startsWith("@")).toBe(true);
   });
 
   it("(f) canary install failure → red path: reverted, harness-level, with the install failure named (D2)", async () => {
@@ -843,6 +854,42 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(outcome?.failure).toContain("UNCANARIED");
   });
 
+  it("(q2) WI-12 FR-001: uncanaried merge + throwing verification close — the early teardown reason rides the outcome, the FAILED suffix, and the report stderr line", async () => {
+    const CLOSE = "docker: verification container rm failed — busy";
+
+    // Single-issue seam: syncMain throws after the merge (uncanaried) while the
+    // verification sandbox's close() also threw — the early teardown reason must
+    // ride the uncanaried outcome, not be dropped by it.
+    const deps = makeDeps({ syncThrows: "divergent main", sandboxCloseThrows: CLOSE });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.uncanaried).toBeDefined();
+    expect(outcome.teardownFailure).toContain(CLOSE); // the early origin keeps its own field
+
+    // Single-issue report: the labeled stderr line, same as the other fail() paths.
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain(`sandbox teardown failed: ${CLOSE}`);
+
+    // Queue seam: the FAILED line keeps the ⚠️ UNCANARIED MERGE reason and ends
+    // with the teardown suffix.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      syncMainThrowsFor: "gh-1",
+      sandboxCloseThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, autoMerge: true } }),
+      queueDeps,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // an uncanaried merge still halts the queue
+    const aborted = error as QueueAbortedError;
+    expect(aborted.summary.failed[0]![1]).toContain("UNCANARIED MERGE");
+    expect(aborted.summary.failed[0]![1].endsWith(` (teardown: ${CLOSE})`)).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // WI-7 (FR-003): canary teardown failures. close() or the canary-branch
   // delete can fail AFTER the suite already decided the verdict — teardown is
@@ -936,6 +983,46 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
         "(canary: green; teardown: docker: verification container rm failed — busy; " +
         "canary teardown: docker: container rm failed — busy)",
     );
+  });
+
+  it("(r) WI-12 FR-003 (characterization): red canary + throwing verification close — the reverted outcome carries the EARLY reason at outcome level, the canary home stays clean, the FAILED suffix names the early reason", async () => {
+    // Distinct from every other test's close literal so a failure here is
+    // attributable to this pin, not a shared fixture.
+    const VERIFY = "docker: verification container rm refused — device busy";
+
+    // Single-issue seam: red canary AND a throwing verification-sandbox close.
+    // WI-11's two-origin recording on the REVERTED path: the EARLY reason rides
+    // the outcome level, the canary teardown home (unused here — the canary
+    // close is clean) stays empty, and neither displaces the other.
+    const outcome = await run(
+      makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE), sandboxCloseThrows: VERIFY }),
+      optedInNotify,
+    );
+
+    expect(outcome.reverted).toBeDefined();
+    expect(outcome.teardownFailure).toContain(VERIFY); // the EARLY reason rides the outcome
+    expect(outcome.reverted?.teardownFailure).toBeUndefined(); // canary teardown clean — its home exists, unused
+
+    // Queue seam: same run shape keyed to gh-1 under the auto-merge profile —
+    // the queue halts, the FAILED line ends with the early-reason suffix, and
+    // the ⚠️ REVERTED evidence still names the canary suite failure.
+    const { deps: queueDeps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+      sandboxCloseThrowsFor: "gh-1",
+      sandboxCloseThrowsMsg: VERIFY,
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // red halts the queue, teardown failure or not
+    const aborted = error as QueueAbortedError;
+    const failedLine = aborted.summary.failed[0]![1]!;
+    expect(failedLine.endsWith(` (teardown: ${VERIFY})`)).toBe(true);
+    expect(failedLine).toContain("REVERTED");
+    expect(failedLine).toContain("tests/test_contract.py::test_zero_contract"); // canary evidence, not displaced
   });
 });
 
@@ -1046,6 +1133,35 @@ describe("preflight & verification teardown parity (WI-8, FR-001)", () => {
     expect(formatSummary(summary)).toContain(
       `FAILED gh-1: Verification failed — reproduction test did not pass in the fresh sandbox. (teardown: ${CLOSE})`,
     );
+  });
+
+  it("(e3) WI-12 FR-004 (characterization): verification rejected with BOTH preflight and verification closes throwing — the preflight reason wins on the fail() path", async () => {
+    // Distinct reasons so precedence is provable by content, not by call order.
+    const PRE = "docker: preflight container rm refused — image busy";
+    const VERIFY = "docker: verification container rm refused — device busy";
+
+    // Same rejected-verification construction as (e2): the suite is green but
+    // the reproduction test fails (reproExit 1) → the verification fail()
+    // path — now with BOTH sandbox closes throwing on top.
+    const deps = makeDeps({
+      preflightCloseThrows: PRE,
+      sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1),
+      sandboxCloseThrows: VERIFY,
+    });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toContain("Verification failed"); // the verdict is unchanged — teardown bookkeeping never decides
+    expect(outcome.teardownFailure).toContain(PRE); // preflight wins — it happened first
+    expect(outcome.teardownFailure).not.toContain(VERIFY); // the verification-close reason did not displace it
+
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.exitCode).toBe(1);
+    expect(report.stderr).toContain(`sandbox teardown failed: ${PRE}`);
   });
 });
 
@@ -1503,6 +1619,8 @@ interface QueueDepsConfig {
   preflightCloseThrowsFor?: string;
   /** Verification-sandbox close() throws for this id — the early teardown origin on a merged run (WI-11 FR-001). */
   sandboxCloseThrowsFor?: string;
+  /** Message the verification close() throws with — defaults to the WI-11 literal (WI-12 FR-003: distinct literals keep failures attributable). */
+  sandboxCloseThrowsMsg?: string;
   /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1569,7 +1687,8 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       // WI-11 FR-001: same knob for the queue-mode verification sandbox — the
       // early teardown origin, distinct from the canary's own close knob.
       if (config.sandboxCloseThrowsFor === active.id) {
-        return track({ ...handle, async close() { throw new Error("docker: verification container rm failed — busy"); } });
+        const msg = config.sandboxCloseThrowsMsg ?? "docker: verification container rm failed — busy";
+        return track({ ...handle, async close() { throw new Error(msg); } });
       }
       return track(handle);
     }),
