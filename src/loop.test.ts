@@ -152,6 +152,8 @@ interface DepOverrides {
   reviewStdout?: string;
   /** The review run itself throws (API down / budget refusal). */
   reviewThrows?: string;
+  /** The diff `fixDiff` returns — override to inject a secret-bearing diff (WI-7 FR-004 pin). */
+  reviewDiff?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -217,7 +219,7 @@ function makeDeps(overrides: DepOverrides = {}) {
       }
     }),
     // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
-    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
+    fixDiff: vi.fn(async (_repoDir: string, _branch: string) => overrides.reviewDiff ?? "diff-under-review"),
     runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
       if (overrides.reviewThrows !== undefined) {
         throw new Error(overrides.reviewThrows);
@@ -994,6 +996,39 @@ describe("pre-merge review pass (WI-6 T6, FR-009)", () => {
     expect(outcome.reviewSkip).toContain("503 unavailable");
   });
 
+  it("(WI-7 FR-004 pin) a diff carrying an env value NEVER reaches the reviewer: runReview is not called, the PR stays open with the review-skip shape", async () => {
+    // Synthetic fixture token — nothing from a real .env (env values are never
+    // echoed). The guard env is deps.env, exactly what the loop hands
+    // assertNoSecrets before the third-party review call.
+    const SYNTHETIC_TOKEN = "synthetic-token-abcdef"; // >= the guard's min length
+    const deps = makeDeps({
+      env: { CLI_PROXY_API_TOKEN: SYNTHETIC_TOKEN },
+      reviewDiff: `+ API_TOKEN = "${SYNTHETIC_TOKEN}"`,
+    });
+    const outcome = await run(deps);
+
+    expect(deps.runReview).not.toHaveBeenCalled(); // blocked BEFORE the call, not after
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const body = (deps.commentOnPr.mock.calls[0]![0] as { body: string }).body;
+    expect(body).toContain("CLI_PROXY_API_TOKEN"); // names the KEY...
+    expect(body).not.toContain(SYNTHETIC_TOKEN); // ...never the value
+    expect(outcome.prUrl).toBe(PR_URL); // the PR is the deliverable — it stays open
+    expect(outcome.failure).toBeUndefined(); // a blocked review is never an issue failure
+    expect(outcome.reviewSkip).toContain("CLI_PROXY_API_TOKEN");
+    expect(outcome.reviewSkip).not.toContain(SYNTHETIC_TOKEN);
+  });
+
+  it("(WI-7 FR-004 pin) a thrown review run still deletes the throwaway loop/review branch — a failed pass never leaks it", async () => {
+    const deps = makeDeps({ reviewThrows: "provider: 503 unavailable" });
+    const outcome = await run(deps);
+
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", REVIEW_BRANCH);
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.reviewSkip).toContain("503 unavailable");
+  });
+
   it("opted-out repo: the reviewer is never invoked — no review spend, even on a would-be-wrong verdict (FR-009)", async () => {
     const deps = makeDeps({ reviewVerdict: "wrong" });
     const outcome = await run(deps, profile); // no autoMerge
@@ -1089,6 +1124,35 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
         git(target, "add", "b.txt");
         git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local");
         expect(() => syncMainToOrigin(target)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("(WI-7 FR-004 pin) divergent main NOT checked out: the fetch-ref form refuses the non-fast-forward update and throws, leaving local main untouched", () => {
+    // BOUNDARY-PIN: this asserts stock git behavior — `git fetch origin
+    // main:main` refuses a non-fast-forward ref update. The wiring under test
+    // is the one-line choice of the fetch-ref form for a non-checked-out
+    // main; making this test RED would require mutating git itself, not our
+    // code, so the mutation-check discipline of the FR-004 wired pins does
+    // not apply here.
+    return makeRepoPair().then(({ root, upstream, target }) => {
+      try {
+        // origin/main moves ahead
+        writeFileSync(join(upstream, "a.txt"), "two\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        // local main gains its own commit — main is now diverged from origin/main
+        writeFileSync(join(target, "b.txt"), "local\n");
+        git(target, "add", "b.txt");
+        git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local");
+        const localMain = git(target, "rev-parse", "main");
+        // then leave main — the loop's fix/canary branches sit elsewhere
+        git(target, "checkout", "-q", "-b", "fix/other");
+        expect(() => syncMainToOrigin(target)).toThrow();
+        expect(git(target, "rev-parse", "main")).toBe(localMain); // never clobbered
+        expect(git(target, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("fix/other");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
