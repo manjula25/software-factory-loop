@@ -156,3 +156,57 @@ in tests. No queue-mode output change; exit-code semantics unchanged.
 - **Fixed point:** `eb54918` (clean tree, T2 accepted).
 - **Intended candidate:** working tree vs `eb54918`; commit message
   `feat(WI-8): uncanaried merge pings the configured notify handle (FR-003)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `e845f89` (commit `feat(WI-8): uncanaried merge pings the
+configured notify handle (FR-003)`), base `eb54918`. Changed paths:
+`src/loop.ts`, `src/loop.test.ts` (the only two permitted; the notes file in
+the package range is the controller's T3 preamble commit `2b43575`).
+
+**Leaf report:** one leaf session; no deviations of substance. Judgment calls:
+(a) new tests lettered (n)/(o) — (i)/(ii) taken, and (l)/(m) already used by
+the WI-7 FR-003 teardown tests in the same describe; (b) the plan's
+"single-issue outcome pins" resolved to test (i)'s record-level `toEqual` pin
+(no single-issue exact failure-string pin of the detail existed). The
+pin-update warning fired as predicted: existing pins DID change on the
+no-handle posture and were updated in the same commit, as sanctioned.
+
+**RED (leaf-observed, pre-fix, 4 failed / 104 passed, 108 total):** (n)
+comment body lacked `cc @manjula25 — this merge needs a human decision.`;
+(o) detail lacked `notify handle not configured`; updated pin test (i) —
+record missing `notifyHandle: "manjula25"`; updated pin test (j) —
+`uncanariedMerges` detail missing the `; notify handle not configured`
+suffix. All behavioral. In (j) the `uncanariedMerges` toEqual fails first,
+so its `formatSummary` exact pin never executed pre-fix (both updated in the
+same edit; both pass post-fix). Test (k) untouched (partial matches,
+unaffected).
+
+**GREEN (leaf, re-run fresh by the controller at `e845f89`):** focused
+`src/loop.test.ts` 108/108 exit 0; `npm run typecheck` exit 0; full `npm test`
+10 files / 216 tests (214+2) exit 0.
+
+**Reviews (fixed package base `eb54918` → candidate `e845f89`):**
+- Specification review: **PASS**, zero blocking. Verified all FR-003
+  behaviors (conditional cc, unconditional detail posture in reverted-path
+  vocabulary, best-effort comment + halt unchanged, full body guarded by
+  `assertNoSecrets` including the appended cc), byte-identical
+  human-decision sentence, no scope creep, genuine behavioral RED,
+  changed-path accounting complete.
+- Code-quality review: **APPROVED**, zero critical/important. House idioms
+  matched (mirrored `RevertedRecord.notifyHandle` doc style, conditional
+  field spread, no new knobs, guarded emission). MINOR: the two (j) pin
+  updates lack an inline explanatory comment (block comment covers it —
+  taste). Adjacent (pre-existing): the reverted failure string says
+  `notify: not configured` while its summary line says `notify handle not
+  configured` — the new uncanaried code does NOT replicate this mismatch;
+  small follow-up candidate.
+
+**Adjacent follow-ups (recorded, not fixed):** reverted-surface
+`notify: not configured` vs `notify handle not configured` vocabulary
+mismatch (pre-existing); (j) pin-update inline comments (taste).
+
+**Evidence boundary / non-claims:** vitest public-seam + tsc only; the
+uncanaried path exercised via the throwing `syncMain` knob (WI-7 FR-002
+idiom); no new notification channels (the @-mention rides the existing PR
+comment); no Docker/gh/pipeline-integration run.

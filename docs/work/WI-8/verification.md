@@ -73,3 +73,41 @@ Evidence boundary:
 
 Reviews: specification PASS (verbatim-move proof), code-quality APPROVED, both
 at the fixed package `dff96ff` → `8b4ff3f` (record in implementation-notes.md).
+
+## T3 — uncanaried merge pings the notify handle (FR-003)
+
+Claim: an uncanaried merge's PR comment carries an @-mention of the
+configured notify handle (`cc @<handle> — this merge needs a human decision.`,
+appended only when configured, existing human-decision sentence verbatim) and
+the shared uncanaried detail states the notify posture unconditionally —
+`notify: @<handle>` when configured, `notify handle not configured` when not
+(reverted-path vocabulary) — on both the outcome failure string and the queue
+`⚠️ UNCANARIED MERGE` line; the comment stays best-effort; the halt,
+no-blind-revert rule, and merge are unchanged; no new notification channels.
+
+Exact candidate: `e845f89` (base `eb54918`), branch `worktree-wi-8`.
+
+| Check | Command | Result |
+|---|---|---|
+| Focused suite | `npm test -- src/loop.test.ts` | 1 file / 108 tests passed (106+2), exit 0 |
+| Typecheck | `npm run typecheck` (tsc --noEmit) | exit 0 |
+| Full suite | `npm test` | 10 files / 216 tests passed (214+2), exit 0 |
+
+RED evidence (leaf-observed, pre-fix, 4 failed / 104 passed): new tests (n)/(o)
+failed on the missing cc mention and missing not-configured posture; the two
+sanctioned pin updates (test (i) record `toEqual` gains `notifyHandle`; test
+(j) exact pins gain `; notify handle not configured`) failed pre-fix for the
+same reason — spec-mandated content change, not a weakened assertion. Verbatim
+lines in implementation-notes.md.
+
+Evidence boundary:
+- Vitest public-seam suite + tsc only; the uncanaried path exercised via the
+  throwing `syncMain`/`syncThrows` knobs (WI-7 FR-002 idiom). No Docker/gh
+  run; the @-mention rides the existing best-effort PR comment (guarded by
+  `assertNoSecrets`), not a new channel.
+- Non-claim: no change to the halt, no-blind-revert rule, merge gating, or
+  hard constraint 1's opt-in; the comment-posting failure path is covered by
+  the pre-existing test (k), unchanged here.
+
+Reviews: specification PASS, code-quality APPROVED, both at the fixed package
+`eb54918` → `e845f89` (record in implementation-notes.md).
