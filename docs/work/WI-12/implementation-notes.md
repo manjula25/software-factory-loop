@@ -31,3 +31,28 @@ Controller: top-level session. Plan: `docs/work/WI-12/implementation-plan.md`
     vs (e2); "(q2)" label without a "(q1)" sibling) — taste never blocks; label
     taken verbatim from the approved plan.
 
+### T2 — FR-002 present-handle @-rendering unification (accepted 2026-09-19)
+
+- Candidate `d37c171` (base `9983178`). Implementer: one leaf, one deviation.
+- TDD: observed RED — (f3) failed with the live bare rendering
+  (`…; comment: posted; notify: manjula25`); GREEN — one production arm
+  (`notify: @${handle}`), absent arm untouched.
+- **Sanctioned pin supersession recorded** (spec FR-002, the batch's only one):
+  WI-11 FR-003's bare contrast pin in test (f2) superseded to
+  `notify: @manjula25` in the same commit as the production change, with the
+  (f2) comment and title parenthetical updated to mark the supersession.
+  The bare form was the WI-10 live observation; WI-12 (d1) unifies on @,
+  matching the uncanaried detail and the queue REVERTED line.
+- Deviation (accepted): the brief's suggested discriminator failed typecheck
+  (`TS18048`); implementer used `present.failure!.split("notify: ")[1]?.startsWith("@")`
+  — the `!` pattern has file precedent and is provably safe (the preceding
+  `toContain` throws first).
+- Controller gates fresh at candidate: typecheck exit 0; `npm test` 10 files /
+  221 tests.
+- Spec review: **PASS**. Adjacent: notes-recording requirement (this entry);
+  (f2)/(f3) pin duplication (taste).
+- Code-quality review: **PASS**. Two TASTE: the (f3) split discriminator is
+  redundant defense-in-depth (kept); the (f2)/(f3) duplication kept
+  deliberately with a cross-reference.
+
+
