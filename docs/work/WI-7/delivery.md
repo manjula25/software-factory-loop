@@ -105,9 +105,15 @@ delivery record (committed after this file is finalized). 18 files, +2296/−231
 
 ## Executed external actions and observed results
 
-None yet.
+Authorized by the user 2026-09-19 (push + PR; merge explicitly stays human):
+
+1. **Push** — `git push -u origin worktree-wi-7`: new branch on origin, tracking
+   set. Observed: `* [new branch] worktree-wi-7 -> worktree-wi-7`.
+2. **PR** — `gh pr create --base main --head worktree-wi-7` with the prepared
+   title/body: observed **https://github.com/manjula25/software-factory-loop/pull/11**.
 
 ## Pending actions
 
-Push and PR, each only on explicit authorization for that exact action. Post-delivery
-cleanup (worktree/branch removal) is separate and also needs explicit instruction.
+Merge of PR #11 — human-only by hard constraint 1; not requested and not performed.
+Post-delivery cleanup (worktree/branch removal after merge) needs explicit
+instruction in a later session.
