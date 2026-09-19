@@ -98,3 +98,56 @@ read back fresh.
   #26 open, contract test pinning the buggy behavior on `main`. A future
   work item (or human) resolves the requirement conflict and fixes the
   issue for real.
+
+---
+
+## Work-item completion verification — WI-10
+
+Claim (exact): at candidate `690f94a` (worktree-wi-10 HEAD, clean tree),
+the delivered harness tree has live-proven the opt-in chain's canary-red
+compensating controls — auto-revert on main, run halt, @-notify comment —
+with a real LLM fix run on the current tree, on attempt 1 of the approved
+budget; spend was 1 probe + 1 fix run with zero retries; no harness `src/`
+changed; the red-canary live non-claim is closed (induced race, stated as
+such).
+
+Proving commands, fresh at `690f94a` (2026-09-19):
+
+| Check | Command | Result |
+|---|---|---|
+| Full suite (broad) | `npm test` | 10 files / 216 tests, exit 0 |
+| Typecheck | `npm run typecheck` | exit 0 |
+| Tree | `git status --short` | clean |
+| Branch diff scope | `git diff --stat 9fc072b..HEAD` | 5 files, docs/evidence under `docs/work/WI-10/` only — zero `src/` changes |
+| Issue #26 end-state | `gh issue view 26` | OPEN (decision (c) held) |
+| PR #27 end-state | `gh pr view 27` | MERGED |
+| Notify comment | `gh api …/issues/comments/5741234744` | author `manjula25`, body begins `@manjula25 ⚠️ REVERTED: the merge of this PR (7febfdbe4c10d1…` |
+| Fixtures main | `git log origin/main -4` | `b113686 revert` → `7febfdb merge` → `461a13f contract` → `afcee4a seed` |
+| Fixtures main tree | `git ls-tree` | contract test present; repro test absent |
+| Reverted-main suite | fresh clone @ `b113686` in image | **25 passed** (captured 16:27, run-endstates.md; `origin/main` confirmed still `b113686` in this pass) |
+
+Unknown reconciliation: none open. All three approved design decisions
+were exercised as decided — (a) budget respected with attempt 1 (re-drive
+never needed), (b) single-issue mode, zero triage spend, (c) stop at the
+revert (issue #26 open, no follow-up invocation). Prior unknowns from the
+plan (issue numbering, profile-in-clone) closed as recorded deviations in
+the evidence files.
+
+Deferred (explicit, owner: follow-up backlog): stale
+`origin/fix/gh-{1,2,3,10}` fixtures branches; the fixtures repo's
+deliberately untidied end-state (issue #26 open + contract test pinning
+the buggy behavior) awaits a human/future-work-item resolution of the
+requirement conflict.
+
+Remaining risks: none within the claimed boundary. Hard constraints all
+held live: opt-in chain only on the fixtures repo (1), fresh-sandbox gates
+real — the canary that went red was a real fresh-sandbox suite on merged
+main (2), self-authored synthetic data only (3), repro-test retention
+applies to merged fixes only; the reverted merge's repro test correctly
+left with the revert (4), spend under ceiling (5), local Docker only (6).
+
+Non-claims (final): the race was orchestrator-induced, not naturally
+occurring; uncanaried-merge and teardown-failure surfaces remain
+unit-evidence-only; the reverted run's true CLI exit code was not captured
+(tee masking — behavior stands on unit evidence); invocation counts, not
+cost figures.
