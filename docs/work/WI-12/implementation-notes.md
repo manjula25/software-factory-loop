@@ -90,6 +90,25 @@ Controller: top-level session. Plan: `docs/work/WI-12/implementation-plan.md`
 - Code-quality review: **PASS**. One TASTE: the `createPr` not-called spy is
   redundant-but-consistent with (e2) (kept).
 
+### T5 — CLAUDE.md module-row honesty check (controller, 2026-09-19)
+
+- Candidate `c55936d`. The `src/loop.ts` row's WI-11 clause extended:
+  "merged/reverted" → "merged/reverted/uncanaried" (T1) and "unified
+  absent-notify vocabulary" → "unified notify-handle vocabulary — absent arm
+  and @-rendered present arm (WI-11, WI-12)" (T2). WI-7/WI-8 clauses
+  verified still accurate. No new row needed.
+
+### Close-out (controller, 2026-09-19)
+
+- Branch `worktree-wi-12`, tip `c55936d`, base `003fbd1` — 10 commits
+  (T1-T5 code/docs + checkpoint notes). Tree clean.
+- Final fresh gates at tip: typecheck exit 0; `npm test` 10 files / 223 tests
+  (baseline 219 + 4 new: (q2), (f3), (r), (e3)).
+- All four FRs checkpoint-accepted with sequential spec → code-quality reviews
+  (8 review passes, zero BLOCKING). Adjacent findings recorded above; none
+  expanded into scope.
+
+
 
 
 
