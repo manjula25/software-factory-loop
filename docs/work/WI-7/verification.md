@@ -184,3 +184,65 @@ Reviews: specification PASS (normalized hunk-by-hunk verbatim-move proof of
 the extraction, WI-7 uncanaried + FR-003 teardown paths confirmed moved
 intact), code-quality APPROVED — both at the fixed package `2643031` →
 `3a12444` (record in implementation-notes.md).
+
+## Work-item completion verification (all tasks, final candidate)
+
+Claim: WI-7's five approved tasks (FR-001…FR-005) are implemented on branch
+`worktree-wi-7`; the harness-source suite is green; no behavior is claimed
+beyond the unit/real-git seam evidence recorded per task above.
+
+Exact candidate: `f868771` (17 commits ahead of `main` @ `391d2de`: planning
+chain, 5 task commits, 5 evidence commits, header normalization). Tree clean.
+
+| Check | Command | Result (fresh, 2026-09-19) |
+|---|---|---|
+| Typecheck (all surfaces, harness source) | `npm run typecheck` | exit 0 |
+| Full suite | `npm test` | Test Files 10 passed (10), Tests 207 passed (207), exit 0 |
+| Boundary freeze (carried from T5, still the committed tree) | `git diff 2643031..3a12444 -- src/sandcastle-adapter.boundary.test.ts` | empty — and the boundary test file is among the 10 passing |
+
+The T5 refactor moved the code the T1–T4 tests pin; the final-tree run of the
+identical 207 tests (zero assertion edits) revalidates every per-task
+behavioral claim above at the final candidate. Stderr git noise in the run
+output is the real-git tests' expected output (incl. the deliberate
+non-fast-forward rejections the FR-004 boundary pin asserts).
+
+### Unknown reconciliation
+
+Closed with evidence:
+- T1 RED question (does a stale clone really skip a reverted issue as
+  merged?) — closed by the real-git test at RED and GREEN.
+- T3 failure-mode question (flip vs propagate on teardown throw) — closed:
+  base silently swallowed (green) / overwrote evidence (red); both pinned.
+- T4 evidence-of-execution for the mutation checks — closed by the recorded
+  verbatim outputs in implementation-notes.md (mutations leave no repo trace
+  by design).
+- T5 premise counts (4/3/3) — closed by grep: actual 5/2/2; `valuelessFlag`
+  stopped as the plan's own rule requires.
+
+Deferred (follow-up backlog, owner: future work item; none material to this
+work item's claims):
+- `main()` CLI refresh wiring and the uncanaried path are typechecked but not
+  executed end-to-end against a live GitHub remote (pipeline-integration
+  non-claim, below).
+- Preflight/verification sandboxes' teardown still propagates (same failure
+  class as FR-003, out of scope).
+- `--issue` override path prints no teardownFailure line; uncanaried path has
+  no @-notification (both plan-sanctioned omissions needing their own FRs).
+- Test-knob naming/doc nits and the T2/T5 consolidation candidates recorded
+  in implementation-notes.md.
+- Carried WI-6 deferred items (revert-matcher permanence after human
+  re-merge; skipped-merged summary cosmetic) — untouched by WI-7, still open.
+
+Remaining risks: none beyond the deferred list — every claim above maps to a
+fresh green run or a recorded verbatim observation at an exact candidate.
+
+### Work-item non-claims
+
+- Pipeline integration: no Docker/fixtures/gh run of the WI-7 tree — the
+  plan's completion gate records this as a deliberate non-claim (FR-002/FR-003
+  are unit-proven at the loop seam; no new integration surface was claimed).
+- The `main()` queueDeps `git fetch --prune origin` wiring is typechecked,
+  not executed against a live remote.
+- FR-005 proves non-behavior-change by the byte-green criterion only.
+- Hard constraint 1 is unchanged throughout: auto-merge gating untouched;
+  this repo still never auto-merges itself.
