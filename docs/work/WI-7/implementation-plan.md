@@ -38,11 +38,12 @@ Files: `src/queue.ts`, `src/queue.test.ts`, `src/loop.ts` (main() wiring only).
    `refreshRemoteRefs` = real `git fetch --prune origin`. Expected failing
    observation pre-fix: with the refresh not yet called by `splitQueue`, the
    stale clone says not-reverted → issue lands `skippedMerged`; the test
-   asserts `eligible` contains it. Second test: a remotely deleted `fix/*`
-   branch disappears from what `listFixBranches` sees after the refresh
-   (assert via the real `git ls-remote` wiring). Third test: a throwing
+   asserts `eligible` contains it. Second test: a throwing
    `refreshRemoteRefs` → `QueueAcquisitionError` from `splitQueue` with the
-   refresh named in the message.
+   refresh named in the message. (Ponytail, 2026-09-19: a planned third test
+   — remote branch listing freshened by the fetch — was deleted from this
+   plan as vacuous: the production listing uses `git ls-remote`
+   (`src/loop.ts:1556`), a live remote query that never reads tracking refs.)
 4. **GREEN:** wire the await in `splitQueue`; real wiring in `main()`
    (`src/loop.ts` queueDeps): `execFileSync("git", ["fetch", "--prune",
    "origin"], { cwd: dir, stdio: "inherit" })` — the override path needs no
@@ -95,11 +96,14 @@ Files: `src/loop.ts`, `src/loop.test.ts`.
    `deleteBranch` in their own try/catch producing `teardownFailure?: string`.
    Verdict preservation: `canaryGreen`/`canaryEvidence` as already decided are
    never overwritten. Green + teardown failure → merged outcome plus
-   `teardownFailure`, surfaced as a `CANARY TEARDOWN FAILED <id>: <reason>`
-   summary line (new `QueueSummary.closeFailures`-style field
-   `teardownFailures: [string, string][]`); red + teardown failure → the
-   revert path runs unchanged with the failure named in the `RevertedRecord`
-   (new optional field) and the `⚠️ REVERTED` summary line.
+   `teardownFailure`, surfaced as a suffix on the existing MERGED summary line
+   (`MERGED <id>: … (canary: green; teardown: <reason>)` — grow the
+   `mergedPrs` tuple; ponytail shrink 2026-09-19: no parallel
+   `QueueSummary.teardownFailures` field, though the implementer may fall
+   back to that idiom if the tuple growth reads worse); red + teardown
+   failure → the revert path runs unchanged with the failure named in the
+   `RevertedRecord` (new optional field, never appended to the evidence
+   string) and the `⚠️ REVERTED` summary line.
 2. **RED:** two tests in the canary describe: (a) green canary +
    `close()`-throwing sandbox → merged outcome (no revert), teardown failure
    recorded, summary line present (exact-pin); current tree flips this to red
