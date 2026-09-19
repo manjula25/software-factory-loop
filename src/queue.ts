@@ -41,6 +41,14 @@ export interface QueueDeps {
    * the issue must NOT be skipped as merged.
    */
   mainRevertsPr(input: { repoDir: string; pr: MergedPr }): Promise<boolean>;
+  /**
+   * WI-7 (FR-001): `git fetch --prune origin` in the target clone, awaited
+   * before any dedup signal is read. Every signal the split consults —
+   * merged PRs, the revert guard's `origin/main` history, fix branches —
+   * describes the REMOTE's now; a stale clone would read a revert that has
+   * since landed as absent and skip a live issue as already merged.
+   */
+  refreshRemoteRefs(repoDir: string): Promise<void>;
   /** Local and remote `fix/*` branch names that exist right now. */
   listFixBranches(repoDir: string): Promise<string[]>;
   /** `git push origin --delete`; resolves even if the branch is absent. */
@@ -70,7 +78,7 @@ export const ISSUE_PAGE_LIMIT = 30;
  * opened. The bound is explicit here, shared by both listings, and never
  * narrower than the queue it filters.
  */
-export const OPEN_PR_PAGE_LIMIT = 100;
+export const PR_PAGE_LIMIT = 100;
 
 /**
  * Args for a dedup PR listing — exported so the bound above is testable.
@@ -84,7 +92,7 @@ export function prListArgs(state: "open" | "merged"): string[] {
     "--state",
     state,
     "--limit",
-    String(OPEN_PR_PAGE_LIMIT),
+    String(PR_PAGE_LIMIT),
     "--json",
     state === "open" ? "headRefName,body" : "headRefName,body,number,url",
   ];
@@ -158,6 +166,15 @@ function escapeRegExp(literal: string): string {
 }
 
 /**
+ * Whether `pr` covers the issue under dedup: its head branch IS the issue's
+ * fix branch, or its body references the issue by exact id token
+ * (`gh-1` never matches `gh-11`) — the same rule for open and merged PRs.
+ */
+function covers(pr: OpenPr, branch: string, token: RegExp): boolean {
+  return pr.headRefName === branch || token.test(pr.body);
+}
+
+/**
  * Splits the normalized queue into eligible / skipped-duplicate /
  * skipped-merged, deleting stale `fix/<id>` branches along the way. A MERGED
  * fix PR means the issue is done: matched by head branch or body id token
@@ -180,12 +197,16 @@ export async function splitQueue(
   let mergedPrs: MergedPr[];
   let branches: string[];
   try {
+    // Refresh FIRST (WI-7 FR-001): every signal below reads the remote's now
+    // through the clone's remote-tracking refs — a stale clone would read a
+    // revert that has since landed as absent and skip a live issue as merged.
+    await deps.refreshRemoteRefs(repoDir);
     mergedPrs = await deps.listMergedPrs(repoDir);
     prs = await deps.listOpenPrs(repoDir);
     branches = await deps.listFixBranches(repoDir);
   } catch (error) {
     throw new QueueAcquisitionError(
-      `listing PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
+      `acquiring queue state failed (refreshing remote refs / listing PRs / fix branches): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -202,9 +223,7 @@ export async function splitQueue(
     // Merged first: a merged fix is stronger than an in-flight one (a reopened
     // PR keeps its head branch), and its branch must never reach deletion —
     // unless main reverted it (WI-6 T4, FR-006): the issue goes back to todo.
-    const mergedCover = mergedPrs.find(
-      (pr) => pr.headRefName === branch || token.test(pr.body),
-    );
+    const mergedCover = mergedPrs.find((pr) => covers(pr, branch, token));
     const done =
       mergedCover !== undefined &&
       !(await deps.mainRevertsPr({ repoDir, pr: mergedCover }));
@@ -212,9 +231,7 @@ export async function splitQueue(
       skippedMerged.push(issue.id);
       continue;
     }
-    const inFlight = prs.some(
-      (pr) => pr.headRefName === branch || token.test(pr.body),
-    );
+    const inFlight = prs.some((pr) => covers(pr, branch, token));
     if (inFlight) {
       skippedDuplicate.push(issue.id);
       continue;
