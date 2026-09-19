@@ -71,13 +71,23 @@ Branch `worktree-wi-12`; base `main` @ `003fbd1`; PR base branch `main`.
 
 ## Requested external actions
 
-(awaiting owner authorization — push / PR)
+Owner-authorized this session (AskUserQuestion): **push branch + open PR**.
 
 ## Executed external actions and observed results
 
-(none yet)
+- `git push -u origin worktree-wi-12` (2026-09-19): new branch on origin,
+  tracking set. Observed: `* [new branch] worktree-wi-12 -> worktree-wi-12`.
+- `gh pr create --base main --head worktree-wi-12 …`: **PR #16** opened.
+  Read-back (`gh pr view 16`): state OPEN, base `main`, head `worktree-wi-12`,
+  title "WI-12: adjacent-findings batch — uncanaried teardown recording,
+  @-rendering unification, characterization pins",
+  https://github.com/manjula25/software-factory-loop/pull/16 — 18 commits
+  (12 work-item commits + the 6 WI-12 planning commits that were on local
+  main ahead of origin).
 
 ## Pending actions
 
-Push branch + open PR against `main` (human merge, per hard constraint 1);
-post-merge worktree/branch cleanup.
+- **Human merge of PR #16** (owner; hard constraint 1 — the harness repo never
+  auto-merges itself).
+- Post-merge: worktree `.claude/worktrees/wi-12` + branch `worktree-wi-12`
+  cleanup, local main fast-forward.
