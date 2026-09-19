@@ -99,10 +99,11 @@ reason wins on the fail() path": `makeDeps({ preflightCloseThrows: PRE,
 sandboxCloseThrows: VERIFY, sandbox: sandboxHandle(SUITE_AFTER_FIX, /*
 reproExit */ 1) })`; assert `outcome.failure` contains "Verification
 failed"; `outcome.teardownFailure` contains PRE and not VERIFY (preflight
-wins — it happened first); report stderr line names PRE. Queue variant
-with `preflightCloseThrowsFor` + `sandboxCloseThrowsFor` + `failReproFor`
-if the queue seam adds signal beyond the single-issue seam (implementer's
-judgment, recorded). **Must pass with zero production change** — same
+wins — it happened first); report stderr line names PRE. No queue variant:
+the queue FAILED-suffix rendering of `outcome.teardownFailure` is already
+pinned by WI-11 test (e2) (`src/loop.test.ts:1045-1047`), and the
+precedence delta is fully observable at the single-issue seam
+(ponytail, 2026-09-19). **Must pass with zero production change** — same
 defect-report rule.
 
 **Focused verify / gates:** as above (≥223).
