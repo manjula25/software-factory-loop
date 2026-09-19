@@ -377,6 +377,55 @@ export function parsePlanOutput(
 }
 
 /**
+ * The planning pass's prompt (WI-13 FR-001) — same shape as
+ * `buildTriagePrompt` above: ids with first description lines only, one JSON
+ * block as the contract. Defines blocked-by for the planner and states the
+ * all-blocked rule so the plan can never deadlock the whole queue.
+ */
+export function buildPlanPrompt(issues: readonly NormalizedIssue[]): string {
+  const listing = issues
+    .map((i) => `- ${i.id}: ${i.description.split("\n")[0] ?? i.id}`)
+    .join("\n");
+  return [
+    "You are planning a fix queue. For each issue below, give an integer priority",
+    "from 1 (low) to 5 (urgent) and the ids of the issues it is blocked by.",
+    "Issue B is blocked by issue A when B's fix depends on a decision, API",
+    "shape, or code state A's fix will establish, or when both fixes likely",
+    "touch the same files.",
+    "If every issue is blocked, give the single highest-priority candidate the highest priority and NO blockers.",
+    "Answer with exactly one JSON block and nothing else inside it:",
+    '<plan>{"priority":{"<id>":1-5},"blockedBy":{"<id>":["<id>"]}}</plan>',
+    "",
+    listing,
+  ].join("\n");
+}
+
+/**
+ * Order the queue by a validated plan (WI-13 FR-001): priority desc, ties by
+ * ascending issue number — the same tie rule as `admitIssues`. The blockedBy
+ * graph is NOT consulted here: it shapes which issues may run in parallel,
+ * which is the queue runner's job, not this ordering's. Iterates the queue's
+ * `issues`, never the plan's keys — the parser tolerates extra priority keys,
+ * so a key-driven walk could surface phantom issues downstream (controller
+ * finding A1). No plan (unusable or never run): ascending issue-number order
+ * on a copy, input never mutated.
+ */
+export function orderFromPlan(
+  issues: readonly NormalizedIssue[],
+  plan: PlanValue | undefined,
+): NormalizedIssue[] {
+  return [...issues].sort((a, b) => {
+    if (plan !== undefined) {
+      const diff = (plan.priority[b.id] ?? 0) - (plan.priority[a.id] ?? 0);
+      if (diff !== 0) {
+        return diff;
+      }
+    }
+    return issueNumber(a.id) - issueNumber(b.id);
+  });
+}
+
+/**
  * WI-6 T6 (FR-009): the pre-merge review pass's three verdicts. `approve` is
  * the only verdict that lets a merge proceed; `wrong` (wrong root cause /
  * wrong test) and `uncertain` (cannot tell) both block it.

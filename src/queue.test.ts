@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   admitIssues,
+  buildPlanPrompt,
   buildTriagePrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
+  orderFromPlan,
   PR_PAGE_LIMIT,
   parsePlanOutput,
   parseReviewOutput,
@@ -16,6 +18,7 @@ import {
   prListArgs,
   QueueAcquisitionError,
   splitQueue,
+  type PlanValue,
   type QueueDeps,
 } from "./queue.js";
 import type { NormalizedIssue } from "./issues.js";
@@ -726,5 +729,67 @@ describe("plan-parse: parsePlanOutput (WI-13 T1, FR-001)", () => {
         ["gh-1", "gh-2", "gh-3"],
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("plan-order: buildPlanPrompt / orderFromPlan (WI-13 T2, FR-001)", () => {
+  it("buildPlanPrompt lists both ids, the <plan> contract line, and the all-blocked rule sentence", () => {
+    const prompt = buildPlanPrompt([issue(1), issue(2)]);
+
+    expect(prompt).toContain("gh-1");
+    expect(prompt).toContain("gh-2");
+    expect(prompt).toContain('<plan>{"priority":{"<id>":1-5},"blockedBy":{"<id>":["<id>"]}}</plan>');
+    // the all-blocked rule: the planner can never deadlock the queue
+    expect(prompt).toContain(
+      "give the single highest-priority candidate the highest priority and NO blockers",
+    );
+  });
+
+  it("emits no issue body beyond the first line, so a log-bearing issue cannot leak into the prompt", () => {
+    const withLog: NormalizedIssue = {
+      id: "gh-9",
+      description: "# timeout",
+      attachedLog: "Traceback...\n  File \"/home/someone/secret/path.py\"",
+      sourceType: "github-issue",
+    };
+
+    const prompt = buildPlanPrompt([withLog, issue(2)]);
+
+    expect(prompt).toContain("- gh-9: # timeout");
+    expect(prompt).not.toContain("Traceback");
+    expect(prompt).not.toContain("/home/someone/secret/path.py");
+  });
+
+  it("orderFromPlan ranks by priority desc, ties by ascending issue number", () => {
+    const plan: PlanValue = {
+      priority: { "gh-1": 2, "gh-2": 5, "gh-3": 5, "gh-4": 1 },
+      blockedBy: { "gh-2": ["gh-1"] },
+    };
+
+    const ordered = orderFromPlan([issue(1), issue(2), issue(3), issue(4)], plan);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-2", "gh-3", "gh-1", "gh-4"]);
+  });
+
+  it("orderFromPlan with no plan returns ascending issue-number order, input unmutated", () => {
+    const input = [issue(3), issue(1), issue(2)];
+
+    const ordered = orderFromPlan(input, undefined);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
+    expect(input.map((i) => i.id)).toEqual(["gh-3", "gh-1", "gh-2"]);
+  });
+
+  it("orderFromPlan iterates the queue's issues, never the plan keys — extra priority ids surface nothing", () => {
+    // Controller finding A1: the parser tolerates extra priority keys, so a
+    // key-driven walk could surface phantom issues downstream.
+    const plan: PlanValue = {
+      priority: { "gh-1": 1, "gh-2": 2, "gh-9": 5 },
+      blockedBy: {},
+    };
+
+    const ordered = orderFromPlan([issue(2), issue(1)], plan);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-2", "gh-1"]);
   });
 });
