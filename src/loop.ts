@@ -246,6 +246,38 @@ export interface LoopOutcome {
    * issue is NOT fixed, and the merged-dedup's revert guard re-queues it.
    */
   readonly reverted?: RevertedRecord;
+  /**
+   * WI-7 (FR-002): set when a merge LANDED but the canary never ran — the
+   * post-merge main sync failed, so merged main was never verified. Mirrors
+   * `reverted`'s posture: deliberately NO `prUrl` on the outcome itself and a
+   * `failureKind: "harness"` failure — the issue is merged-but-unverified, not
+   * fixed — and the queue halts (a stale/divergent clone will fail every later
+   * issue the same way).
+   */
+  readonly uncanaried?: UncanariedRecord;
+}
+
+/**
+ * What the summary needs to report an uncanaried merge (WI-7 FR-002):
+ * identifiers plus why the canary never ran and whether the warning comment
+ * reached the PR. Harness-known values only.
+ */
+export interface UncanariedRecord {
+  readonly id: string;
+  readonly prUrl: string;
+  readonly mergeCommit: string;
+  /** Why syncing the local clone to the merged base failed. */
+  readonly syncFailure: string;
+  /** `posted`, or `FAILED (<reason>)` when the best-effort comment threw. */
+  readonly commentNote: string;
+}
+
+/**
+ * WI-7 (FR-002): the shared body of the ⚠️ UNCANARIED MERGE line — built once
+ * so the outcome's failure string and `formatSummary` agree byte-for-byte.
+ */
+function uncanariedDetail(record: UncanariedRecord): string {
+  return `pr ${record.prUrl} merge ${record.mergeCommit} — main sync failed: ${record.syncFailure}; comment: ${record.commentNote}`;
 }
 
 /**
@@ -772,7 +804,45 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     // though pre-merge verification was green: what it guards is the merge
     // itself (squash semantics, a base that moved). A canary that cannot
     // start is red (FR-005 boundary).
-    await deps.syncMain(input.repoDir);
+    //
+    // WI-7 (FR-002): the one canary precondition that must NOT be treated as
+    // red is the sync itself failing — a divergent or broken clone says
+    // nothing about the merge, and reverting a possibly-fine merge (or
+    // canarying a stale main) would both be wrong. The merge stands but is
+    // UNVERIFIED: comment on the PR (best-effort), return a harness-level
+    // uncanaried outcome — no prUrl, mirroring `reverted` — and let the queue
+    // halt. A human decides: revert manually or re-verify after fixing the
+    // clone.
+    try {
+      await deps.syncMain(input.repoDir);
+    } catch (error) {
+      const syncFailure = error instanceof Error ? error.message : String(error);
+      const commentBody =
+        `⚠️ UNCANARIED: this merge (${mergeCommit}) was NOT canaried — syncing the local clone to the merged base failed: ${syncFailure}. ` +
+        `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.`;
+      let commentNote: string;
+      try {
+        assertNoSecrets([commentBody], deps.env);
+        await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: commentBody });
+        commentNote = "posted";
+      } catch (commentError) {
+        commentNote = `FAILED (${commentError instanceof Error ? commentError.message : String(commentError)})`;
+      }
+      const uncanaried: UncanariedRecord = {
+        id: input.issue.id,
+        prUrl,
+        mergeCommit,
+        syncFailure,
+        commentNote,
+      };
+      return {
+        branch,
+        failure: `⚠️ UNCANARIED MERGE ${input.issue.id}: ${uncanariedDetail(uncanaried)}`,
+        failureKind: "harness",
+        ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+        uncanaried,
+      };
+    }
     const canaryBranch = `loop/canary-${input.issue.id}`;
     let canaryEvidence: string | undefined;
     let canaryGreen = false;
@@ -962,6 +1032,14 @@ export interface QueueSummary {
    * and stays queued for a later run. Snapshotted even on the abort path.
    */
   readonly reverted: RevertedRecord[];
+  /**
+   * [id, detail] — WI-7 (FR-002): merges that landed but were never canaried
+   * (the post-merge main sync failed). Like `reverted` each halted the run
+   * (see the FAILED lines), but nothing was reverted — the merge is
+   * unverified, not judged red. Own loud summary surface
+   * (`⚠️ UNCANARIED MERGE` lines); snapshotted even on the abort path.
+   */
+  readonly uncanariedMerges: [string, string][];
   /** Source label (WI-3 FR-007) — set only for non-GitHub queue sources. */
   readonly source?: string;
 }
@@ -1052,6 +1130,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const closeFailures: [string, string][] = [];
   const reviewSkipped: [string, string][] = [];
   const reverted: RevertedRecord[] = [];
+  const uncanariedMerges: [string, string][] = [];
   const snapshot = (): QueueSummary => ({
     attempted: [...attempted],
     fixed: [...fixed],
@@ -1066,6 +1145,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     closeFailures: [...closeFailures],
     reviewSkipped: [...reviewSkipped],
     reverted: [...reverted],
+    uncanariedMerges: [...uncanariedMerges],
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
@@ -1088,6 +1168,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     // carries the ⚠️ REVERTED record for the summary.
     if (outcome.reverted !== undefined) {
       reverted.push(outcome.reverted);
+    }
+    // WI-7 (FR-002): same pattern — the record is collected before the abort
+    // throw so the aborting summary still carries the ⚠️ UNCANARIED MERGE line.
+    if (outcome.uncanaried !== undefined) {
+      uncanariedMerges.push([outcome.uncanaried.id, uncanariedDetail(outcome.uncanaried)]);
     }
     if (outcome.prUrl) {
       fixed.push(issue.id);
@@ -1137,6 +1222,7 @@ export function formatSummary(summary: QueueSummary): string {
         `${r.revertCommit ?? `FAILED (${r.revertFailure ?? "unknown"})`} — canary: ${r.evidence}\n` +
         (r.notifyHandle !== undefined ? `notify: @${r.notifyHandle}` : "notify handle not configured"),
     ),
+    ...summary.uncanariedMerges.map(([id, detail]) => `⚠️ UNCANARIED MERGE ${id}: ${detail}`),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.closeFailures.map(([id, reason]) => `ISSUE CLOSE FAILED ${id}: ${reason}`),
     ...summary.reviewSkipped.map(([id, reason]) => `REVIEW SKIP ${id}: auto-merge not performed — ${reason}`),

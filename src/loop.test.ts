@@ -136,6 +136,10 @@ interface DepOverrides {
   revertCommit?: string;
   /** Simulated revert failure (conflict / push error) on canary-red runs. */
   revertThrows?: string;
+  /** Simulated post-merge main-sync failure (divergent main) on opted-in runs (WI-7 FR-002). */
+  syncThrows?: string;
+  /** Simulated PR-comment failure on the uncanaried path (WI-7 FR-002). */
+  commentThrows?: string;
   /** Simulated issue-close failure (gh error) on canary-green merged runs (WI-6 T5). */
   closeThrows?: string;
   /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
@@ -176,14 +180,22 @@ function makeDeps(overrides: DepOverrides = {}) {
       return { mergeCommit: overrides.mergeCommit ?? "m0ckmerge" };
     }),
     // WI-6 T4 seams
-    syncMain: vi.fn(async (_repoDir: string) => {}),
+    syncMain: vi.fn(async (_repoDir: string) => {
+      if (overrides.syncThrows !== undefined) {
+        throw new Error(overrides.syncThrows);
+      }
+    }),
     revertMerge: vi.fn(async () => {
       if (overrides.revertThrows !== undefined) {
         throw new Error(overrides.revertThrows);
       }
       return { revertCommit: overrides.revertCommit ?? "r3vert0000" };
     }),
-    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {
+      if (overrides.commentThrows !== undefined) {
+        throw new Error(overrides.commentThrows);
+      }
+    }),
     // WI-6 T5 seam
     closeIssue: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _comment: string) => {
       if (overrides.closeThrows !== undefined) {
@@ -639,6 +651,96 @@ FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
     expect(outcome?.failureKind).toBe("harness");
     expect(outcome?.failure).toContain("REVERTED");
   });
+
+  // -------------------------------------------------------------------------
+  // WI-7 (FR-002): the uncanaried-merge failure surface. The merge LANDED but
+  // the canary never ran — syncMain failed — so unlike a red canary there is
+  // nothing to revert (the merge may be fine; the clone is stale/divergent).
+  // The surface mirrors `reverted`: no prUrl on the outcome, a harness-level
+  // failure, one best-effort PR comment, and a loud summary line of its own.
+  // -------------------------------------------------------------------------
+
+  it("(i) syncMain throws after a successful merge: an UNCANARIED outcome — harness-level, commented with the merge commit and sync failure, never reverted, no canary sandbox", async () => {
+    const deps = makeDeps({ syncThrows: "divergent main" });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(deps.mergePr).toHaveBeenCalledTimes(1); // the merge did land
+    expect(outcome.prUrl).toBeUndefined(); // merged-but-unverified is not "fixed with a PR"
+    expect(outcome.failureKind).toBe("harness");
+    expect(outcome.uncanaried).toEqual({
+      id: "gh-1",
+      prUrl: PR_URL,
+      mergeCommit: "m0ckmerge",
+      syncFailure: "divergent main",
+      commentNote: "posted",
+    });
+    expect(deps.commentOnPr).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnPr.mock.calls[0]![0] as { repoDir: string; prUrl: string; body: string };
+    expect(call.repoDir).toBe("/tmp/repo");
+    expect(call.prUrl).toBe(PR_URL);
+    expect(call.body).toContain("m0ckmerge"); // names the merge commit
+    expect(call.body).toContain("divergent main"); // and the sync failure
+    expect(deps.revertMerge).not.toHaveBeenCalled(); // nothing was judged red — no revert
+    // no canary: only the preflight and verification sandboxes ever existed
+    expect(deps.createFixSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("(j) queue mode: the sync failure aborts the queue and the summary carries the exact ⚠️ UNCANARIED MERGE line", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      syncMainThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
+    expect(aborted.summary.uncanariedMerges).toEqual([
+      [
+        "gh-1",
+        "pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+      ],
+    ]);
+    expect(formatSummary(aborted.summary)).toContain(
+      "⚠️ UNCANARIED MERGE gh-1: pr https://example/pr/fix/gh-1 merge mdef456 — main sync failed: divergent main; comment: posted",
+    );
+  });
+
+  it("(k) commentOnPr throws on the uncanaried path: the failure lands in commentNote and the abort still happens", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      syncMainThrowsFor: "gh-1",
+      commentThrowsFor: "fix/gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // the comment is best-effort; the halt is not
+    const aborted = error as QueueAbortedError;
+    expect(aborted.summary.uncanariedMerges[0]![1]).toContain("comment: FAILED (gh: comment failed — network)");
+    expect(formatSummary(aborted.summary)).toContain("UNCANARIED MERGE gh-1");
+  });
+
+  it("--issue N override: an uncanaried outcome has no prUrl — the existing CLI failure path prints it and exits 1 (verified at the runOverrideIssue seam)", async () => {
+    const { deps } = makeQueueDeps({ issues: [issue], syncMainThrowsFor: "gh-1" });
+
+    const result = await runOverrideIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: { ...profile, autoMerge: true } },
+      deps,
+    );
+
+    expect(result.kind).toBe("run");
+    const outcome = result.kind === "run" ? result.outcome : undefined;
+    expect(outcome?.prUrl).toBeUndefined(); // the CLI's "no PR" branch: prints the failure, exit 1
+    expect(outcome?.failureKind).toBe("harness");
+    expect(outcome?.failure).toContain("UNCANARIED");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -733,6 +835,7 @@ FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
       closeFailures: [],
       reviewSkipped: [],
       reverted: [],
+      uncanariedMerges: [],
     });
     expect(text).toContain("MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green)");
   });
@@ -1028,6 +1131,10 @@ interface QueueDepsConfig {
   canaryInstallFailFor?: string;
   /** revertMerge throws (conflict/push error) — best-effort revert fails loudly. */
   canaryRevertThrows?: string;
+  /** Post-merge main sync throws for this id — the uncanaried-merge path (WI-7 FR-002). */
+  syncMainThrowsFor?: string;
+  /** The uncanaried PR comment throws for PRs whose url contains this token (WI-7 FR-002). */
+  commentThrowsFor?: string;
   /** Issue close throws (gh error) for this id — bookkeeping failure on a merged outcome (WI-6 T5). */
   closeThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1096,14 +1203,22 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       return { mergeCommit: "mdef456" };
     }),
     // WI-6 T4 seams
-    syncMain: vi.fn(async (_repoDir: string) => {}),
+    syncMain: vi.fn(async (_repoDir: string) => {
+      if (config.syncMainThrowsFor !== undefined) {
+        throw new Error("divergent main");
+      }
+    }),
     revertMerge: vi.fn(async () => {
       if (config.canaryRevertThrows !== undefined) {
         throw new Error(config.canaryRevertThrows);
       }
       return { revertCommit: "rvrt789" };
     }),
-    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {}),
+    commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {
+      if (config.commentThrowsFor !== undefined) {
+        throw new Error("gh: comment failed — network");
+      }
+    }),
     // WI-6 T5 seam
     closeIssue: vi.fn(async (_repoDir: string, target: NormalizedIssue, _comment: string) => {
       if (config.closeThrowsFor !== undefined && target.id === config.closeThrowsFor) {
