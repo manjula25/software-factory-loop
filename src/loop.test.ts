@@ -1134,6 +1134,35 @@ describe("preflight & verification teardown parity (WI-8, FR-001)", () => {
       `FAILED gh-1: Verification failed — reproduction test did not pass in the fresh sandbox. (teardown: ${CLOSE})`,
     );
   });
+
+  it("(e3) WI-12 FR-004 (characterization): verification rejected with BOTH preflight and verification closes throwing — the preflight reason wins on the fail() path", async () => {
+    // Distinct reasons so precedence is provable by content, not by call order.
+    const PRE = "docker: preflight container rm refused — image busy";
+    const VERIFY = "docker: verification container rm refused — device busy";
+
+    // Same rejected-verification construction as (e2): the suite is green but
+    // the reproduction test fails (reproExit 1) → the verification fail()
+    // path — now with BOTH sandbox closes throwing on top.
+    const deps = makeDeps({
+      preflightCloseThrows: PRE,
+      sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1),
+      sandboxCloseThrows: VERIFY,
+    });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(deps.createPr).not.toHaveBeenCalled();
+    expect(outcome.failure).toContain("Verification failed"); // the verdict is unchanged — teardown bookkeeping never decides
+    expect(outcome.teardownFailure).toContain(PRE); // preflight wins — it happened first
+    expect(outcome.teardownFailure).not.toContain(VERIFY); // the verification-close reason did not displace it
+
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.exitCode).toBe(1);
+    expect(report.stderr).toContain(`sandbox teardown failed: ${PRE}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
