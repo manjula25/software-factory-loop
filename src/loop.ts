@@ -231,6 +231,14 @@ export interface LoopOutcome {
    */
   readonly closeFailure?: string;
   /**
+   * WI-7 (FR-003): set when the canary sandbox's TEARDOWN failed — close()
+   * threw, or the canary branch delete refused — after the suite had already
+   * decided the verdict. Pure bookkeeping beside that verdict, never over it:
+   * a green canary stays merged (the failure rides the MERGED summary line)
+   * and a red one still reverts (the failure is named in the RevertedRecord).
+   */
+  readonly teardownFailure?: string;
+  /**
    * WI-6 (FR-009): set when the pre-merge review pass did NOT approve — no
    * merge happened, the PR stays open for a human, and the skip reason was
    * commented on the PR. Like `mergeFailure` this is a loud note on a PR'd
@@ -296,6 +304,12 @@ export interface RevertedRecord {
   readonly revertFailure?: string;
   /** Why the canary went red (the FR-005 evidence). */
   readonly evidence: string;
+  /**
+   * WI-7 (FR-003): the canary's teardown (close / branch delete) failed on an
+   * already-red canary. Named here and on the summary line, never folded into
+   * `evidence` — the verdict and its evidence stand as decided.
+   */
+  readonly teardownFailure?: string;
   /** The profile's notifyHandle at revert time; absent = not configured (D6). */
   readonly notifyHandle?: string;
 }
@@ -846,6 +860,12 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     const canaryBranch = `loop/canary-${input.issue.id}`;
     let canaryEvidence: string | undefined;
     let canaryGreen = false;
+    // WI-7 (FR-003): a teardown (close / branch-delete) failure, recorded
+    // BESIDE the verdict — never over it. The suite that already ran decided
+    // `canaryGreen`/`canaryEvidence`; bookkeeping that fails afterwards must
+    // not flip a green canary to red (that would revert a good merge) nor
+    // overwrite an already-decided evidence string.
+    let teardownFailure: string | undefined;
     try {
       const canary = await deps.createFixSandbox({
         cwd: input.repoDir,
@@ -874,8 +894,17 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
           }
         }
       } finally {
-        await canary.close();
-        await deps.deleteBranch(input.repoDir, canaryBranch);
+        // FR-003: recorded, never thrown past the verdict — a teardown failure
+        // that propagated here used to land in the outer catch and overwrite
+        // `canaryEvidence` (or bury itself on the green path). Ordering is
+        // unchanged: close first, then the branch delete, which a failed close
+        // still skips as before.
+        try {
+          await canary.close();
+          await deps.deleteBranch(input.repoDir, canaryBranch);
+        } catch (error) {
+          teardownFailure = error instanceof Error ? error.message : String(error);
+        }
       }
     } catch (error) {
       canaryEvidence = `canary sandbox failed to run: ${error instanceof Error ? error.message : String(error)}`;
@@ -906,6 +935,8 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
         ...prOutcome,
         merged: { prUrl, mergeCommit, canaryGreen: true },
         ...(closeFailure !== undefined ? { closeFailure } : {}),
+        // FR-003: the merged outcome stands; the teardown failure rides beside it.
+        ...(teardownFailure !== undefined ? { teardownFailure } : {}),
       };
     }
 
@@ -957,6 +988,9 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
           ? { revertCommit }
           : { revertFailure: revertFailure ?? "unknown revert failure" }),
         evidence,
+        // FR-003: teardown failure named in the record — never appended to
+        // `evidence`, which stands as the canary suite decided it.
+        ...(teardownFailure !== undefined ? { teardownFailure } : {}),
         ...(handle !== undefined ? { notifyHandle: handle } : {}),
       },
     };
@@ -1003,8 +1037,14 @@ export interface QueueSummary {
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
   readonly attachmentFailures: [string, string][];
   readonly prUrls: string[];
-  /** [id, prUrl, mergeCommit] — auto-merged (opted-in) verified PRs (WI-6). */
-  readonly mergedPrs: [string, string, string][];
+  /**
+   * [id, prUrl, mergeCommit] — auto-merged (opted-in) verified PRs (WI-6).
+   * WI-7 (FR-003) tuple growth: a 4th `teardownFailure` element is appended
+   * when the canary's teardown failed on an otherwise-green merge — the MERGED
+   * summary line names it inline, so it rides the existing tuple rather than
+   * a parallel summary field.
+   */
+  readonly mergedPrs: [string, string, string, string?][];
   /**
    * [id, reason] — auto-merge attempts that failed (WI-6 FR-004). Deliberate
    * choice: NOT a `failed` entry — the issue is fixed, verified, and PR'd; the
@@ -1125,7 +1165,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const failed: [string, string][] = [];
   const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
-  const mergedPrs: [string, string, string][] = [];
+  const mergedPrs: [string, string, string, string?][] = [];
   const mergeFailures: [string, string][] = [];
   const closeFailures: [string, string][] = [];
   const reviewSkipped: [string, string][] = [];
@@ -1181,7 +1221,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // QueueSummary.mergeFailures for why a merge failure is not an issue
       // failure); both get their own loud summary surfaces.
       if (outcome.merged !== undefined) {
-        mergedPrs.push([issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit]);
+        mergedPrs.push(
+          outcome.teardownFailure !== undefined
+            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, outcome.teardownFailure]
+            : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
+        );
       }
       if (outcome.mergeFailure !== undefined) {
         mergeFailures.push([issue.id, outcome.mergeFailure]);
@@ -1212,14 +1256,17 @@ export function formatSummary(summary: QueueSummary): string {
     ...summary.prUrls.map((url) => `PR: ${url}`),
     // A mergedPrs entry exists only on a canary-green merge (red reverts and
     // never reaches this list), so the canary result is pinned here (T4
-    // spec-review follow-up): a MERGED line without it hides the gate.
+    // spec-review follow-up): a MERGED line without it hides the gate. WI-7
+    // (FR-003): a 4th tuple element names a teardown failure on that merge.
     ...summary.mergedPrs.map(
-      ([id, url, mergeCommit]) => `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green)`,
+      ([id, url, mergeCommit, teardown]) =>
+        `MERGED ${id}: ${url} @ ${mergeCommit} (canary: green${teardown !== undefined ? `; teardown: ${teardown}` : ""})`,
     ),
     ...summary.reverted.map(
       (r) =>
         `⚠️ REVERTED ${r.id}: pr ${r.prUrl} merge ${r.mergeCommit} revert ` +
-        `${r.revertCommit ?? `FAILED (${r.revertFailure ?? "unknown"})`} — canary: ${r.evidence}\n` +
+        `${r.revertCommit ?? `FAILED (${r.revertFailure ?? "unknown"})`} — canary: ${r.evidence}` +
+        `${r.teardownFailure !== undefined ? `; teardown: ${r.teardownFailure}` : ""}\n` +
         (r.notifyHandle !== undefined ? `notify: @${r.notifyHandle}` : "notify handle not configured"),
     ),
     ...summary.uncanariedMerges.map(([id, detail]) => `⚠️ UNCANARIED MERGE ${id}: ${detail}`),

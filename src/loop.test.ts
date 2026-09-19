@@ -142,6 +142,10 @@ interface DepOverrides {
   commentThrows?: string;
   /** Simulated issue-close failure (gh error) on canary-green merged runs (WI-6 T5). */
   closeThrows?: string;
+  /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
+  canaryCloseThrows?: string;
+  /** Simulated canary-branch delete failure on opted-in runs (WI-7 FR-003). */
+  canaryDeleteBranchThrows?: string;
   /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
   reviewVerdict?: "approve" | "wrong" | "uncertain";
   /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
@@ -161,14 +165,24 @@ function makeDeps(overrides: DepOverrides = {}) {
       // not by call order — the preflight (loop/preflight-<id>) also forks
       // from main, so baseBranch alone cannot tell them apart.
       if (input.branch.startsWith("loop/canary-")) {
-        return overrides.canary ?? sandboxHandle(SUITE_AFTER_FIX);
+        const base = overrides.canary ?? sandboxHandle(SUITE_AFTER_FIX);
+        if (overrides.canaryCloseThrows !== undefined) {
+          const message = overrides.canaryCloseThrows;
+          return { ...base, async close() { throw new Error(message); } };
+        }
+        return base;
       }
       sandboxCalls += 1;
       return sandboxCalls === 1
         ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
         : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
     }),
-    deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {}),
+    deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {
+      // WI-7 FR-003: teardown failure knob — the canary branch delete refuses.
+      if (overrides.canaryDeleteBranchThrows !== undefined && _branch.startsWith("loop/canary-")) {
+        throw new Error(overrides.canaryDeleteBranchThrows);
+      }
+    }),
     createPr: vi.fn(async (args: { title: string; body: string }) => ({
       url: "https://github.com/manjula25/loop-fixtures-py/pull/9",
       ...args,
@@ -741,6 +755,61 @@ FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
     expect(outcome?.failureKind).toBe("harness");
     expect(outcome?.failure).toContain("UNCANARIED");
   });
+
+  // -------------------------------------------------------------------------
+  // WI-7 (FR-003): canary teardown failures. close() or the canary-branch
+  // delete can fail AFTER the suite already decided the verdict — teardown is
+  // bookkeeping, so a green canary stays merged (with the failure named) and a
+  // red one still reverts (with the failure named in the record). The verdict
+  // and its evidence are never overwritten.
+  // -------------------------------------------------------------------------
+
+  it("(l) green canary + close()-throwing canary sandbox: merged outcome stands (no revert), the teardown failure is recorded, and the MERGED summary line names it", async () => {
+    // Single-issue seam: the green verdict survives the teardown failure.
+    const deps = makeDeps({ canaryCloseThrows: "docker: container rm failed — busy" });
+
+    const outcome = await run(deps, optedInNotify);
+
+    expect(outcome.merged).toEqual({ prUrl: PR_URL, mergeCommit: "m0ckmerge", canaryGreen: true });
+    expect(deps.revertMerge).not.toHaveBeenCalled(); // a teardown failure never reverts a green merge
+    expect(outcome.reverted).toBeUndefined();
+    expect(outcome.teardownFailure).toContain("docker: container rm failed — busy");
+
+    // Queue seam: the failure rides the mergedPrs tuple into the summary line.
+    const { deps: queueDeps } = makeQueueDeps({ issues: [queueIssue(1)], canaryCloseThrowsFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps);
+
+    expect(summary.reverted).toEqual([]); // the queue did not treat it as red
+    expect(summary.mergedPrs).toEqual([
+      ["gh-1", "https://example/pr/fix/gh-1", "mdef456", "docker: container rm failed — busy"],
+    ]);
+    expect(formatSummary(summary)).toContain(
+      "MERGED gh-1: https://example/pr/fix/gh-1 @ mdef456 (canary: green; teardown: docker: container rm failed — busy)",
+    );
+  });
+
+  it("(m) red canary + throwing canary deleteBranch: the revert path still runs, the canary evidence is preserved, and the teardown failure is named in the RevertedRecord and the ⚠️ REVERTED summary line", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1)],
+      canaryNewFailureFor: "gh-1",
+      canaryDeleteBranchThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(QueueAbortedError); // red halts the queue, teardown failure or not
+    const aborted = error as QueueAbortedError;
+    expect(deps.revertMerge).toHaveBeenCalledTimes(1); // the revert path ran unchanged
+    const record = aborted.summary.reverted[0]!;
+    // verdict preservation: the evidence is the suite's new failure, not a teardown error
+    expect(record.evidence).toContain("tests/test_contract.py::test_zero_contract");
+    expect(record.evidence).not.toContain("sandbox failed to run");
+    expect(record.teardownFailure).toContain("git: branch -D refused — worktree busy");
+    expect(formatSummary(aborted.summary)).toContain("teardown: git: branch -D refused — worktree busy");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1137,6 +1206,10 @@ interface QueueDepsConfig {
   commentThrowsFor?: string;
   /** Issue close throws (gh error) for this id — bookkeeping failure on a merged outcome (WI-6 T5). */
   closeThrowsFor?: string;
+  /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
+  canaryCloseThrowsFor?: string;
+  /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
+  canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
   reviewVerdict?: "approve" | "wrong" | "uncertain";
   /** Raw reviewer stdout — overrides reviewVerdict (off-contract replies). */
@@ -1184,7 +1257,12 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
           : config.canaryNewFailureFor === active.id
             ? CANARY_RED_QUEUE_SUITE
             : SUITE_AFTER_FIX;
-        return track(issueSandbox(active, suite, 0, config.canaryInstallFailFor === active.id ? 1 : 0));
+        const handle = issueSandbox(active, suite, 0, config.canaryInstallFailFor === active.id ? 1 : 0);
+        // WI-7 FR-003: the canary sandbox's close() can be made to refuse.
+        if (config.canaryCloseThrowsFor === active.id) {
+          return track({ ...handle, async close() { throw new Error("docker: container rm failed — busy"); } });
+        }
+        return track(handle);
       }
       if (input.baseBranch === "main") {
         // baseline preflight
@@ -1194,7 +1272,12 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       const fails = config.failReproFor === active.id;
       return track(issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0));
     }),
-    deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {}),
+    deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {
+      // WI-7 FR-003: the canary branch delete can be made to refuse.
+      if (config.canaryDeleteBranchThrowsFor !== undefined && _branch === `loop/canary-${config.canaryDeleteBranchThrowsFor}`) {
+        throw new Error("git: branch -D refused — worktree busy");
+      }
+    }),
     createPr: vi.fn(async (args: { head: string }) => ({ url: `https://example/pr/${args.head}` })),
     mergePr: vi.fn(async (input: { prUrl: string }) => {
       if (config.mergeThrowsFor !== undefined && input.prUrl.includes(config.mergeThrowsFor)) {
