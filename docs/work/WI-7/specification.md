@@ -2,7 +2,8 @@
 
 ## Status
 
-Draft
+Approved (owner, 2026-09-19 — including the FR-002 failure shape: comment +
+halt, no blind revert)
 
 ## Source artifacts
 
