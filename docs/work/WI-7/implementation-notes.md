@@ -85,3 +85,77 @@ accounted):**
 tsc only. The `main()` CLI wiring is typechecked but not executed end-to-end
 against a live GitHub remote (no gh/network run) — integration evidence belongs
 to a later pipeline task, recorded as a non-claim in verification.md.
+
+---
+
+## Task 2 — uncanaried-merge failure surface (FR-002, ticket 2)
+
+- **Size:** medium (new `LoopOutcome.uncanaried` record + `QueueSummary`
+  field + loud summary line + try/catch around `syncMain` in the auto-merge
+  chain; tests across single-issue and queue modes).
+- **Risk:** medium — modifies the WI-6 auto-merge chain tail (the same region
+  canary/revert logic lives in); the outcome record must mirror `RevertedRecord`
+  posture (no `prUrl` on the outcome). Confidentiality seam applies to the new
+  PR-comment body (`assertNoSecrets` before `commentOnPr`).
+- **Budget:** one leaf implementer session; vitest only, no Docker, no network.
+- **Evidence boundary:** loop seam with a throwing `syncMain` dep; no canary
+  result claimed for the uncanaried merge; no sync retry.
+- **Fixed point:** `be5f210` (clean tree, T1 accepted).
+- **Intended candidate:** working tree vs `be5f210`; commit message
+  `feat(WI-7): uncanaried-merge failure surface — comment, summary line, halt, no blind revert (FR-002)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `27abf15` (commit `feat(WI-7): uncanaried-merge failure surface —
+comment, summary line, halt, no blind revert (FR-002)`), base `be5f210`.
+Changed paths: `src/loop.ts`, `src/loop.test.ts` (the only two permitted).
+
+**Leaf report:** one leaf session (~15 tool calls, ~5 min). No deviations.
+
+**RED (leaf-observed against unchanged production):** the `syncMain` throw
+propagated raw — `Error: divergent main` at `runSingleIssue src/loop.ts:775`;
+queue tests `expected Error: divergent main to be an instance of
+QueueAbortedError`; override path same raw throw via `runOverrideIssue
+src/loop.ts:1244`. Exactly the predicted propagation.
+
+**GREEN:** try/catch around `await deps.syncMain(...)` at the canary block's
+start; shared `uncanariedDetail()` helper builds the line body once so the
+outcome failure string, the queue tuple, and `formatSummary`'s
+`⚠️ UNCANARIED MERGE` line agree byte-for-byte by construction;
+`assertNoSecrets` before best-effort `commentOnPr` (inside the best-effort try,
+sibling revert-comment idiom); `QueueSummary.uncanariedMerges` collected before
+the abort throw; no CLI code changed (no-prUrl outcome rides the existing
+guarded `Loop finished without a PR` path, exit 1). 4 new tests (i)–(l).
+
+**Controller gate re-run fresh at `27abf15`:** focused `src/loop.test.ts`
+94/94 (90+4); `npm run typecheck` exit 0; full `npm test` 10 files / 202 tests
+(198+4) exit 0.
+
+**Reviews (fixed package base `be5f210` → candidate `27abf15`):**
+- Specification review: **PASS**, zero blocking. Verified outcome shape (no
+  prUrl on the outcome), exact-pinned summary line, try/catch placement,
+  secrets-guard idiom, no blind revert (revertMerge + canary sandbox
+  unreachable), all four test scenarios, scope clean (auto-merge gating
+  untouched — hard constraint 1 intact).
+- Code-quality review: **APPROVED**, zero critical/important blocking.
+
+**Adjacent follow-ups (recorded, not fixed):**
+- `syncMainThrowsFor`/`commentThrowsFor` queue-harness knobs throw
+  unconditionally when set (names/doc over-promise per-id filtering; the token
+  in test (k) is decorative) — harmless in current tests; filter or reword if
+  a future multi-issue test needs targeting.
+- `commentNote` vocabulary drift between the reverted twin (bakes in
+  `comment: `) and the new bare `posted`/`FAILED (…)` form — machine-comparable
+  is arguably cleaner; alignment pass is ticket-5 territory if at all.
+- Outcome `failure` string not exact-pinned (only `.toContain`) — matches house
+  idiom; a one-line pin of the outcome side would be near-free.
+- Uncanaried path deliberately does not @-mention `notifyHandle` (plan's line
+  format omits it) — any uncanaried @-notification needs its own FR.
+- The `⚠️ UNCANARIED MERGE` prefix is constructed at two call sites via the
+  shared helper — consolidation candidate for ticket 5, same as the reverted
+  path's analogous duplication.
+
+**Evidence boundary / non-claims:** vitest public-seam suite + tsc only; the
+sync failure is exercised via the LoopDeps seam (consistent with sibling
+revert/canary testing). No Docker/pipeline-integration run of the uncanaried
+path against a real repo.
