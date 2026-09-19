@@ -74,12 +74,13 @@ Fixtures repo — `src/loopfix/numops.py` (new), two new issues via gh.
 
    Commit to fixtures `main` as `seed(numops): add clamp and mean helpers`
    and push. No tests for these functions are committed (dormant bugs).
-5. **Seed checks:** in a clean scratch clone (or the same clone pulled
-   forward): `pip install -e ".[test]"` + `pytest -q` — expect the same
-   passing count as before the seed (green; only new source, no new tests).
-   `npx tsx scripts/preflight-check.ts` (from the worktree, against the
-   fixtures repo) — expect baseline MATCH, throwaway preflight branch
-   auto-deleted.
+5. **Seed checks:** in the existing fixtures clone pulled forward:
+   `pip install -e ".[test]"` + `pytest -q` — expect the same passing count
+   as before the seed (green; only new source, no new tests). The clean-room
+   property is carried by the preflight: `npx tsx scripts/preflight-check.ts`
+   (from the worktree, against the fixtures repo) — expect baseline MATCH in
+   its fresh Docker sandbox, throwaway preflight branch auto-deleted (and
+   Task 4's fresh scratch clone is the final clean-room proof).
 6. **Issues:** create two issues on `manjula25/loop-fixtures-py` (next
    sequential numbers — expected #21/#22; record actuals):
    - **clamp issue** (plain style): title `clamp: negative values fall
