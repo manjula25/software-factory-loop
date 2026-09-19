@@ -136,3 +136,23 @@ stale WI-6 comment wording; naming tension. None blocking.
 **Evidence boundary / non-claims:** the builder is unit-proven; main()'s thin
 emit loop is typechecked + seam-verified (house precedent), not CLI-executed
 in tests. No queue-mode output change; exit-code semantics unchanged.
+
+---
+
+## Task 3 — uncanaried merge pings the notify handle (FR-003, slice 3)
+
+- **Size:** small (`UncanariedRecord` gains `notifyHandle?`; the uncanaried
+  comment body appends a cc @-mention when configured; `uncanariedDetail`
+  appends the notify posture; 2 new tests reusing existing knobs).
+- **Risk:** low-medium — touches the WI-7 FR-002 surface (uncanaried catch in
+  runCanary) and a shared detail helper whose output is exact-pinned by
+  existing tests (the suffix must stay absent when no handle is configured…
+  no — existing pins DO change on the no-handle posture: check and update the
+  WI-7 exact-pins in the same commit if the not-configured posture is
+  appended unconditionally).
+- **Budget:** one leaf implementer session; vitest only.
+- **Evidence boundary:** loop seam with the throwing `syncMain` knob (WI-7
+  FR-002 idiom); no new notification channels.
+- **Fixed point:** `eb54918` (clean tree, T2 accepted).
+- **Intended candidate:** working tree vs `eb54918`; commit message
+  `feat(WI-8): uncanaried merge pings the configured notify handle (FR-003)`.
