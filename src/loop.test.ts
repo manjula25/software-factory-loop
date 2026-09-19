@@ -67,6 +67,11 @@ FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueE
 const SUITE_AFTER_FIX = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
 FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
 2 failed, 5 passed in 0.8s`; // only baseline failures remain
+/** Canary-red suite: one failure the baseline does not have — the red trigger (single-issue and queue seams share it). */
+const CANARY_RED_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
+FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
+FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
+3 failed, 4 passed in 0.8s`;
 
 function agentStdout(): string {
   return `work work work
@@ -445,11 +450,6 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
   const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
   const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
     runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
-  /** Suite with a failure the baseline does not have — the canary-red trigger. */
-  const CANARY_RED_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
-FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
-FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
-3 failed, 4 passed in 0.8s`;
 
   it("(a) merged success: syncMain first; canary sandbox created on loop/canary-<id> from main; install + testCmd run inside; result recorded; sandbox closed and canary branch deleted", async () => {
     const canary = trackedCanary(SUITE_AFTER_FIX); // green: failures ⊆ baseline
@@ -830,11 +830,6 @@ describe("issue closing on merge (WI-6 T5, FR-008)", () => {
   /** File-sourced fixtures — the repro path differs from the module-level gh fixture, so their runs use the per-issue sandbox. */
   const specIssue: NormalizedIssue = { id: "spec-slug-first-char", description: "# slug symptom", sourceType: "spec-doc" };
   const plainIssue: NormalizedIssue = { id: "list-stale-pin", description: "stale pin after restart", sourceType: "plain-list" };
-  /** Suite with a failure the baseline does not have — the canary-red trigger. */
-  const CANARY_RED = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
-FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
-FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
-3 failed, 4 passed in 0.8s`;
 
   it("(a) merged + canary green + github-issue: closeIssue called exactly once with the issue and a comment naming the PR url and merge commit", async () => {
     const deps = makeDeps({ mergeCommit: "c105e777" });
@@ -866,7 +861,7 @@ FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
   });
 
   it("(c) reverted (canary red): closeIssue never called even for a github-issue — the issue was reverted and stays queued (FR-006)", async () => {
-    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED) });
+    const deps = makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) });
 
     await run(deps, issue);
 
@@ -1070,6 +1065,13 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
+  /** Advance upstream main by one commit ("two") — the shared sync preamble. */
+  const advanceUpstream = (dir: string) => {
+    writeFileSync(join(dir, "a.txt"), "two\n");
+    git(dir, "add", "a.txt");
+    git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+  };
+
   const makeRepoPair = async () => {
     const root = await mkdtemp(join(tmpdir(), "syncmain-"));
     const upstream = join(root, "upstream");
@@ -1086,9 +1088,7 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
   it("fast-forwards a CHECKED-OUT main to origin (the case the loop always hits)", () => {
     return makeRepoPair().then(({ root, upstream, target }) => {
       try {
-        writeFileSync(join(upstream, "a.txt"), "two\n");
-        git(upstream, "add", "a.txt");
-        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        advanceUpstream(upstream);
         expect(git(target, "rev-parse", "HEAD")).not.toBe(git(upstream, "rev-parse", "HEAD"));
         expect(() => syncMainToOrigin(target)).not.toThrow();
         expect(git(target, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
@@ -1101,9 +1101,7 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
   it("syncs main via the fetch-ref form when main is NOT the current branch", () => {
     return makeRepoPair().then(({ root, upstream, target }) => {
       try {
-        writeFileSync(join(upstream, "a.txt"), "two\n");
-        git(upstream, "add", "a.txt");
-        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        advanceUpstream(upstream);
         git(target, "checkout", "-q", "-b", "fix/other");
         expect(() => syncMainToOrigin(target)).not.toThrow();
         expect(git(target, "rev-parse", "main")).toBe(git(upstream, "rev-parse", "HEAD"));
@@ -1117,9 +1115,7 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
   it("throws loudly on a divergent main — no canary on a main we cannot sync", () => {
     return makeRepoPair().then(({ root, upstream, target }) => {
       try {
-        writeFileSync(join(upstream, "a.txt"), "two\n");
-        git(upstream, "add", "a.txt");
-        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        advanceUpstream(upstream);
         writeFileSync(join(target, "b.txt"), "local\n");
         git(target, "add", "b.txt");
         git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local");
@@ -1140,9 +1136,7 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
     return makeRepoPair().then(({ root, upstream, target }) => {
       try {
         // origin/main moves ahead
-        writeFileSync(join(upstream, "a.txt"), "two\n");
-        git(upstream, "add", "a.txt");
-        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        advanceUpstream(upstream);
         // local main gains its own commit — main is now diverged from origin/main
         writeFileSync(join(target, "b.txt"), "local\n");
         git(target, "add", "b.txt");
@@ -1170,9 +1164,7 @@ describe("syncMainToOrigin (WI-6 T4 defect fix — real git wiring, FR-005/D3)",
         git(target, "add", "c.txt");
         git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "fix");
         git(target, "push", "-q", "origin", "fix/gh-1");
-        writeFileSync(join(upstream, "a.txt"), "two\n");
-        git(upstream, "add", "a.txt");
-        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "two");
+        advanceUpstream(upstream);
         git(upstream, "branch", "-D", "fix/gh-1");
         expect(git(target, "branch", "-r")).toContain("origin/fix/gh-1"); // stale ref present
         expect(() => syncMainToOrigin(target)).not.toThrow();
@@ -1282,12 +1274,6 @@ interface QueueDepsConfig {
   reviewThrows?: string;
 }
 
-/** Canary-red suite for the queue harness: one failure outside the baseline. */
-const CANARY_RED_QUEUE_SUITE = `FAILED tests/test_textops.py::TestTitlecase::test_capitalizes_each_word - AssertionError
-FAILED tests/test_dates.py::TestParseIso8601::test_utc_timestamp_with_z - ValueError
-FAILED tests/test_contract.py::test_zero_contract - ZeroDivisionError
-3 failed, 4 passed in 0.8s`;
-
 function makeQueueDeps(config: QueueDepsConfig = {}) {
   const issues = config.issues ?? [issue];
   let active: NormalizedIssue = issues[0]!;
@@ -1319,7 +1305,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         const suite = config.canaryUnreadableFor === active.id
           ? ""
           : config.canaryNewFailureFor === active.id
-            ? CANARY_RED_QUEUE_SUITE
+            ? CANARY_RED_SUITE
             : SUITE_AFTER_FIX;
         const handle = issueSandbox(active, suite, 0, config.canaryInstallFailFor === active.id ? 1 : 0);
         // WI-7 FR-003: the canary sandbox's close() can be made to refuse.

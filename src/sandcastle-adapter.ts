@@ -168,17 +168,24 @@ export const TRIAGE_BRANCH = "loop/triage";
 export const REVIEW_BRANCH = "loop/review";
 
 /**
+ * The shape of a bounded one-shot pass's cost controls (see
+ * `boundedRunOptions`): named, so the budget bound is declared (and asserted)
+ * once instead of as an inline literal at every factory.
+ */
+export interface BoundedRunOptions {
+  readonly name: string;
+  readonly maxIterations: number;
+  readonly branchStrategy: NamedBranchStrategy;
+}
+
+/**
  * The shared cost-control factory for every bounded one-shot pass (WI-6 R2):
  * `maxIterations: 1` is what makes an auxiliary pass cheap enough to be worth
  * running at all (constraint 5) — a pass that could iterate would be an
  * unbounded second agent. Both the triage pass and the pre-merge review pass
  * build their options here, so the budget bound lives (and is asserted) once.
  */
-export function boundedRunOptions(name: string, branch: string): {
-  readonly name: string;
-  readonly maxIterations: number;
-  readonly branchStrategy: NamedBranchStrategy;
-} {
+export function boundedRunOptions(name: string, branch: string): BoundedRunOptions {
   return {
     name,
     maxIterations: 1,
@@ -190,11 +197,7 @@ export function boundedRunOptions(name: string, branch: string): {
  * The triage pass's cost controls, as a value rather than an inline literal, so
  * they are assertable without spending a model call (see `boundedRunOptions`).
  */
-export function triageRunOptions(): {
-  readonly name: string;
-  readonly maxIterations: number;
-  readonly branchStrategy: NamedBranchStrategy;
-} {
+export function triageRunOptions(): BoundedRunOptions {
   return boundedRunOptions("triage", TRIAGE_BRANCH);
 }
 

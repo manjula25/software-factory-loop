@@ -77,8 +77,8 @@ export interface ProjectProfile {
   /**
    * Opt-in to automatic squash-merge of verified PRs (WI-6). Recorded only by
    * `--auto-merge` at onboarding; absent = off (the default — a human merges
-   * every PR). Hand-editable in profile.json. The harness's own repo never
-   * sets it (constraint 1, amended 2026-09-18).
+   * every PR). Hand-editable only by a human, outside the harness. The
+   * harness's own repo never sets it (constraint 1, amended 2026-09-18).
    */
   readonly autoMerge?: boolean;
   /**
@@ -747,57 +747,12 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
-    // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass — after
-    // createPr, before mergePr, completing FR-004's order: verification →
-    // review → merge. One bounded cheap-model call judging the fix diff
-    // against the report. Only an explicit approve reaches mergePr; anything
-    // else — wrong, uncertain (which is also what an unparseable verdict or a
-    // failed/unavailable reviewer maps to), or even a diff/prompt failure —
-    // skips the merge, comments the skip reason on the PR (best-effort), and
-    // the run continues: the PR stays open for a human.
-    let verdict: ReviewVerdict;
-    let reviewNote: string | undefined;
-    try {
-      const diff = await deps.fixDiff(input.repoDir, branch);
-      const reviewPrompt = buildReviewPrompt(input.issue, diff);
-      // The prompt reaches a third-party API — guard it before the call, like
-      // every other emitted string.
-      assertNoSecrets([reviewPrompt], deps.env);
-      try {
-        const stdout = await deps.runReview({
-          cwd: input.repoDir,
-          prompt: reviewPrompt,
-          imageName: input.imageName,
-          agent: input.agent,
-          diff,
-        });
-        verdict = parseReviewOutput(stdout);
-      } finally {
-        // Runs on the throw path too, so a failed pass never leaks the branch.
-        await deps.deleteBranch(input.repoDir, REVIEW_BRANCH);
-      }
-    } catch (error) {
-      verdict = "uncertain";
-      reviewNote = error instanceof Error ? error.message : String(error);
-    }
-    if (verdict !== "approve") {
-      const reason =
-        verdict === "wrong"
-          ? "review verdict: wrong — the diff does not address the reported issue"
-          : reviewNote !== undefined
-            ? `review unavailable (${reviewNote}) — treated as uncertain`
-            : "review verdict: uncertain";
-      const skipBody =
-        `Auto-merge skipped: ${reason}.\n` +
-        `The fix is independently verified in a fresh sandbox; this PR stays open for a human to review and merge.`;
-      let commentNote = "";
-      try {
-        assertNoSecrets([skipBody], deps.env);
-        await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: skipBody });
-      } catch (error) {
-        commentNote = ` (skip comment FAILED: ${error instanceof Error ? error.message : String(error)})`;
-      }
-      return { ...prOutcome, reviewSkip: `${reason}${commentNote}` };
+    // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
+    // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
+    // other outcome returns a PR'd result carrying the skip reason.
+    const review = await runPreMergeReview(input, deps, prUrl);
+    if (!review.approved) {
+      return { ...prOutcome, reviewSkip: review.reviewSkip };
     }
     let mergeCommit: string;
     try {
@@ -810,192 +765,272 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
       return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
     }
 
-    // WI-6 T4 (D2/D3, FR-005): the post-merge canary. A third sandbox, on a
-    // throwaway branch forked from SYNCED main, runs install + the full suite
-    // (the repro test is in the suite now — the merge landed it). Green iff
-    // the output is readable AND every parsed failure is in the baseline —
-    // the same new-failure rule as diffVerification. The canary runs even
-    // though pre-merge verification was green: what it guards is the merge
-    // itself (squash semantics, a base that moved). A canary that cannot
-    // start is red (FR-005 boundary).
-    //
-    // WI-7 (FR-002): the one canary precondition that must NOT be treated as
-    // red is the sync itself failing — a divergent or broken clone says
-    // nothing about the merge, and reverting a possibly-fine merge (or
-    // canarying a stale main) would both be wrong. The merge stands but is
-    // UNVERIFIED: comment on the PR (best-effort), return a harness-level
-    // uncanaried outcome — no prUrl, mirroring `reverted` — and let the queue
-    // halt. A human decides: revert manually or re-verify after fixing the
-    // clone.
+    // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
+    // base, run the canary suite on it, then close or revert per its verdict
+    // (`runCanary`).
+    return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+  }
+  return prOutcome;
+}
+
+/**
+ * WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass — after createPr,
+ * before mergePr, completing FR-004's order: verification → review → merge.
+ * One bounded cheap-model call judging the fix diff against the report. Only
+ * an explicit approve returns `approved: true`; anything else — wrong,
+ * uncertain (which is also what an unparseable verdict or a failed/unavailable
+ * reviewer maps to), or even a diff/prompt failure — skips the merge and
+ * comments the skip reason on the PR (best-effort), and the caller leaves the
+ * PR open for a human: the run continues.
+ */
+async function runPreMergeReview(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  prUrl: string,
+): Promise<{ readonly approved: true } | { readonly approved: false; readonly reviewSkip: string }> {
+  const branch = fixBranch(input.issue);
+  let verdict: ReviewVerdict;
+  let reviewNote: string | undefined;
+  try {
+    const diff = await deps.fixDiff(input.repoDir, branch);
+    const reviewPrompt = buildReviewPrompt(input.issue, diff);
+    // The prompt reaches a third-party API — guard it before the call, like
+    // every other emitted string.
+    assertNoSecrets([reviewPrompt], deps.env);
     try {
-      await deps.syncMain(input.repoDir);
-    } catch (error) {
-      const syncFailure = error instanceof Error ? error.message : String(error);
-      const commentBody =
-        `⚠️ UNCANARIED: this merge (${mergeCommit}) was NOT canaried — syncing the local clone to the merged base failed: ${syncFailure}. ` +
-        `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.`;
-      let commentNote: string;
-      try {
-        assertNoSecrets([commentBody], deps.env);
-        await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: commentBody });
-        commentNote = "posted";
-      } catch (commentError) {
-        commentNote = `FAILED (${commentError instanceof Error ? commentError.message : String(commentError)})`;
-      }
-      const uncanaried: UncanariedRecord = {
-        id: input.issue.id,
-        prUrl,
-        mergeCommit,
-        syncFailure,
-        commentNote,
-      };
-      return {
-        branch,
-        failure: `⚠️ UNCANARIED MERGE ${input.issue.id}: ${uncanariedDetail(uncanaried)}`,
-        failureKind: "harness",
-        ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
-        uncanaried,
-      };
-    }
-    const canaryBranch = `loop/canary-${input.issue.id}`;
-    let canaryEvidence: string | undefined;
-    let canaryGreen = false;
-    // WI-7 (FR-003): a teardown (close / branch-delete) failure, recorded
-    // BESIDE the verdict — never over it. The suite that already ran decided
-    // `canaryGreen`/`canaryEvidence`; bookkeeping that fails afterwards must
-    // not flip a green canary to red (that would revert a good merge) nor
-    // overwrite an already-decided evidence string.
-    let teardownFailure: string | undefined;
-    try {
-      const canary = await deps.createFixSandbox({
+      const stdout = await deps.runReview({
         cwd: input.repoDir,
-        branch: canaryBranch,
-        baseBranch: "main",
+        prompt: reviewPrompt,
         imageName: input.imageName,
+        agent: input.agent,
+        diff,
       });
-      try {
-        const install = await canary.exec(input.profile.installCmd);
-        if (install.exitCode !== 0) {
-          canaryEvidence = `canary install command exited ${install.exitCode} on merged main`;
-        } else {
-          const suite = await canary.exec(input.profile.testCmd);
-          const parsed = parseSuiteOrReject(suite.stdout);
-          if (!parsed.ok) {
-            canaryEvidence = `canary ${parsed.reason}`;
-          } else {
-            const newFailures = parsed.failures.filter(
-              (f) => !input.profile.baselineFailures.includes(f),
-            );
-            if (newFailures.length > 0) {
-              canaryEvidence = `canary new failures vs baseline on merged main: ${newFailures.join(", ")}`;
-            } else {
-              canaryGreen = true;
-            }
-          }
-        }
-      } finally {
-        // FR-003: recorded, never thrown past the verdict — a teardown failure
-        // that propagated here used to land in the outer catch and overwrite
-        // `canaryEvidence` (or bury itself on the green path). Ordering is
-        // unchanged: close first, then the branch delete, which a failed close
-        // still skips as before.
-        try {
-          await canary.close();
-          await deps.deleteBranch(input.repoDir, canaryBranch);
-        } catch (error) {
-          teardownFailure = error instanceof Error ? error.message : String(error);
-        }
-      }
-    } catch (error) {
-      canaryEvidence = `canary sandbox failed to run: ${error instanceof Error ? error.message : String(error)}`;
+      verdict = parseReviewOutput(stdout);
+    } finally {
+      // Runs on the throw path too, so a failed pass never leaks the branch.
+      await deps.deleteBranch(input.repoDir, REVIEW_BRANCH);
     }
-
-    if (canaryGreen) {
-      // WI-6 T5 (FR-008, D3 ordering merge → canary → close): the last link of
-      // the green chain. Only gh-sourced issues have something external to
-      // close — spec-doc/plain-list are a no-op. Best-effort: the fix is
-      // merged and canary-green, so closing is bookkeeping; a failure is
-      // recorded loudly on the merged outcome, never thrown (FR-008 boundary).
-      let closeFailure: string | undefined;
-      if (input.issue.sourceType === "github-issue") {
-        const closeComment =
-          `Closed by the fix loop: the fix PR ${prUrl} was squash-merged ` +
-          `(merge commit ${mergeCommit}) and the post-merge canary suite on the base ` +
-          `branch is green — no new failures versus the onboarding baseline.`;
-        try {
-          assertNoSecrets([closeComment], deps.env);
-          await deps.closeIssue(input.repoDir, input.issue, closeComment);
-        } catch (error) {
-          closeFailure =
-            `issue close failed for ${input.issue.url ?? input.issue.id}: ` +
-            `${error instanceof Error ? error.message : String(error)}`;
-        }
-      }
-      return {
-        ...prOutcome,
-        merged: { prUrl, mergeCommit, canaryGreen: true },
-        ...(closeFailure !== undefined ? { closeFailure } : {}),
-        // FR-003: the merged outcome stands; the teardown failure rides beside it.
-        ...(teardownFailure !== undefined ? { teardownFailure } : {}),
-      };
-    }
-
-    // WI-6 T4 (FR-006/FR-007): red main is a stop-the-line event. Revert
-    // (best-effort), notify on the merged PR (best-effort), then return a
-    // harness-level failure — the queue halts on it and the CLI exits 1.
-    // Deliberately NO prUrl/merged on this outcome: a reverted issue is not
-    // fixed, and splitQueue's revert guard keeps it queued (FR-006).
-    const evidence = canaryEvidence ?? "canary went red";
-    let revertCommit: string | undefined;
-    let revertFailure: string | undefined;
-    let revertNote: string;
+  } catch (error) {
+    verdict = "uncertain";
+    reviewNote = error instanceof Error ? error.message : String(error);
+  }
+  if (verdict !== "approve") {
+    const reason =
+      verdict === "wrong"
+        ? "review verdict: wrong — the diff does not address the reported issue"
+        : reviewNote !== undefined
+          ? `review unavailable (${reviewNote}) — treated as uncertain`
+          : "review verdict: uncertain";
+    const skipBody =
+      `Auto-merge skipped: ${reason}.\n` +
+      `The fix is independently verified in a fresh sandbox; this PR stays open for a human to review and merge.`;
+    let commentNote = "";
     try {
-      revertCommit = (await deps.revertMerge({ repoDir: input.repoDir, mergeCommit })).revertCommit;
-      revertNote = `revert: ${revertCommit}`;
+      assertNoSecrets([skipBody], deps.env);
+      await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: skipBody });
     } catch (error) {
-      revertFailure = error instanceof Error ? error.message : String(error);
-      revertNote = `revert: FAILED (${revertFailure})`;
+      commentNote = ` (skip comment FAILED: ${error instanceof Error ? error.message : String(error)})`;
     }
-    const handle = input.profile.notifyHandle;
-    const commentBody = [
-      `${handle !== undefined ? `@${handle} ` : ""}⚠️ REVERTED: the merge of this PR (${mergeCommit}) was automatically reverted.`,
-      `The post-merge canary suite on main went red — ${evidence}.`,
-      revertCommit !== undefined
-        ? `Revert commit: ${revertCommit}.`
-        : `The revert itself FAILED: ${revertFailure}.`,
-      "The run has been halted; the issue returns to the queue for a human decision.",
-    ].join("\n");
+    return { approved: false, reviewSkip: `${reason}${commentNote}` };
+  }
+  return { approved: true };
+}
+
+/**
+ * WI-6 T4 (D2/D3, FR-005): the post-merge canary. A third sandbox, on a
+ * throwaway branch forked from SYNCED main, runs install + the full suite
+ * (the repro test is in the suite now — the merge landed it). Green iff
+ * the output is readable AND every parsed failure is in the baseline —
+ * the same new-failure rule as diffVerification. The canary runs even
+ * though pre-merge verification was green: what it guards is the merge
+ * itself (squash semantics, a base that moved). A canary that cannot
+ * start is red (FR-005 boundary).
+ *
+ * WI-7 (FR-002): the one canary precondition that must NOT be treated as
+ * red is the sync itself failing — a divergent or broken clone says
+ * nothing about the merge, and reverting a possibly-fine merge (or
+ * canarying a stale main) would both be wrong. The merge stands but is
+ * UNVERIFIED: comment on the PR (best-effort), return a harness-level
+ * uncanaried outcome — no prUrl, mirroring `reverted` — and let the queue
+ * halt. A human decides: revert manually or re-verify after fixing the
+ * clone.
+ */
+async function runCanary(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  prOutcome: LoopOutcome,
+  prUrl: string,
+  mergeCommit: string,
+  attachmentFailures: readonly string[],
+): Promise<LoopOutcome> {
+  const branch = fixBranch(input.issue);
+  try {
+    await deps.syncMain(input.repoDir);
+  } catch (error) {
+    const syncFailure = error instanceof Error ? error.message : String(error);
+    const commentBody =
+      `⚠️ UNCANARIED: this merge (${mergeCommit}) was NOT canaried — syncing the local clone to the merged base failed: ${syncFailure}. ` +
+      `The merge stands on the base branch but was never verified there. A human must decide: revert the merge manually or re-verify after fixing the clone.`;
     let commentNote: string;
     try {
       assertNoSecrets([commentBody], deps.env);
       await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: commentBody });
-      commentNote = "comment: posted";
-    } catch (error) {
-      commentNote = `comment: FAILED (${error instanceof Error ? error.message : String(error)})`;
+      commentNote = "posted";
+    } catch (commentError) {
+      commentNote = `FAILED (${commentError instanceof Error ? commentError.message : String(commentError)})`;
     }
+    const uncanaried: UncanariedRecord = {
+      id: input.issue.id,
+      prUrl,
+      mergeCommit,
+      syncFailure,
+      commentNote,
+    };
     return {
       branch,
-      failure:
-        `⚠️ REVERTED ${input.issue.id}: merge ${mergeCommit} reverted after canary went red — ` +
-        `${evidence}; ${revertNote}; ${commentNote}; notify: ${handle ?? "not configured"}`,
+      failure: `⚠️ UNCANARIED MERGE ${input.issue.id}: ${uncanariedDetail(uncanaried)}`,
       failureKind: "harness",
       ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
-      reverted: {
-        id: input.issue.id,
-        prUrl,
-        mergeCommit,
-        ...(revertCommit !== undefined
-          ? { revertCommit }
-          : { revertFailure: revertFailure ?? "unknown revert failure" }),
-        evidence,
-        // FR-003: teardown failure named in the record — never appended to
-        // `evidence`, which stands as the canary suite decided it.
-        ...(teardownFailure !== undefined ? { teardownFailure } : {}),
-        ...(handle !== undefined ? { notifyHandle: handle } : {}),
-      },
+      uncanaried,
     };
   }
-  return prOutcome;
+  const canaryBranch = `loop/canary-${input.issue.id}`;
+  let canaryEvidence: string | undefined;
+  let canaryGreen = false;
+  // WI-7 (FR-003): a teardown (close / branch-delete) failure, recorded
+  // BESIDE the verdict — never over it. The suite that already ran decided
+  // `canaryGreen`/`canaryEvidence`; bookkeeping that fails afterwards must
+  // not flip a green canary to red (that would revert a good merge) nor
+  // overwrite an already-decided evidence string.
+  let teardownFailure: string | undefined;
+  try {
+    const canary = await deps.createFixSandbox({
+      cwd: input.repoDir,
+      branch: canaryBranch,
+      baseBranch: "main",
+      imageName: input.imageName,
+    });
+    try {
+      const install = await canary.exec(input.profile.installCmd);
+      if (install.exitCode !== 0) {
+        canaryEvidence = `canary install command exited ${install.exitCode} on merged main`;
+      } else {
+        const suite = await canary.exec(input.profile.testCmd);
+        const parsed = parseSuiteOrReject(suite.stdout);
+        if (!parsed.ok) {
+          canaryEvidence = `canary ${parsed.reason}`;
+        } else {
+          const newFailures = parsed.failures.filter(
+            (f) => !input.profile.baselineFailures.includes(f),
+          );
+          if (newFailures.length > 0) {
+            canaryEvidence = `canary new failures vs baseline on merged main: ${newFailures.join(", ")}`;
+          } else {
+            canaryGreen = true;
+          }
+        }
+      }
+    } finally {
+      // FR-003: recorded, never thrown past the verdict — a teardown failure
+      // that propagated here used to land in the outer catch and overwrite
+      // `canaryEvidence` (or bury itself on the green path). Ordering is
+      // unchanged: close first, then the branch delete, which a failed close
+      // still skips as before.
+      try {
+        await canary.close();
+        await deps.deleteBranch(input.repoDir, canaryBranch);
+      } catch (error) {
+        teardownFailure = error instanceof Error ? error.message : String(error);
+      }
+    }
+  } catch (error) {
+    canaryEvidence = `canary sandbox failed to run: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (canaryGreen) {
+    // WI-6 T5 (FR-008, D3 ordering merge → canary → close): the last link of
+    // the green chain. Only gh-sourced issues have something external to
+    // close — spec-doc/plain-list are a no-op. Best-effort: the fix is
+    // merged and canary-green, so closing is bookkeeping; a failure is
+    // recorded loudly on the merged outcome, never thrown (FR-008 boundary).
+    let closeFailure: string | undefined;
+    if (input.issue.sourceType === "github-issue") {
+      const closeComment =
+        `Closed by the fix loop: the fix PR ${prUrl} was squash-merged ` +
+        `(merge commit ${mergeCommit}) and the post-merge canary suite on the base ` +
+        `branch is green — no new failures versus the onboarding baseline.`;
+      try {
+        assertNoSecrets([closeComment], deps.env);
+        await deps.closeIssue(input.repoDir, input.issue, closeComment);
+      } catch (error) {
+        closeFailure =
+          `issue close failed for ${input.issue.url ?? input.issue.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    return {
+      ...prOutcome,
+      merged: { prUrl, mergeCommit, canaryGreen: true },
+      ...(closeFailure !== undefined ? { closeFailure } : {}),
+      // FR-003: the merged outcome stands; the teardown failure rides beside it.
+      ...(teardownFailure !== undefined ? { teardownFailure } : {}),
+    };
+  }
+
+  // WI-6 T4 (FR-006/FR-007): red main is a stop-the-line event. Revert
+  // (best-effort), notify on the merged PR (best-effort), then return a
+  // harness-level failure — the queue halts on it and the CLI exits 1.
+  // Deliberately NO prUrl/merged on this outcome: a reverted issue is not
+  // fixed, and splitQueue's revert guard keeps it queued (FR-006).
+  const evidence = canaryEvidence ?? "canary went red";
+  let revertCommit: string | undefined;
+  let revertFailure: string | undefined;
+  let revertNote: string;
+  try {
+    revertCommit = (await deps.revertMerge({ repoDir: input.repoDir, mergeCommit })).revertCommit;
+    revertNote = `revert: ${revertCommit}`;
+  } catch (error) {
+    revertFailure = error instanceof Error ? error.message : String(error);
+    revertNote = `revert: FAILED (${revertFailure})`;
+  }
+  const handle = input.profile.notifyHandle;
+  const commentBody = [
+    `${handle !== undefined ? `@${handle} ` : ""}⚠️ REVERTED: the merge of this PR (${mergeCommit}) was automatically reverted.`,
+    `The post-merge canary suite on main went red — ${evidence}.`,
+    revertCommit !== undefined
+      ? `Revert commit: ${revertCommit}.`
+      : `The revert itself FAILED: ${revertFailure}.`,
+    "The run has been halted; the issue returns to the queue for a human decision.",
+  ].join("\n");
+  let commentNote: string;
+  try {
+    assertNoSecrets([commentBody], deps.env);
+    await deps.commentOnPr({ repoDir: input.repoDir, prUrl, body: commentBody });
+    commentNote = "comment: posted";
+  } catch (error) {
+    commentNote = `comment: FAILED (${error instanceof Error ? error.message : String(error)})`;
+  }
+  return {
+    branch,
+    failure:
+      `⚠️ REVERTED ${input.issue.id}: merge ${mergeCommit} reverted after canary went red — ` +
+      `${evidence}; ${revertNote}; ${commentNote}; notify: ${handle ?? "not configured"}`,
+    failureKind: "harness",
+    ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
+    reverted: {
+      id: input.issue.id,
+      prUrl,
+      mergeCommit,
+      ...(revertCommit !== undefined
+        ? { revertCommit }
+        : { revertFailure: revertFailure ?? "unknown revert failure" }),
+      evidence,
+      // FR-003: teardown failure named in the record — never appended to
+      // `evidence`, which stands as the canary suite decided it.
+      ...(teardownFailure !== undefined ? { teardownFailure } : {}),
+      ...(handle !== undefined ? { notifyHandle: handle } : {}),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

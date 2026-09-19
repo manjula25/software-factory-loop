@@ -9,7 +9,7 @@ import {
   buildTriagePrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
-  OPEN_PR_PAGE_LIMIT,
+  PR_PAGE_LIMIT,
   parseReviewOutput,
   parseTriageOutput,
   prListArgs,
@@ -146,7 +146,7 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
     const at = args.indexOf("--limit");
 
     expect(at).toBeGreaterThan(-1);
-    expect(Number(args[at + 1])).toBe(OPEN_PR_PAGE_LIMIT);
+    expect(Number(args[at + 1])).toBe(PR_PAGE_LIMIT);
     expect(args).toContain("--state");
     expect(args).toContain("merged");
     const json = args.indexOf("--json");

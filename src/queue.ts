@@ -78,7 +78,7 @@ export const ISSUE_PAGE_LIMIT = 30;
  * opened. The bound is explicit here, shared by both listings, and never
  * narrower than the queue it filters.
  */
-export const OPEN_PR_PAGE_LIMIT = 100;
+export const PR_PAGE_LIMIT = 100;
 
 /**
  * Args for a dedup PR listing — exported so the bound above is testable.
@@ -92,7 +92,7 @@ export function prListArgs(state: "open" | "merged"): string[] {
     "--state",
     state,
     "--limit",
-    String(OPEN_PR_PAGE_LIMIT),
+    String(PR_PAGE_LIMIT),
     "--json",
     state === "open" ? "headRefName,body" : "headRefName,body,number,url",
   ];
@@ -166,6 +166,15 @@ function escapeRegExp(literal: string): string {
 }
 
 /**
+ * Whether `pr` covers the issue under dedup: its head branch IS the issue's
+ * fix branch, or its body references the issue by exact id token
+ * (`gh-1` never matches `gh-11`) — the same rule for open and merged PRs.
+ */
+function covers(pr: OpenPr, branch: string, token: RegExp): boolean {
+  return pr.headRefName === branch || token.test(pr.body);
+}
+
+/**
  * Splits the normalized queue into eligible / skipped-duplicate /
  * skipped-merged, deleting stale `fix/<id>` branches along the way. A MERGED
  * fix PR means the issue is done: matched by head branch or body id token
@@ -214,9 +223,7 @@ export async function splitQueue(
     // Merged first: a merged fix is stronger than an in-flight one (a reopened
     // PR keeps its head branch), and its branch must never reach deletion —
     // unless main reverted it (WI-6 T4, FR-006): the issue goes back to todo.
-    const mergedCover = mergedPrs.find(
-      (pr) => pr.headRefName === branch || token.test(pr.body),
-    );
+    const mergedCover = mergedPrs.find((pr) => covers(pr, branch, token));
     const done =
       mergedCover !== undefined &&
       !(await deps.mainRevertsPr({ repoDir, pr: mergedCover }));
@@ -224,9 +231,7 @@ export async function splitQueue(
       skippedMerged.push(issue.id);
       continue;
     }
-    const inFlight = prs.some(
-      (pr) => pr.headRefName === branch || token.test(pr.body),
-    );
+    const inFlight = prs.some((pr) => covers(pr, branch, token));
     if (inFlight) {
       skippedDuplicate.push(issue.id);
       continue;
