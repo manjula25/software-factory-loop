@@ -93,15 +93,21 @@ docs.
 
 ## Requested external actions
 
-Pending user authorization (asked): push branch to origin + open PR against
-`main`. Merge stays human (hard constraint 1).
+Authorized by owner (2026-09-19, via the delivery question): push branch to
+origin + open PR against `main`. Merge stays human (hard constraint 1).
 
 ## Executed external actions and observed results
 
-None yet.
+- `git push -u origin worktree-wi-8` — new branch `worktree-wi-8` on
+  `origin` (github.com:manjula25/software-factory-loop.git), tracking set.
+  Observed in push output.
+- `gh pr create --base main --head worktree-wi-8` — **PR #12**:
+  https://github.com/manjula25/software-factory-loop/pull/12. Observed URL
+  in command output.
 
 ## Pending actions
 
-Awaiting explicit authorization for: push `worktree-wi-8` to origin; open PR
-`main` ← `worktree-wi-8`. After human merge: worktree/branch cleanup (manual
-or on request). Follow-up backlog items remain recorded, not scheduled.
+- Human merge of PR #12 (constraint 1 — the harness never merges itself).
+- After merge (on request): worktree/branch cleanup.
+- Follow-up backlog items remain recorded in `review.md` / `verification.md`,
+  not scheduled.
