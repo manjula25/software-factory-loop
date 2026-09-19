@@ -53,4 +53,23 @@ fail-path case, uncanaried early-teardown drop, present-handle
 
 ## Executed
 
-(none yet — appended with authority and observed results)
+All with explicit owner authority (AskUserQuestion, 2026-09-19: "Push
+branch + open PR" + "Also delete stale branches (FR-006)"):
+
+1. **Push** `worktree-wi-11` → origin: new branch, tracking set.
+   Observed: `* [new branch] worktree-wi-11 -> worktree-wi-11`.
+2. **PR #15** opened against `main`:
+   `https://github.com/manjula25/software-factory-loop/pull/15`
+   (human merge — this repo never auto-merges itself, constraint 1).
+3. **FR-006 branch deletions** — branch set re-verified immediately
+   before deletion (exactly `fix/gh-{1,2,3,10}` on the fixtures remote,
+   nothing else; local `worktree-wi-2-trial` present):
+   - `git -C …/loop-fixtures-py push origin --delete fix/gh-1 fix/gh-2
+     fix/gh-3 fix/gh-10` → all four deleted (observed four
+     `[deleted]` lines).
+   - Read-back `ls-remote --heads origin | grep -E "fix/gh-(1|2|3|10)$"`
+     → no matches (grep exit 1 = confirmed gone).
+   - `git branch -D worktree-wi-2-trial` → deleted (was 488a672);
+     read-back `git branch --list` → gone.
+
+FR-006 is closed. Delivery complete except the human merge of PR #15.
