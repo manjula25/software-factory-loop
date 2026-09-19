@@ -610,6 +610,25 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
   });
 
+  it("(f2) canary red with notifyHandle ABSENT: the ⚠️ REVERTED failure line says `notify handle not configured` (WI-11 FR-003; present-handle contrast pinned bare)", async () => {
+    // Absent handle: the unified vocabulary, matching the uncanaried-merge
+    // detail and the queue's REVERTED line — "handle", no colon.
+    const absent = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), {
+      ...profile,
+      autoMerge: true,
+    });
+
+    expect(absent.failure).toContain("REVERTED");
+    expect(absent.failure).toContain("notify handle not configured");
+    expect(absent.failure).not.toContain("notify: not configured"); // the pre-WI-11 rendering
+
+    // Contrast, same seam: handle configured → the bare handle, no @ (the
+    // WI-10 live observation, `notify: manjula25`), pinned unchanged by FR-003.
+    const present = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), optedInNotify);
+
+    expect(present.failure).toContain("notify: manjula25");
+  });
+
   it("(f) canary install failure → red path: reverted, harness-level, with the install failure named (D2)", async () => {
     const deps = makeDeps({ canary: sandboxHandle(SUITE_AFTER_FIX, 0, /* installExit */ 1) });
 
