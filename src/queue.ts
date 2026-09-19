@@ -41,6 +41,14 @@ export interface QueueDeps {
    * the issue must NOT be skipped as merged.
    */
   mainRevertsPr(input: { repoDir: string; pr: MergedPr }): Promise<boolean>;
+  /**
+   * WI-7 (FR-001): `git fetch --prune origin` in the target clone, awaited
+   * before any dedup signal is read. Every signal the split consults —
+   * merged PRs, the revert guard's `origin/main` history, fix branches —
+   * describes the REMOTE's now; a stale clone would read a revert that has
+   * since landed as absent and skip a live issue as already merged.
+   */
+  refreshRemoteRefs(repoDir: string): Promise<void>;
   /** Local and remote `fix/*` branch names that exist right now. */
   listFixBranches(repoDir: string): Promise<string[]>;
   /** `git push origin --delete`; resolves even if the branch is absent. */
@@ -180,12 +188,16 @@ export async function splitQueue(
   let mergedPrs: MergedPr[];
   let branches: string[];
   try {
+    // Refresh FIRST (WI-7 FR-001): every signal below reads the remote's now
+    // through the clone's remote-tracking refs — a stale clone would read a
+    // revert that has since landed as absent and skip a live issue as merged.
+    await deps.refreshRemoteRefs(repoDir);
     mergedPrs = await deps.listMergedPrs(repoDir);
     prs = await deps.listOpenPrs(repoDir);
     branches = await deps.listFixBranches(repoDir);
   } catch (error) {
     throw new QueueAcquisitionError(
-      `listing PRs / fix branches failed: ${error instanceof Error ? error.message : String(error)}`,
+      `acquiring queue state failed (refreshing remote refs / listing PRs / fix branches): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 

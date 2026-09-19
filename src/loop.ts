@@ -1410,6 +1410,13 @@ async function main(): Promise<void> {
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
   const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
     ghJson: realGhJson,
+    // WI-7 (FR-001): refresh the clone's remote-tracking refs before the dedup
+    // reads them — the revert guard and branch listings describe origin's now,
+    // not whatever the clone last fetched. `--prune` also drops remote-tracking
+    // refs for branches deleted on origin (same rationale as syncMainToOrigin).
+    async refreshRemoteRefs(dir) {
+      execFileSync("git", ["fetch", "--prune", "origin"], { cwd: dir, stdio: "inherit" });
+    },
     async listOpenPrs(dir) {
       return JSON.parse(realGhJson(prListArgs("open"), dir)) as OpenPr[];
     },

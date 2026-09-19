@@ -1121,6 +1121,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     // QueueDeps
     ghJson: vi.fn((_args: string[], _cwd: string) =>
       JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
+    refreshRemoteRefs: vi.fn(async () => {}),
     listOpenPrs: vi.fn(async () => config.prs ?? []),
     listMergedPrs: vi.fn(async () => config.mergedPrs ?? []),
     mainRevertsPr: vi.fn(async () => false),

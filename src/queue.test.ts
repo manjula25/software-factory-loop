@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   admitIssues,
@@ -26,6 +31,7 @@ function makeDeps(overrides: Partial<SplitDeps> = {}): SplitDeps {
     deleteRemoteBranch: async () => {},
     deleteBranch: async () => {},
     mainRevertsPr: async () => false,
+    refreshRemoteRefs: async () => {},
     ...overrides,
   };
 }
@@ -232,6 +238,95 @@ describe("dedup and stale-branch handling (WI-2 T2)", () => {
     );
     expect(localDeleted).toEqual([]);
     expect(remoteDeleted).toEqual([]);
+  });
+});
+
+describe("acquisition-time remote refresh (WI-7 T1, FR-001)", () => {
+  it("awaits refreshRemoteRefs exactly once per splitQueue call, regardless of issue count", async () => {
+    let refreshes = 0;
+    const deps = makeDeps({
+      refreshRemoteRefs: async () => {
+        refreshes += 1;
+      },
+    });
+
+    const result = await splitQueue(deps, "/repo", [issue(1), issue(2), issue(3)]);
+
+    expect(result.eligible).toHaveLength(3);
+    expect(refreshes).toBe(1);
+  });
+
+  it("a failing remote refresh aborts acquisition with QueueAcquisitionError naming the refresh", async () => {
+    const deps = makeDeps({
+      refreshRemoteRefs: async () => {
+        throw new Error("git fetch exited 128");
+      },
+    });
+
+    const error = await splitQueue(deps, "/repo", [issue(1)]).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(QueueAcquisitionError);
+    expect((error as Error).message).toContain("refreshing remote refs");
+    expect((error as Error).message).toContain("git fetch exited 128");
+  });
+});
+
+describe("acquisition-time remote refresh — real git (WI-7 T1, FR-001)", () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  const makeRepoPair = async () => {
+    const root = await mkdtemp(join(tmpdir(), "refreshq-"));
+    const upstream = join(root, "upstream");
+    const target = join(root, "target");
+    mkdirSync(upstream);
+    git(upstream, "init", "-q", "-b", "main");
+    writeFileSync(join(upstream, "a.txt"), "one\n");
+    git(upstream, "add", "a.txt");
+    git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one");
+    git(upstream, "clone", "-q", upstream, target);
+    return { root, upstream, target };
+  };
+
+  it("a revert that landed on origin AFTER the clone restores the issue to todo — not skippedMerged on a stale tracking ref", async () => {
+    return makeRepoPair().then(async ({ root, upstream, target }) => {
+      try {
+        // AFTER the clone, origin/main gains the revert of merged PR #1.
+        writeFileSync(join(upstream, "a.txt"), "reverted\n");
+        git(upstream, "add", "a.txt");
+        git(upstream, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", 'Revert "fix crash (#1)"');
+        // The clone IS stale: its origin/main tracking ref predates the revert.
+        expect(git(target, "log", "--format=%s", "origin/main")).not.toContain("Revert");
+
+        const deps = makeDeps({
+          listMergedPrs: async () => [
+            { number: 1, url: "https://example/pr/1", headRefName: "fix/gh-1", body: "" },
+          ],
+          // The production revert-guard logic (src/loop.ts queueDeps.mainRevertsPr):
+          // subjects of `git log --format=%s origin/main`.
+          mainRevertsPr: async ({ repoDir, pr }) => {
+            const subjects = git(repoDir, "log", "--format=%s", "origin/main").split("\n");
+            const tag = `(#${pr.number})`;
+            return subjects.some((s) => s.startsWith('Revert "') && s.includes(tag));
+          },
+          // The real refresh: `git fetch --prune origin` in the clone.
+          refreshRemoteRefs: async (repoDir) => {
+            execFileSync("git", ["fetch", "--prune", "origin"], {
+              cwd: repoDir,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+          },
+        });
+
+        const result = await splitQueue(deps, target, [issue(1)]);
+        expect(result.skippedMerged).toEqual([]);
+        expect(result.eligible.map((i) => i.id)).toEqual(["gh-1"]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 });
 
