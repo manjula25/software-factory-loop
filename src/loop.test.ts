@@ -149,6 +149,12 @@ interface DepOverrides {
   closeThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
+  /** Preflight reports a stale baseline — shorthand for a SUITE_AFTER_FIX preflight (WI-8 FR-001). */
+  staleBaseline?: boolean;
+  /** Simulated preflight-sandbox close() failure (WI-8 FR-001). */
+  preflightCloseThrows?: string;
+  /** Simulated verification-sandbox close() failure (WI-8 FR-001). */
+  sandboxCloseThrows?: string;
   /** Simulated canary-branch delete failure on opted-in runs (WI-7 FR-003). */
   canaryDeleteBranchThrows?: string;
   /** Review-pass verdict (opted-in runs, WI-6 T6); defaults to approve. */
@@ -180,9 +186,24 @@ function makeDeps(overrides: DepOverrides = {}) {
         return base;
       }
       sandboxCalls += 1;
-      return sandboxCalls === 1
-        ? (overrides.preflight ?? sandboxHandle(BASELINE_SUITE))
-        : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
+      if (sandboxCalls === 1) {
+        const base =
+          overrides.preflight ?? sandboxHandle(overrides.staleBaseline === true ? SUITE_AFTER_FIX : BASELINE_SUITE);
+        // WI-8 FR-001: the preflight sandbox's close() can be made to refuse —
+        // one catch in production must cover the branch delete too.
+        if (overrides.preflightCloseThrows !== undefined) {
+          const message = overrides.preflightCloseThrows;
+          return { ...base, async close() { throw new Error(message); } };
+        }
+        return base;
+      }
+      const verification = overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX);
+      // WI-8 FR-001: same knob for the fresh verification sandbox.
+      if (overrides.sandboxCloseThrows !== undefined) {
+        const message = overrides.sandboxCloseThrows;
+        return { ...verification, async close() { throw new Error(message); } };
+      }
+      return verification;
     }),
     deleteBranch: vi.fn(async (_repoDir: string, _branch: string) => {
       // WI-7 FR-003: teardown failure knob — the canary branch delete refuses.
@@ -815,6 +836,75 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
 });
 
 // ---------------------------------------------------------------------------
+// WI-8 (FR-001): preflight & verification teardown parity. The canary idiom
+// (WI-7 FR-003) is extended to the other two sandboxes: a close() that throws
+// AFTER the suite already decided is bookkeeping, never a verdict — the stale
+// abort reason, the fix run, and the PR'd outcome all stand, with the teardown
+// failure riding beside them.
+// ---------------------------------------------------------------------------
+
+describe("preflight & verification teardown parity (WI-8, FR-001)", () => {
+  const TEARDOWN = "docker: container rm failed — busy";
+
+  it("(a) green verification + throwing verification-sandbox close: the PR'd outcome stands and carries the teardown failure", async () => {
+    const deps = makeDeps({ sandboxCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.prUrl).toContain("/pull/");
+    expect(outcome.failure).toBeUndefined();
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(b) stale baseline + throwing preflight close: the abort reason is preserved and the teardown failure rides beside it", async () => {
+    const deps = makeDeps({ staleBaseline: true, preflightCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(outcome.failure).toContain("Aborted before the fix run");
+    expect(deps.runFixRun).not.toHaveBeenCalled(); // the abort still gates spend
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(c) green baseline + throwing preflight close: the run continues and the PR'd outcome carries the teardown failure", async () => {
+    const deps = makeDeps({ preflightCloseThrows: TEARDOWN });
+
+    const outcome = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      deps,
+    );
+
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1); // teardown never kills the run
+    expect(outcome.prUrl).toContain("/pull/");
+    expect(outcome.teardownFailure).toContain(TEARDOWN);
+  });
+
+  it("(d) queue mode: a stale-baseline preflight whose close throws aborts the queue and the FAILED line names the teardown", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      staleBaselineFor: "gh-1",
+      preflightCloseThrowsFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput(), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(formatSummary(aborted.summary)).toContain(
+      "FAILED gh-1: Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run " +
+        "(recorded but not failing: tests/test_textops.py::TestSlugify::test_basic_phrase; failing but not recorded: none). " +
+        "Re-run onboarding.. (teardown: docker: preflight container rm failed — busy)",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WI-6 T5: issue closing on merge (FR-008). Ordering is fixed by D3:
 // merge → canary green → close. Only gh-sourced issues are closed (file
 // sources have nothing external to close); a canary-red issue was reverted
@@ -1264,6 +1354,8 @@ interface QueueDepsConfig {
   closeThrowsFor?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
+  /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
+  preflightCloseThrowsFor?: string;
   /** Canary-branch delete throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryDeleteBranchThrowsFor?: string;
   /** Review-pass verdict for every opted-in issue (WI-6 T6); defaults to approve. */
@@ -1317,7 +1409,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (input.baseBranch === "main") {
         // baseline preflight
         const stale = config.staleBaseline === true || config.staleBaselineFor === active.id;
-        return track(issueSandbox(active, stale ? SUITE_AFTER_FIX : BASELINE_SUITE));
+        const handle = issueSandbox(active, stale ? SUITE_AFTER_FIX : BASELINE_SUITE);
+        // WI-8 FR-001: the preflight sandbox's close() can be made to refuse —
+        // mirrors the canaryCloseThrowsFor idiom above.
+        if (config.preflightCloseThrowsFor === active.id) {
+          return track({ ...handle, async close() { throw new Error("docker: preflight container rm failed — busy"); } });
+        }
+        return track(handle);
       }
       const fails = config.failReproFor === active.id;
       return track(issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0));
