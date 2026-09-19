@@ -40,7 +40,7 @@ Steps (exact):
    `npx tsx scripts/probe-agent.ts glm-5.2` → stdout `OK`, exit 0.
    **Ledger: 1 probe.**
 4. Seed (zero LLM). In a fresh host clone
-   `/tmp/wi10-seed-clone` of the fixtures repo, create
+   `/tmp/wi10-lfclone` of the fixtures repo, create
    `src/loopfix/moneyops.py` with exactly:
 
    ```python
@@ -56,14 +56,15 @@ Steps (exact):
 
    Commit `seed(moneyops): add to_cents helper`, push to fixtures `main`.
    Expected: FF push, new main tip recorded as `<seed-sha>`.
-5. Seed checks: fresh clone to `/tmp/wi10-lfclone`; via temp script
-   `.tmp-seedcheck.sh` (git clone → `docker run --entrypoint sh
-   sandcastle-loop -c 'pip install -e ".[test]" && python -m pytest -q'`
-   on the clone) → **23 passed** (dormant: no test touches moneyops).
+5. Seed checks: fresh clone to `/tmp/wi10-seedcheck-clone`; via temp
+   script `.tmp-seedcheck.sh` (`docker run --entrypoint sh sandcastle-loop
+   -c 'pip install -e ".[test]" && python -m pytest -q'` mounted on the
+   clone) → **23 passed** (dormant: no test touches moneyops).
    Hand-check the defect: `to_cents(1.50)` → `1` (expected `150`).
-   `npx tsx scripts/preflight-check.ts /tmp/wi10-lfclone` →
+   `npx tsx scripts/preflight-check.ts /tmp/wi10-seedcheck-clone` →
    `recorded baseline: [] / fresh run found: [] / MATCH`, branch
-   auto-deleted, exit 0. Delete `.tmp-seedcheck.sh`.
+   auto-deleted, exit 0. Delete `.tmp-seedcheck.sh` and the seedcheck
+   clone; `/tmp/wi10-lfclone` stays at `<seed-sha>` for step 7.
 6. File the issue (expected **#24**, record the actual): title
    `to_cents: dollar amounts truncated to whole dollars instead of cents`;
    body in the WI-1 clean style — symptom
@@ -71,8 +72,8 @@ Steps (exact):
    repro snippet. Verify OPEN via `gh issue list --state open` (it must be
    the ONLY open issue — check; if any other is open, stop and reconcile
    with the owner before spending).
-7. Prepare the conflicting test (NOT pushed). In a second host clone
-   `/tmp/wi10-conflict-clone` at `<seed-sha>`, create local branch
+7. Prepare the conflicting test (NOT pushed). In `/tmp/wi10-lfclone`
+   (at `<seed-sha>`), create local branch
    `wi10-conflict` and add `tests/test_moneyops_contract.py` with exactly:
 
    ```python
@@ -97,7 +98,8 @@ Steps (exact):
    via `.tmp-conflictcheck.sh` (image suite on this clone) → **25 passed**
    (23 + 2; both new tests pass against the buggy code). Record
    `<conflict-sha>`. Delete the temp script. This branch is pushed ONLY at
-   the timed moment in Task 2.
+   the timed moment in Task 2 (`git -C /tmp/wi10-lfclone push origin
+   wi10-conflict:main`).
 8. Evidence: `docs/work/WI-10/evidence/t1-seed.md` (preconditions, seed
    SHA, 23 passed, MATCH, issue number actuals, conflict SHAs, 25-passed
    proof, deviations).
@@ -124,13 +126,14 @@ live. Steps:
    `/home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-N-gh-N.log`
    to exist and show agent activity (non-trivial size / agent output).
    Then immediately:
-   `git -C /tmp/wi10-conflict-clone push origin wi10-conflict:main`
-   (FF onto `<seed-sha>`). Record in `evidence/timing.md`: wall-clock
-   time, the run-log byte/line offset at push, and the last main SHA
-   before the push. Rationale recorded there: the branch base is pinned
-   when the fix sandbox clones, so any push after agent activity starts
-   is strictly after base-pinning, and the merge is minutes away
-   (verification + review still to run) — the window is comfortable.
+   `git -C /tmp/wi10-lfclone push origin wi10-conflict:main`
+   (FF onto `<seed-sha>`). Record in `evidence/run-endstates.md` (Timing
+   section): wall-clock time, the run-log byte/line offset at push, and
+   the last main SHA before the push. Rationale recorded there: the
+   branch base is pinned when the fix sandbox clones, so any push after
+   agent activity starts is strictly after base-pinning, and the merge is
+   minutes away (verification + review still to run) — the window is
+   comfortable.
 3. **Expected outcome (the success path):** the run completes with exit
    code **1** (a reverted issue is a harness-kind failure; the queue/CLI
    halts). The log shows, in order: verification green → PR created →
@@ -141,7 +144,8 @@ live. Steps:
    ids>; revert: <revert-sha>; comment: posted; notify: manjula25`.
    No `✓ Closed issue` line (close happens only on a green canary).
 4. End-states read back fresh via gh/git (never from the log alone),
-   recorded in `evidence/run-endstates.md`:
+   recorded in `evidence/run-endstates.md` (Timing section from step 2
+   rides in the same file):
    - fixtures `main` history: `<seed-sha>` → `<conflict-sha>` →
      `<merge-sha>` (squash) → `<revert-sha>`.
    - `main` tree: `moneyops.py` buggy (`int(amount)`),
@@ -156,22 +160,24 @@ live. Steps:
      contract tests, green against the restored buggy code).
 
 Commit: `docs(WI-10): run — canary red, merge reverted, run halted, notify
-posted` (verbatim log + end-states + timing record).
+posted` (verbatim log + end-states with timing record).
 
 ### Task 2b (CONDITIONAL — only on a mistimed push; decision (a) allows exactly one)
 
 - **Too early** (push beat base-pinning): symptom — the fix branch
   contains the contract test; verification goes red; log shows the fix
-  FAILED (not REVERTED); exit 1. Recovery: in `/tmp/wi10-conflict-clone`,
+  FAILED (not REVERTED); exit 1. Recovery: in `/tmp/wi10-lfclone`,
   `git revert --no-edit <conflict-sha>` on a fresh `main` and push (main
-  returns to seed content); re-create `wi10-conflict` on the new tip;
-  re-run Task 2 with a later trigger (wait for the agent's first file
-  edit in the fix log, not merely activity). **Ledger: fix run 2 of 2.**
+  returns to seed content); re-create `wi10-conflict` on the new tip by
+  `git cherry-pick <conflict-sha>`; re-run Task 2 with a later trigger
+  (wait for the agent's first file edit in the fix log, not merely
+  activity). **Ledger: fix run 2 of 2.**
 - **Too late** (merge already canaried green): symptom — log ends
   `MERGED gh-N: … (canary: green)`, exit 0, issue CLOSED. Recovery: in
-  `/tmp/wi10-conflict-clone`, `git revert --no-edit <merge-sha>
-  <conflict-sha>` on `main` and push (main returns to seed content);
-  `gh issue reopen <N>`; re-create `wi10-conflict` on the new tip; re-run
+  `/tmp/wi10-lfclone`, `git revert --no-edit <merge-sha> <conflict-sha>`
+  on `main` and push (main returns to seed content);
+  `gh issue reopen <N>`; re-create `wi10-conflict` on the new tip by
+  `git cherry-pick <conflict-sha>`; re-run
   Task 2. **Ledger: fix run 2 of 2.** The manual reverts are recorded in
   the evidence file as orchestration corrections, never as harness
   behavior.
