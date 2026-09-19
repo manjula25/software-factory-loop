@@ -1,0 +1,30 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy --model glm-5.2
+
+[gh-23] Started on branch fix/gh-23
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-23-gh-23.log
+remote: 
+remote: Create a pull request for 'fix/gh-23' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-23        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-23 -> fix/gh-23
+branch 'fix/gh-23' set up to track 'origin/fix/gh-23'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-23
+   5f372b6..b46c9ef  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 5f372b6..b46c9ef
+Fast-forward
+ src/loopfix/numops.py            |  2 +-
+ tests/fixed-issues/test_gh_23.py | 13 +++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_23.py
+✓ Closed issue #23 (mean: floor division truncates the average)
+Run summary — attempted: 1 (fixed: 1, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/25
+MERGED gh-23: https://github.com/manjula25/loop-fixtures-py/pull/25 @ b46c9efabc448a3636c956a087f99ab013b53b20 (canary: green)
