@@ -52,6 +52,11 @@ These come from `harness-prd-v2.md` and are invariants every review enforces:
    own repository always keeps human merge regardless. Even a verified fix can be the wrong
    root cause — the opt-in flag and revert net are the compensating controls, not a cure.
    *(Amended 2026-09-18, owner — grilling record `docs/work/WI-5/prd.md`.)*
+   *(Extended 2026-09-19, owner — grilling record `docs/work/WI-13/prd.md`: on opted-in repos, a
+   merger agent may resolve conflicts between parallel fix branches — machine conflict resolution
+   joins machine merge behind the same per-repo opt-in, and its output is never trusted: no merge
+   counts without fresh-sandbox verification of the merged result (constraint 2) and the existing
+   canary + revert net.)
 2. **Never trust the agent's own completion signal.** Verification means re-running the
    reproduction test AND the full suite in a fresh sandbox. An agent's "done" is never evidence.
 3. **Confidentiality gate.** No client repo, client issue list, or client log is pointed at this
@@ -61,7 +66,10 @@ These come from `harness-prd-v2.md` and are invariants every review enforces:
 4. **The reproduction test stays in the suite.** A regression test written for a fixed issue is
    a permanent artifact (proposed home: `tests/fixed-issues/`), not scaffolding to delete.
 5. **Budget cap.** A run processes at most the capped number of issues, triaged by priority. No
-   silent API spend beyond the cap.
+   silent API spend beyond the cap. *(Amended 2026-09-19, owner — grilling record
+   `docs/work/WI-13/prd.md`: the cap is an explicit optional ceiling — `--max-issues N` when
+   passed; absent, all unblocked issues the planner surfaced run. The surviving guarantee is "no
+   spend beyond what the plan surfaced at run start.")*
 6. **Local Docker only.** No cloud sandbox spend before the POC is proven and a team lead signs
    off.
 
