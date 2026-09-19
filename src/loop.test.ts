@@ -1337,7 +1337,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     }),
     // WI-6 T4 seams
     syncMain: vi.fn(async (_repoDir: string) => {
-      if (config.syncMainThrowsFor !== undefined) {
+      if (config.syncMainThrowsFor !== undefined && active.id === config.syncMainThrowsFor) {
         throw new Error("divergent main");
       }
     }),
@@ -1348,7 +1348,7 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       return { revertCommit: "rvrt789" };
     }),
     commentOnPr: vi.fn(async (_input: { repoDir: string; prUrl: string; body: string }) => {
-      if (config.commentThrowsFor !== undefined) {
+      if (config.commentThrowsFor !== undefined && _input.prUrl.includes(config.commentThrowsFor)) {
         throw new Error("gh: comment failed — network");
       }
     }),
