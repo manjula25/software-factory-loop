@@ -100,3 +100,24 @@
   canary line's present-handle arm renders bare (`notify: manjula25`) vs
   siblings' `notify: @manjula25` — intentional (WI-10 live observation,
   FR-003-pinned); future vocabulary pass if @-rendering ever unifies.
+
+## T4 + T5 — controller-executed docs tasks (2026-09-19)
+
+- **T4a (FR-004):** stale WI-6 comment at the single-issue failure line
+  reworded — the builder is pure; guarding happens at the CLI entry's
+  emission seam (WI-8), which is what the code has done all along.
+  Behavior-neutrality proven: gates identical after the change (typecheck
+  exit 0; `npm test` 10 files / 219 passed, same counts).
+- **T4b (FR-004):** dated append-only addenda added to
+  `docs/work/WI-9/verification.md` (PR #13 body as durable RED/GREEN
+  evidence — review A1; probe-attribution correction — A5) and
+  `docs/work/WI-10/evidence/run-endstates.md` (PR #27 body + revert
+  comment as durable evidence — A1/M1; deviations section named the
+  canonical exit-code location — A2). Nothing rewritten.
+- **T5 (FR-005):** CLAUDE.md `src/loop.ts` module row gained the WI-11
+  clause (two-origin teardown recording on merged/reverted/fail outcomes,
+  unified absent-notify vocabulary) — the row had become inaccurate after
+  T1–T3. Other rows checked: still accurate, unchanged.
+- Commits: `92cd626` (T4 + these notes), `b15b8ae` (T5).
+- Implementation complete: T1–T5 accepted; FR-006 (branch deletion)
+  remains delivery-time, authority-gated, per decision d3.
