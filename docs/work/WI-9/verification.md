@@ -154,3 +154,18 @@ spend exactly as ledgered (5), local Docker only (6).
 Non-claims (final): failure-path surfaces not exercised live (no fault
 injection; none arose naturally); spend claims are invocation counts; no
 cost figures; no claims about the naturally-red-canary path on this tree.
+
+## Addendum (2026-09-19, WI-11 FR-004 — corrections by addition, nothing above rewritten)
+
+- **PR-body evidence (review finding A1):** the RED/GREEN execution
+  evidence cited in this record as "durable only on GitHub" is PR #13's
+  body itself (`https://github.com/manjula25/software-factory-loop/pull/13`
+  — the RED/GREEN sections quoting the repro test's before/after suite
+  output). The PR body is the durable evidence location; this record's
+  excerpts are conveniences.
+- **Probe attribution (review finding A5):** this record describes the
+  capped-admission probe as run "exactly the approved plan (design
+  decision (b))" of the specification. Precisely: the probe's
+  authorization is the approved *implementation plan* (the specification's
+  decision (b) approved the cap; the plan tasked and sequenced the probe).
+  The over-attribution is corrected here, not edited in place.

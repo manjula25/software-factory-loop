@@ -1581,7 +1581,9 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   }
   // Code-review finding (WI-6, standards axis): the failure text quotes
   // subprocess errors (the WI-6 revert path made this string class much
-  // richer), so this emission passes the guard like its siblings above.
+  // richer). WI-8 moved guarding to the CLI entry: this builder is pure and
+  // never sees the guard env — each stderr line below is guarded at the
+  // actual emission seam in `main`, like every other emitted string.
   const stderr = [`Loop finished without a PR — ${result.outcome.failure}`];
   // WI-8 (FR-002): the teardown line rides after the failure line — recorded,
   // never deciding the outcome that was already earned.
