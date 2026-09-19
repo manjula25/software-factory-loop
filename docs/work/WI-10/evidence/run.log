@@ -1,0 +1,40 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy --model glm-5.2 --issue 26
+
+From github.com:manjula25/loop-fixtures-py
+   b46c9ef..afcee4a  main       -> origin/main
+[gh-26] Started on branch fix/gh-26
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-26-gh-26.log
+remote: 
+remote: Create a pull request for 'fix/gh-26' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-26        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-26 -> fix/gh-26
+branch 'fix/gh-26' set up to track 'origin/fix/gh-26'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-26
+   afcee4a..7febfdb  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating b46c9ef..7febfdb
+Fast-forward
+ src/loopfix/moneyops.py          |  8 ++++++++
+ tests/fixed-issues/test_gh_26.py |  7 +++++++
+ tests/test_moneyops_contract.py  | 15 +++++++++++++++
+ 3 files changed, 30 insertions(+)
+ create mode 100644 src/loopfix/moneyops.py
+ create mode 100644 tests/fixed-issues/test_gh_26.py
+ create mode 100644 tests/test_moneyops_contract.py
+[main b113686] Revert "fix(to_cents): scale by 100 instead of truncating to whole dollars (gh-26) (#27)"
+ Date: Sat Sep 19 16:24:33 2026 +0530
+ 2 files changed, 1 insertion(+), 8 deletions(-)
+ delete mode 100644 tests/fixed-issues/test_gh_26.py
+To github.com:manjula25/loop-fixtures-py.git
+   7febfdb..b113686  main -> main
+https://github.com/manjula25/loop-fixtures-py/pull/27#issuecomment-5741234744
+Loop finished without a PR — ⚠️ REVERTED gh-26: merge 7febfdbe4c10d1aa0b5cc637a7753eb7467bd692 reverted after canary went red — canary new failures vs baseline on merged main: tests/test_moneyops_contract.py::test_to_cents_truncates_fractional_dollars, tests/test_moneyops_contract.py::test_to_cents_whole_dollars; revert: b113686b7337a920e27686e770d8defd0782179a; comment: posted; notify: manjula25
+RUN_EXIT: 0
