@@ -150,3 +150,37 @@ Evidence boundary:
 
 Reviews: specification PASS, code-quality APPROVED, both at the fixed package
 `436f47b` → `2bbca7d` (record in implementation-notes.md).
+
+## T5 — refactor-while-green, seam-frozen (FR-005)
+
+Claim: the seven applied quality consolidations (merge-chain helper
+extraction, `advanceUpstream` test helper ×5, `BoundedRunOptions` named type,
+`covers` predicate ×2, `PR_PAGE_LIMIT` rename, `CANARY_RED_SUITE` fixture
+dedupe, `autoMerge` doc wording) change ZERO behavior — same file count, same
+test count, zero assertion edits, public seams unchanged, boundary test file
+byte-unchanged. The eighth item (`valuelessFlag`) was stopped, not forced:
+only 2 occurrences exist, the plan's n=3 premise doesn't hold.
+
+Exact candidate: `3a12444` (base `2643031`), branch `worktree-wi-7`.
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck | `npm run typecheck` (tsc --noEmit) | exit 0 |
+| Full suite | `npm test` | 10 files / 207 tests passed — identical to base, exit 0 |
+| Boundary freeze | `git diff 2643031..3a12444 -- src/sandcastle-adapter.boundary.test.ts` | empty (0 lines) |
+| Assertion freeze | diff review (controller + both reviewers) | zero assertion edits; only the sanctioned `PR_PAGE_LIMIT` rename pair; all other test changes pure moves |
+| Seam freeze | diff review | review-input `diff` field and positional `closeIssue` byte-identical; helpers module-private |
+
+Evidence boundary:
+- Quality-only: non-behavior-change proven by the byte-green criterion, NOT
+  by new behavioral evidence. Does not hunt bugs (code-review's job).
+- Non-claim: no Docker/pipeline-integration run of this tree in this task;
+  the unit suite's 207 passing tests at unchanged counts are the evidence.
+- Premise corrections recorded: 5 not 4 `advanceUpstream` occurrences; 2 not
+  3 `BoundedRunOptions` copies; `valuelessFlag` n=3 unmet → stopped per the
+  plan's own rule (forcing an n=2 abstraction would be unsanctioned).
+
+Reviews: specification PASS (normalized hunk-by-hunk verbatim-move proof of
+the extraction, WI-7 uncanaried + FR-003 teardown paths confirmed moved
+intact), code-quality APPROVED — both at the fixed package `2643031` →
+`3a12444` (record in implementation-notes.md).

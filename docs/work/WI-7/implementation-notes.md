@@ -332,3 +332,101 @@ rules. Pins 1–2 pass on the unmutated tree BY DESIGN (already-wired
 behavior); their justification is the recorded mutation checks. Pin 3 is a
 boundary-pin. The secret is a synthetic in-test string; no `.env` value was
 read, printed, or echoed.
+
+---
+
+## Task 5 — refactor-while-green, seam-frozen (FR-005, ticket 5)
+
+- **Size:** medium (8 named consolidations across `src/loop.ts`,
+  `src/queue.ts`, `src/onboard-profile.ts`, `src/sandcastle-adapter.ts`
+  (exports only — boundary file byte-unchanged), `src/loop.test.ts`,
+  `src/queue.test.ts` helper extraction).
+- **Risk:** medium — pure refactors with a hard gate: SAME test count, ZERO
+  assertion edits (pure moves only), public seam signatures unchanged
+  (review-input `diff` field, positional `closeIssue` frozen),
+  `src/sandcastle-adapter.boundary.test.ts` byte-unchanged. Any other test
+  edit STOPS the task and routes back through review.
+- **Budget:** one leaf implementer session; vitest + tsc only.
+- **Evidence boundary:** quality-only — proves non-behavior-change by the
+  byte-green criterion, not new behavioral evidence; does not hunt bugs.
+- **Fixed point:** `2643031` (clean tree, T4 accepted; 10 files / 207 tests).
+- **Intended candidate:** working tree vs `2643031`; commit message
+  `refactor(WI-7): refactor-while-green batch — extractions, consolidations, rename (FR-005)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `3a12444` (commit `refactor(WI-7): refactor-while-green batch —
+extractions, consolidations, rename (FR-005)`), base `2643031`. Changed
+paths: `src/loop.ts`, `src/loop.test.ts`, `src/queue.ts`, `src/queue.test.ts`,
+`src/sandcastle-adapter.ts`. `src/onboard-profile.ts` untouched (see the
+sanctioned stop below).
+
+**Leaf report:** one leaf session (~25 min, ~20 tool calls), working
+consolidation-by-consolidation with green runs between (one intermediate
+regression — a missed `CANARY_RED_QUEUE_SUITE` reference inside makeQueueDeps —
+was caught by the per-move run and fixed, 97/99 → 99/99).
+
+**Applied (7 of 8):**
+1. `runPreMergeReview()` + `runCanary()` extracted from `runSingleIssue`'s
+   merge-chain tail — verbatim move; `mergePr` + its mergeFailure catch stayed
+   inline; helpers module-private; return union
+   (`{approved:true} | {approved:false, reviewSkip}`) mirrors the file's
+   `parseSuiteOrReject` idiom.
+2. `advanceUpstream()` test helper — **5 occurrences, not the plan's 4** (all
+   byte-identical, grep-verified before replacing; premise correction).
+3. `BoundedRunOptions` named type — **2 inline copies, not the plan's 3**
+   (premise correction); exports-only; boundary test file untouched.
+4. `covers(pr, branch, token)` predicate — applied to BOTH splitQueue checks
+   (merged find + open some were shape-identical).
+5. `OPEN_PR_PAGE_LIMIT` → `PR_PAGE_LIMIT` rename — export + `prListArgs` +
+   both test references; zero stale references repo-wide.
+6. `CANARY_RED_*` dedupe — three byte-identical fixtures consolidated into one
+   module-level `CANARY_RED_SUITE`; all use sites updated.
+7. `autoMerge` doc-comment wording → "Hand-editable only by a human, outside
+   the harness."
+
+**Sanctioned stop (1 of 8):** `valuelessFlag` — only 2 occurrences exist in
+`src/onboard-profile.ts`; the plan's n=3 premise doesn't hold, and at n=2 the
+helper is strictly longer with zero duplication removed. Stopped rather than
+forced, per the plan's own stop rule. (A cross-file n=3 including loop.ts's
+`--triage` exists but crosses the brief's file boundary — recorded as an
+adjacent finding.)
+
+**Gate (verified by controller and both reviewers):** typecheck exit 0; full
+`npm test` exactly 10 files / 207 tests exit 0 — identical counts to base.
+`git diff` on `src/sandcastle-adapter.boundary.test.ts` empty (re-verified by
+the spec reviewer). ZERO assertion edits — the only assertion-touching change
+is the sanctioned rename pair (`toBe(PR_PAGE_LIMIT)`); everything else in the
+test files is pure moves. Public seams unchanged (review-input `diff` field,
+positional `closeIssue`); helpers not exported.
+
+**Reviews (fixed package base `2643031` → candidate `3a12444`):**
+- Specification review: **PASS**, zero blocking. Normalized hunk-by-hunk
+  verbatim-move proof of the loop.ts extraction (every difference accounted
+  for by call-site plumbing, the byte-equivalent return-shape change, or
+  diff-alignment duplicates); the WI-7 uncanaried path and FR-003 teardown
+  moved intact; the one semantic risk (helpers recompute `branch` via pure
+  `fixBranch`) checked and cleared; all three premise-count deviations
+  assessed as plan-premise corrections, not scope changes.
+- Code-quality review: **APPROVED**, zero critical/important. Comments moved
+  with their code; `covers` doc precise; consolidation completeness verified
+  by grep (5/5, 2/2, no leftovers).
+
+**Adjacent follow-ups (recorded, not fixed):**
+- `runCanary`'s `attachmentFailures` param is derivable from `prOutcome`
+  (pre-existing double-spread moved verbatim; the gate forbade improving it).
+- Both helpers recompute `branch` though it's in scope at the single call
+  site — self-containment vs explicit data flow; fine either way.
+- `runCanary`'s name under-describes its scope (also owns uncanaried +
+  revert/close); the doc comment compensates.
+- Historical WI-6 docs still reference `OPEN_PR_PAGE_LIMIT` — correct (they
+  describe the WI-6 tree).
+- Plan-premise lesson: re-derive occurrence counts from the tree when carving
+  refactor slices (all three of this task's counts were off).
+
+**Evidence boundary / non-claims:** quality-only slice — non-behavior-change
+proven by the byte-green criterion (identical test/file counts, zero
+assertion edits, verbatim-move diff review), NOT by new behavioral evidence.
+No Docker/gh run claimed. Per-step byte-green process evidence is not
+inspectable from the final diff; final-tree equivalence makes it immaterial
+(spec-reviewer's assessment, accepted).
