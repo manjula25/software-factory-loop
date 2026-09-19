@@ -610,7 +610,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
   });
 
-  it("(f2) canary red with notifyHandle ABSENT: the ⚠️ REVERTED failure line says `notify handle not configured` (WI-11 FR-003; present-handle contrast pinned bare)", async () => {
+  it("(f2) canary red with notifyHandle ABSENT: the ⚠️ REVERTED failure line says `notify handle not configured` (WI-11 FR-003; present-handle contrast arm superseded to @ by WI-12 FR-002)", async () => {
     // Absent handle: the unified vocabulary, matching the uncanaried-merge
     // detail and the queue's REVERTED line — "handle", no colon.
     const absent = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), {
@@ -622,11 +622,22 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(absent.failure).toContain("notify handle not configured");
     expect(absent.failure).not.toContain("notify: not configured"); // the pre-WI-11 rendering
 
-    // Contrast, same seam: handle configured → the bare handle, no @ (the
-    // WI-10 live observation, `notify: manjula25`), pinned unchanged by FR-003.
+    // Contrast, same seam: handle configured → `notify: @<handle>`. The bare
+    // form (the WI-10 live observation, `notify: manjula25`) was pinned by
+    // WI-11 FR-003; WI-12 FR-002 supersedes it, unifying on @ — see (f3).
     const present = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), optedInNotify);
 
-    expect(present.failure).toContain("notify: manjula25");
+    expect(present.failure).toContain("notify: @manjula25");
+  });
+
+  it("(f3) WI-12 FR-002: canary red with notifyHandle configured — the ⚠️ REVERTED failure line renders notify: @<handle>, unified with the uncanaried detail and the queue REVERTED line", async () => {
+    const present = await run(makeDeps({ canary: sandboxHandle(CANARY_RED_SUITE) }), optedInNotify);
+
+    expect(present.failure).toContain("notify: @manjula25");
+    // Precise bare-vs-@ distinction: the text right after the "notify: "
+    // marker must start with @ (substring contains() alone cannot tell
+    // `notify: manjula25` from `notify: @manjula25`'s inner "manjula25").
+    expect(present.failure!.split("notify: ")[1]?.startsWith("@")).toBe(true);
   });
 
   it("(f) canary install failure → red path: reverted, harness-level, with the install failure named (D2)", async () => {

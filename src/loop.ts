@@ -1095,10 +1095,13 @@ async function runCanary(
       `⚠️ REVERTED ${input.issue.id}: merge ${mergeCommit} reverted after canary went red — ` +
       // WI-11 (FR-003): absent handle renders the unified "notify handle not
       // configured" vocabulary — no colon, matching the uncanaried-merge
-      // detail and the queue's REVERTED line; a present handle stays the bare
-      // `notify: <handle>` (live-observed in WI-10), no @.
+      // detail and the queue's REVERTED line. WI-12 (FR-002, decision d1)
+      // unifies the present-handle arm on `notify: @<handle>` too, matching
+      // the uncanaried detail and the queue REVERTED line; the bare form
+      // (live-observed in WI-10, deliberately pinned by WI-11 FR-003) is
+      // superseded.
       `${evidence}; ${revertNote}; ${commentNote}; ` +
-      (handle !== undefined ? `notify: ${handle}` : "notify handle not configured"),
+      (handle !== undefined ? `notify: @${handle}` : "notify handle not configured"),
     failureKind: "harness",
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
     // WI-11 (FR-001, decision d1): the EARLY origin's reason rides the outcome
