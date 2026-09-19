@@ -77,5 +77,19 @@ Controller: top-level session. Plan: `docs/work/WI-12/implementation-plan.md`
   `For`+`Msg` split vs single-issue direct-message asymmetry (existing
   design, remember if a third message-carrying knob appears).
 
+### T4 — FR-004 preflight-wins precedence pin (accepted 2026-09-19)
+
+- Candidate `53cb85b` (base `5753e2e`). Test-only; zero production change;
+  pin passed first run (characterization held — no defect). No deviations.
+- Distinct PRE/VERIFY literals make precedence provable by content
+  (`toContain(PRE)` + `not.toContain(VERIFY)`; neither literal contains the
+  other). Single-issue seam only, per the post-ponytail plan.
+- Controller gates fresh at candidate: typecheck exit 0; `npm test` 10 files /
+  223 tests.
+- Spec review: **PASS**, zero findings.
+- Code-quality review: **PASS**. One TASTE: the `createPr` not-called spy is
+  redundant-but-consistent with (e2) (kept).
+
+
 
 
