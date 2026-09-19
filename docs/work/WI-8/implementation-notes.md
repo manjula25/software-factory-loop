@@ -74,3 +74,20 @@ accounted):**
 **Evidence boundary / non-claims:** vitest public-seam + tsc only; teardown
 failures exercised via throwing-dep knobs (WI-7 FR-003 idiom); no
 Docker/gh/pipeline-integration run; teardown not retried.
+
+---
+
+## Task 2 — single-issue report carries the teardown line (FR-002, slice 2)
+
+- **Size:** small-medium (extract `main()`'s single-issue print block into an
+  exported pure builder + a thin guarded print loop; one new stderr line,
+  strictly conditional; 3 new tests, scaffold-first RED).
+- **Risk:** medium — moves CLI-adjacent print logic that existing tests do NOT
+  cover directly (they verify at the runOverrideIssue seam); the extraction
+  must keep every existing line byte-identical and the guard in `main()`.
+- **Budget:** one leaf implementer session; vitest only.
+- **Evidence boundary:** the builder is unit-proven; `main()`'s thin print
+  loop is typechecked + seam-verified (house precedent), not CLI-executed.
+- **Fixed point:** `dff96ff` (clean tree, T1 accepted).
+- **Intended candidate:** working tree vs `dff96ff`; commit message
+  `feat(WI-8): single-issue report carries a recorded teardown failure line (FR-002)`.
