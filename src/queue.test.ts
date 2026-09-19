@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  admitIssues,
   buildPlanPrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
@@ -479,65 +478,6 @@ describe("revert guard on the merged dedup (WI-6 T4, FR-006)", () => {
 
     expect(mainRevertsPr).not.toHaveBeenCalled();
     expect(result.eligible.map((i) => i.id)).toEqual(["gh-2"]);
-  });
-});
-
-describe("admission: cap, deterministic default, opt-in triage (WI-2 T3)", () => {
-  const five = [1, 2, 3, 4, 5].map(issue);
-
-  it("admits the first cap issues in ascending order without triage — no model call", () => {
-    const result = admitIssues({ issues: five, cap: 3 });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
-    expect(result.notAdmitted).toEqual([
-      { issue: five[3], reason: "cap" },
-      { issue: five[4], reason: "cap" },
-    ]);
-    expect(result.degraded).toBe(false);
-  });
-
-  it("orders by returned score, ties by ascending issue number", () => {
-    const result = admitIssues({
-      issues: five,
-      cap: 3,
-      triage: {
-        scores: { "gh-1": 2, "gh-2": 5, "gh-3": 5, "gh-4": 4, "gh-5": 1 },
-        files: {},
-      },
-    });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-2", "gh-3", "gh-4"]);
-  });
-
-  it("defers a file-overlapping issue and admits the next non-overlapping candidate (decision 14)", () => {
-    const result = admitIssues({
-      issues: five,
-      cap: 2,
-      triage: {
-        scores: { "gh-1": 5, "gh-2": 4, "gh-3": 3, "gh-4": 2, "gh-5": 1 },
-        files: {
-          "gh-1": ["src/calculator.py"],
-          "gh-2": ["src/calculator.py", "src/other.py"],
-          "gh-3": ["src/disjoint.py"],
-          "gh-4": [],
-          "gh-5": [],
-        },
-      },
-    });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-3"]);
-    expect(result.notAdmitted).toEqual([
-      { issue: five[1], reason: "file overlap with gh-1" },
-      { issue: five[3], reason: "cap" },
-      { issue: five[4], reason: "cap" },
-    ]);
-  });
-
-  it("degrades to deterministic order when the triage pass ran but its output was unusable", () => {
-    const result = admitIssues({ issues: five, cap: 3, triageUnusable: true });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
-    expect(result.degraded).toBe(true);
   });
 });
 

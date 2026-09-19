@@ -1770,7 +1770,9 @@ const queueRunInput = (over: Partial<Parameters<typeof runQueue>[0]> = {}) => ({
   imageName: "sandcastle-loop",
   agent,
   profile,
-  cap: 3,
+  // WI-13 T4: the default posture is NO ceiling (FR-005) — tests that cap
+  // pass `cap: N` explicitly.
+  cap: undefined,
   ...over,
 });
 
@@ -1990,6 +1992,100 @@ describe("planner-wiring (WI-13 T3, FR-001/FR-009)", () => {
     );
     // the retired-flag check is pure argv validation — no dep is involved
     expect(() => parseRetiredFlags(["--repo", "owner/name"])).not.toThrow();
+  });
+});
+
+describe("admission (WI-13 T4, FR-005)", () => {
+  /** Distinct priorities make the ranking deterministic: gh-5 > gh-4 > gh-1..3 (ties ascending). */
+  const RANKED_PLAN =
+    '<plan>{"priority":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"blockedBy":{}}</plan>';
+
+  it("no ceiling: every ranked issue the plan surfaced is attempted, none notAdmitted", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [1, 2, 3, 4, 5].map(queueIssue) });
+
+      const summary = await runQueue(queueRunInput({ cap: undefined }), deps);
+
+      expect(summary.attempted).toEqual(["gh-1", "gh-2", "gh-3", "gh-4", "gh-5"]);
+      expect(summary.notAdmitted).toEqual([]);
+      expect(log.mock.calls.map((c) => c[0])).toContain("plan: all unblocked");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("ceiling 2 of 5: the plan's top two are attempted; three carry reason cap", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [1, 2, 3, 4, 5].map(queueIssue),
+        planStdout: RANKED_PLAN,
+      });
+
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
+
+      // ranked gh-5, gh-4, gh-1, gh-2, gh-3 — the ceiling admits the top two
+      expect(summary.attempted).toEqual(["gh-5", "gh-4"]);
+      expect(summary.notAdmitted).toEqual([
+        ["gh-1", "cap"],
+        ["gh-2", "cap"],
+        ["gh-3", "cap"],
+      ]);
+      expect(log.mock.calls.map((c) => c[0])).toContain("plan: attempted ≤ 2");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("file-overlap deferral is gone: two formerly same-file issues are both attempted (edges own serialization — T5)", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ cap: undefined }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.notAdmitted).toEqual([]);
+    expect(formatSummary(summary)).not.toMatch(/overlap/i);
+  });
+
+  it("the plan line precedes spend: header + per-issue attempt/cap lines land before the first lane's agent call", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [1, 2, 3, 4, 5].map(queueIssue),
+        planStdout: RANKED_PLAN,
+      });
+
+      await runQueue(queueRunInput({ cap: 2 }), deps);
+
+      // the run's entire stdout is the surfaced plan, in ranked order
+      expect(log.mock.calls.map((c) => c[0])).toEqual([
+        "plan: attempted ≤ 2",
+        "plan: attempt gh-5",
+        "plan: attempt gh-4",
+        "plan: cap gh-1",
+        "plan: cap gh-2",
+        "plan: cap gh-3",
+      ]);
+      // ...and every line is emitted before the first lane's observable dep call
+      const lastPlanLine = log.mock.invocationCallOrder[log.mock.calls.length - 1]!;
+      const firstAgentCall = deps.runFixRun.mock.invocationCallOrder[0]!;
+      expect(lastPlanLine).toBeLessThan(firstAgentCall);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("--max-issues 1 is the sequential dial: exactly one issue attempted", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2), queueIssue(3)] });
+
+    const summary = await runQueue(queueRunInput({ cap: 1 }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([
+      ["gh-2", "cap"],
+      ["gh-3", "cap"],
+    ]);
   });
 });
 

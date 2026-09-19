@@ -36,7 +36,6 @@ import {
 } from "./sandcastle-adapter.js";
 import { diffVerification, parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 import {
-  admitIssues,
   buildPlanPrompt,
   listOpenIssues,
   orderFromPlan,
@@ -1142,7 +1141,12 @@ export interface QueueRunInput {
   readonly agent: AgentSpec;
   readonly profile: ProjectProfile;
   readonly label?: string;
-  readonly cap: number;
+  /**
+   * WI-13 (FR-005): an EXPLICIT optional ceiling — `--max-issues N` when
+   * passed; absent (`undefined`), every unblocked issue the plan surfaced runs.
+   * No default. Validated (integer ≥ 1) by the CLI at startup when present.
+   */
+  readonly cap: number | undefined;
   /**
    * WI-3 (FR-007): a pre-parsed queue from `--spec-doc` / `--plain-list`.
    * When present it REPLACES GitHub acquisition — `ghJson` is never called.
@@ -1159,7 +1163,11 @@ export interface QueueSummary {
   readonly skippedDuplicate: string[];
   /** Ids a merged PR already fixed — done, not re-admitted (WI-6 FR-002). */
   readonly skippedMerged: string[];
-  /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
+  /**
+   * [id, reason] — WI-13 FR-005: `"cap"` when the explicit ceiling cut an
+   * issue the plan surfaced. (`"blocked by <ids>"` joins with the dependency
+   * edges in T6.)
+   */
   readonly notAdmitted: [string, string][];
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
   readonly attachmentFailures: [string, string][];
@@ -1232,11 +1240,11 @@ export class QueueAbortedError extends Error {
 
 /**
  * Run the queue: acquire → dedup → plan (when >1 eligible, WI-13 FR-001) →
- * admit ≤ cap → run each admitted issue sequentially through runSingleIssue.
- * An issue-level failure is recorded and the queue continues; a harness-level
- * failure (stale baseline, credentials) aborts with a `QueueAbortedError`
- * whose `summary` holds the partial run — the caller prints both that and the
- * abort reason.
+ * rank + optional ceiling (WI-13 FR-005) → run each admitted issue
+ * sequentially through runSingleIssue. An issue-level failure is recorded and
+ * the queue continues; a harness-level failure (stale baseline, credentials)
+ * aborts with a `QueueAbortedError` whose `summary` holds the partial run —
+ * the caller prints both that and the abort reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
   // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
@@ -1278,21 +1286,41 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     planUnusable = plan === undefined;
   }
 
-  // Interim (T5 dissolves admitIssues): rank by the plan, then feed its
-  // priorities through admission's existing score ranking — same comparator
-  // semantics as orderFromPlan (priority desc, ascending-number ties).
-  const admission = admitIssues({
-    issues: orderFromPlan(split.eligible, plan),
-    cap: input.cap,
-    ...(plan !== undefined ? { triage: { scores: plan.priority, files: {} } } : {}),
-    ...(planUnusable ? { triageUnusable: true } : {}),
-  });
-  if (admission.degraded) {
+  // WI-13 FR-005 (T4): admission is rank + slice inline — `admitIssues` is
+  // dissolved, its interim plan-fed bridge with it. The plan ranks
+  // (`orderFromPlan`), the explicit ceiling slices the ranked order, and the
+  // remainder is recorded not-admitted with reason "cap". Absent a ceiling,
+  // every issue the plan surfaced attempts. File-overlap deferral is gone:
+  // the plan carries no file data, and serialization moves to the dependency
+  // edges (T5/T6).
+  const ranked = orderFromPlan(split.eligible, plan);
+  const admitted =
+    input.cap === undefined ? ranked : ranked.slice(0, input.cap);
+  const notAdmitted: [string, string][] =
+    input.cap === undefined
+      ? []
+      : ranked.slice(input.cap).map((issue) => [issue.id, "cap"] as [string, string]);
+  if (planUnusable) {
     // The reason can quote a subprocess error, so it passes the guard like any
     // other emitted string before it reaches a terminal or an evidence log.
     const warning = `[queue] WARNING: plan unusable (${planError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
     assertNoSecrets([warning], deps.env);
     console.error(warning);
+  }
+
+  // WI-13 FR-005: the surfaced plan prints BEFORE any fix-agent spend — the
+  // operator sees what the run will attempt (and what the ceiling cut) before
+  // the first lane starts. Per-issue lines are attempt/cap only here; the
+  // blocked-by vocabulary joins with the dependency edges (T5/T6). Every line
+  // passes the secrets guard at this emission seam like all emitted strings.
+  const planLines = [
+    input.cap === undefined ? "plan: all unblocked" : `plan: attempted ≤ ${input.cap}`,
+    ...admitted.map((issue) => `plan: attempt ${issue.id}`),
+    ...notAdmitted.map(([id]) => `plan: cap ${id}`),
+  ];
+  assertNoSecrets(planLines, deps.env);
+  for (const line of planLines) {
+    console.log(line);
   }
 
   const attempted: string[] = [];
@@ -1312,7 +1340,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     failed: [...failed],
     skippedDuplicate: split.skippedDuplicate,
     skippedMerged: split.skippedMerged,
-    notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    notAdmitted: [...notAdmitted],
     attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
     mergedPrs: [...mergedPrs],
@@ -1324,7 +1352,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
-  for (const issue of admission.admitted) {
+  for (const issue of admitted) {
     const outcome = await runSingleIssue(
       {
         issue,
@@ -1435,7 +1463,10 @@ export function formatSummary(summary: QueueSummary): string {
   ].join("\n");
 }
 
-/** `--max-issues` is validated at startup, before any acquisition or spend. */
+/**
+ * `--max-issues` (WI-13 FR-005: an explicit optional ceiling, no default) is
+ * validated at startup when passed, before any acquisition or spend.
+ */
 export function parseCap(raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
@@ -1653,7 +1684,11 @@ async function main(): Promise<void> {
   const providerName = flag("provider");
   const imageName = optFlag("image") ?? "sandcastle-loop";
   const modelOverride = optFlag("model");
-  const cap = parseCap(optFlag("max-issues") ?? "3");
+  // WI-13 (FR-005): the ceiling is optional and has NO default — absent the
+  // flag, every unblocked issue the planner surfaces runs. A passed value is
+  // still validated here, before any acquisition or spend.
+  const maxIssuesArg = optFlag("max-issues");
+  const cap = maxIssuesArg === undefined ? undefined : parseCap(maxIssuesArg);
   const label = optFlag("label");
   // WI-3 (FR-007): validated and parsed before any env load, clone, worktree,
   // or sandbox — a bad source costs nothing.
