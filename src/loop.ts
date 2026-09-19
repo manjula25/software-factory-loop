@@ -1447,6 +1447,74 @@ export async function runOverrideIssue(
   return { kind: "run", outcome: await runSingleIssue(input, deps) };
 }
 
+/**
+ * WI-8 (FR-002): the single-issue CLI report as a PURE builder — `main()` emits
+ * `stdout` via console.log and guards EACH `stderr` line through
+ * `assertNoSecrets` before console.error (the guard stays at the emission
+ * seam, never in here). The branch logic is `main()`'s former print block,
+ * moved verbatim: exitCode 1 only on the no-PR branch, every skipped kind a
+ * single stdout line at exit 0.
+ */
+export function formatSingleIssueResult(result: OverrideOutcome): {
+  stdout: string[];
+  stderr: string[];
+  exitCode: 0 | 1;
+} {
+  if (result.kind === "skipped-duplicate") {
+    return {
+      stdout: [`[${result.id}] skipped — an open PR already covers it`],
+      stderr: [],
+      exitCode: 0,
+    };
+  }
+  if (result.kind === "skipped-merged") {
+    return {
+      stdout: [`[${result.id}] skipped — a merged PR already covers it`],
+      stderr: [],
+      exitCode: 0,
+    };
+  }
+  if (result.outcome.prUrl) {
+    const stdout = [`PR opened: ${result.outcome.prUrl}`];
+    const stderr: string[] = [];
+    // WI-6: there is always a prUrl on the merge-failure path — the PR is the
+    // deliverable, so the run stays green (exit 0) and a human can still
+    // merge it. The failure is loud, never silent, but never fatal here.
+    if (result.outcome.mergeFailure !== undefined) {
+      stderr.push(`auto-merge failed: ${result.outcome.mergeFailure}`);
+    }
+    if (result.outcome.merged !== undefined) {
+      stdout.push(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
+    }
+    // WI-6 (FR-008): a failed close is bookkeeping noise on a merged outcome
+    // — loud (guarded, stderr), never fatal.
+    if (result.outcome.closeFailure !== undefined) {
+      stderr.push(`issue close failed: ${result.outcome.closeFailure}`);
+    }
+    // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
+    // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,
+    // the run stays green.
+    if (result.outcome.teardownFailure !== undefined) {
+      stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+    }
+    return { stdout, stderr, exitCode: 0 };
+  }
+  // Code-review finding (WI-6, standards axis): the failure text quotes
+  // subprocess errors (the WI-6 revert path made this string class much
+  // richer), so this emission passes the guard like its siblings above.
+  const stderr = [`Loop finished without a PR — ${result.outcome.failure}`];
+  // WI-8 (FR-002): the teardown line rides after the failure line — recorded,
+  // never deciding the outcome that was already earned.
+  if (result.outcome.teardownFailure !== undefined) {
+    stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+  }
+  return {
+    stdout: [],
+    stderr,
+    exitCode: 1,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // CLI entry (WI-2: queue mode is the default; --issue N is the override):
 // npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
@@ -1668,43 +1736,18 @@ async function main(): Promise<void> {
       { issue, repoDir, imageName, agent, profile },
       allDeps,
     );
-    if (result.kind === "skipped-duplicate") {
-      console.log(`[${result.id}] skipped — an open PR already covers it`);
-      return;
+    const report = formatSingleIssueResult(result);
+    for (const line of report.stdout) {
+      console.log(line);
     }
-    if (result.kind === "skipped-merged") {
-      console.log(`[${result.id}] skipped — a merged PR already covers it`);
-      return;
-    }
-    if (result.outcome.prUrl) {
-      console.log(`PR opened: ${result.outcome.prUrl}`);
-      // WI-6: there is always a prUrl on the merge-failure path — the PR is the
-      // deliverable, so the run stays green (exit 0) and a human can still
-      // merge it. The failure is loud, never silent, but never fatal here.
-      // The reason quotes a subprocess error, so it passes the secrets guard
-      // like every other emitted string.
-      if (result.outcome.mergeFailure !== undefined) {
-        const line = `auto-merge failed: ${result.outcome.mergeFailure}`;
-        assertNoSecrets([line], guardEnv);
-        console.error(line);
-      }
-      if (result.outcome.merged !== undefined) {
-        console.log(`Merged: ${result.outcome.merged.prUrl} @ ${result.outcome.merged.mergeCommit}`);
-      }
-      // WI-6 (FR-008): a failed close is bookkeeping noise on a merged outcome
-      // — loud (guarded, stderr), never fatal.
-      if (result.outcome.closeFailure !== undefined) {
-        const line = `issue close failed: ${result.outcome.closeFailure}`;
-        assertNoSecrets([line], guardEnv);
-        console.error(line);
-      }
-    } else {
-      // Code-review finding (WI-6, standards axis): the failure text quotes
-      // subprocess errors (the WI-6 revert path made this string class much
-      // richer), so this emission passes the guard like its siblings above.
-      const line = `Loop finished without a PR — ${result.outcome.failure}`;
+    // WI-8 (FR-002): each stderr line is guarded at the emission seam — the
+    // builder is pure and never sees the guard env (same posture as the
+    // former inline block: the reason strings quote subprocess errors).
+    for (const line of report.stderr) {
       assertNoSecrets([line], guardEnv);
       console.error(line);
+    }
+    if (report.exitCode === 1) {
       process.exitCode = 1;
     }
     return;

@@ -14,6 +14,7 @@ import {
   buildPrBody,
   buildReviewPrompt,
   fixBranch,
+  formatSingleIssueResult,
   formatSummary,
   parseCap,
   parseSourceArgs,
@@ -22,6 +23,7 @@ import {
   runQueue,
   runSingleIssue,
   syncMainToOrigin,
+  type OverrideOutcome,
   type ProjectProfile,
 } from "./loop.js";
 import {
@@ -1764,6 +1766,65 @@ describe("runOverrideIssue (--issue N single-issue mode, WI-2 T4)", () => {
 
     expect(result.kind).toBe("run");
     expect(result.kind === "run" && result.outcome.prUrl).toBe("https://example/pr/fix/gh-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-8 (FR-002): the single-issue report is built purely — the teardown
+// failure recorded by FR-001 rides stderr as bookkeeping (never fatal, never
+// an exit-code change), on both the PR'd and the no-PR branch. The skipped-*
+// kinds carry no outcome, so no teardown line exists for them.
+// ---------------------------------------------------------------------------
+
+describe("formatSingleIssueResult (WI-8, FR-002)", () => {
+  const PR_URL = "https://example/pr/fix/gh-1";
+  const TEARDOWN = "docker: container rm failed — busy";
+
+  it("(i) a PR'd outcome with teardownFailure: the teardown line rides stderr, the PR line stays on stdout, exit 0", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: { branch: "fix/gh-1", prUrl: PR_URL, teardownFailure: TEARDOWN },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toContain(`sandbox teardown failed: ${TEARDOWN}`);
+    expect(report.stdout).toContain(`PR opened: ${PR_URL}`);
+    expect(report.exitCode).toBe(0);
+  });
+
+  it("(ii) a PR'd outcome WITHOUT teardownFailure: stderr empty, stdout byte-identical to the pre-WI-8 shape — no teardown line anywhere", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: { branch: "fix/gh-1", prUrl: PR_URL },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toEqual([]);
+    expect(report.stdout).toEqual([`PR opened: ${PR_URL}`]);
+    expect(report.stdout.join("\n")).not.toContain("sandbox teardown failed");
+    expect(report.stderr.join("\n")).not.toContain("sandbox teardown failed");
+    expect(report.exitCode).toBe(0);
+  });
+
+  it("(iii) a no-PR failure outcome with teardownFailure: stderr carries the failure line then the appended teardown line, exit 1", () => {
+    const result: OverrideOutcome = {
+      kind: "run",
+      outcome: {
+        branch: "fix/gh-1",
+        failure: "REVERTED gh-1: canary red — test_zero_contract",
+        teardownFailure: TEARDOWN,
+      },
+    };
+
+    const report = formatSingleIssueResult(result);
+
+    expect(report.stderr).toEqual([
+      "Loop finished without a PR — REVERTED gh-1: canary red — test_zero_contract",
+      `sandbox teardown failed: ${TEARDOWN}`,
+    ]);
+    expect(report.exitCode).toBe(1);
   });
 });
 
