@@ -1,7 +1,7 @@
 /**
  * Queue ingestion (WI-2): acquiring the target repo's open issues and
  * normalizing them through the WI-1 normalizer. Acquisition is one page at
- * a bounded limit — the page is also the ceiling on downstream triage spend.
+ * a bounded limit — the page is also the ceiling on downstream planner spend.
  */
 
 import { execFileSync } from "node:child_process";
@@ -248,53 +248,11 @@ export async function splitQueue(
 }
 
 // ---------------------------------------------------------------------------
-// Admission: cap with deterministic default, opt-in triage (FR-003).
-// ---------------------------------------------------------------------------
-
-/** Zod-validated triage output — Sandcastle's `Output.object` pattern (decision 15). */
-export interface TriageValue {
-  readonly scores: Readonly<Record<string, number>>;
-  readonly files: Readonly<Record<string, readonly string[]>>;
-}
-
-const TriageOutput = z.object({
-  scores: z.record(z.string(), z.number().int().min(1).max(5)),
-  files: z.record(z.string(), z.array(z.string())),
-});
-
-/**
- * Extract and validate the `<triage>…</triage>` block. Returns the parsed
- * value only when Zod validation passes AND every queued id appears in
- * `scores`; anything else is unusable (caller takes the degraded path).
- */
-export function parseTriageOutput(
-  stdout: string,
-  ids: readonly string[],
-): TriageValue | undefined {
-  const match = stdout.match(/<triage>([\s\S]*?)<\/triage>/);
-  if (!match) {
-    return undefined;
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(match[1] ?? "");
-  } catch {
-    return undefined;
-  }
-  const parsed = TriageOutput.safeParse(json);
-  if (!parsed.success) {
-    return undefined;
-  }
-  const covers = ids.every((id) => parsed.data.scores[id] !== undefined);
-  return covers ? parsed.data : undefined;
-}
-
-// ---------------------------------------------------------------------------
 // Plan output (WI-13 FR-001): one planning pass over the whole queue —
 // priorities plus a dependency graph the queue runner walks in parallel.
 // ---------------------------------------------------------------------------
 
-/** Zod-validated plan output — same `Output.object` pattern as triage above. */
+/** Zod-validated plan output — Sandcastle's `Output.object` pattern (decision 15). */
 export interface PlanValue {
   readonly priority: Readonly<Record<string, number>>;
   readonly blockedBy: Readonly<Record<string, readonly string[]>>;
@@ -340,8 +298,8 @@ function planHasCycle(blockedBy: Readonly<Record<string, readonly string[]>>): b
  * Extract and validate the `<plan>…</plan>` block (WI-13 FR-001). Returns the
  * parsed value only when Zod validation passes AND every queued id appears in
  * `priority`, every blockedBy edge names a queued id (never the issue itself),
- * and the edges are acyclic; anything else is unusable (the caller takes the
- * degraded path, same contract as `parseTriageOutput`).
+ * and the edges are acyclic; anything else is unusable — the caller takes the
+ * degraded path (deterministic order, loud warning, run continues).
  */
 export function parsePlanOutput(
   stdout: string,
@@ -377,10 +335,9 @@ export function parsePlanOutput(
 }
 
 /**
- * The planning pass's prompt (WI-13 FR-001) — same shape as
- * `buildTriagePrompt` above: ids with first description lines only, one JSON
- * block as the contract. Defines blocked-by for the planner and states the
- * all-blocked rule so the plan can never deadlock the whole queue.
+ * The planning pass's prompt (WI-13 FR-001): ids with first description lines
+ * only, one JSON block as the contract. Defines blocked-by for the planner and
+ * states the all-blocked rule so the plan can never deadlock the whole queue.
  */
 export function buildPlanPrompt(issues: readonly NormalizedIssue[]): string {
   const listing = issues
@@ -443,20 +400,10 @@ export function parseReviewOutput(stdout: string): ReviewVerdict {
   return match === null ? "uncertain" : (match[1] as ReviewVerdict);
 }
 
-/** Short scoring prompt — one block, per-issue score and likely-touched files. */
-export function buildTriagePrompt(issues: readonly NormalizedIssue[]): string {
-  const listing = issues
-    .map((i) => `- ${i.id}: ${i.description.split("\n")[0] ?? i.id}`)
-    .join("\n");
-  return [
-    "You are triaging a fix queue. For each issue below, give an integer priority",
-    "from 1 (low) to 5 (urgent) and the repository files its fix likely touches.",
-    "Answer with exactly one JSON block and nothing else inside it:",
-    '<triage>{"scores":{"<id>":1-5},"files":{"<id>":["path/file.ext"]}}</triage>',
-    "",
-    listing,
-  ].join("\n");
-}
+// ---------------------------------------------------------------------------
+// Admission: cap with deterministic default (WI-2 T3; its triage parameters
+// are fed from the WI-13 plan until T5 dissolves this surface).
+// ---------------------------------------------------------------------------
 
 export interface NotAdmitted {
   readonly issue: NormalizedIssue;
@@ -468,7 +415,15 @@ export interface AdmitInput {
   readonly issues: readonly NormalizedIssue[];
   /** Validated >= 1 by the CLI at startup (FR-003(f)); documented precondition. */
   readonly cap: number;
-  readonly triage?: TriageValue;
+  /**
+   * Per-issue priority scores and likely-touched files. The WI-13 plan feeds
+   * `priority` in here (files empty — the plan has no file data) until T5
+   * dissolves this surface.
+   */
+  readonly triage?: {
+    readonly scores: Readonly<Record<string, number>>;
+    readonly files: Readonly<Record<string, readonly string[]>>;
+  };
   /** True when a triage pass ran but its output failed validation — degrade loudly. */
   readonly triageUnusable?: boolean;
 }

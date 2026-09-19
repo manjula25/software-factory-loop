@@ -54,19 +54,19 @@ describe("sandcastle adapter boundary (FR-001)", () => {
     expect(text).toContain("@ai-hero/sandcastle");
   });
 
-  it("exposes the four seam exports: runFixRun, createFixSandbox, mergeBack, runTriage", () => {
+  it("exposes the four seam exports: runFixRun, createFixSandbox, mergeBack, runPlan", () => {
     expect(typeof adapter.runFixRun).toBe("function");
     expect(typeof adapter.createFixSandbox).toBe("function");
     expect(typeof adapter.mergeBack).toBe("function");
-    expect(typeof adapter.runTriage).toBe("function");
+    expect(typeof adapter.runPlan).toBe("function");
   });
 
-  it("keeps the triage pass bounded to one iteration, on a branch that is never a fix branch", () => {
-    const options = adapter.triageRunOptions();
+  it("keeps the planning pass bounded to one iteration, on a branch that is never a fix branch", () => {
+    const options = adapter.planRunOptions();
 
-    // constraint 5: a scoring run that could iterate is an unbounded second agent
+    // constraint 5: a planning run that could iterate is an unbounded second agent
     expect(options.maxIterations).toBe(1);
-    expect(options.branchStrategy).toEqual({ type: "branch", branch: adapter.TRIAGE_BRANCH });
-    expect(adapter.TRIAGE_BRANCH.startsWith("fix/")).toBe(false);
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: adapter.PLAN_BRANCH });
+    expect(adapter.PLAN_BRANCH.startsWith("fix/")).toBe(false);
   });
 });

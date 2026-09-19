@@ -25,30 +25,31 @@ import {
 } from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
+  PLAN_BRANCH,
   REVIEW_BRANCH,
-  TRIAGE_BRANCH,
   createFixSandbox,
   runFixRun,
+  runPlan,
   runReview,
-  runTriage,
   type AgentSpec,
-  type TriageRunInput,
+  type PlanRunInput,
 } from "./sandcastle-adapter.js";
 import { diffVerification, parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 import {
   admitIssues,
-  buildTriagePrompt,
+  buildPlanPrompt,
   listOpenIssues,
+  orderFromPlan,
   prListArgs,
+  parsePlanOutput,
   parseReviewOutput,
-  parseTriageOutput,
   realGhJson,
   splitQueue,
   type MergedPr,
   type OpenPr,
+  type PlanValue,
   type QueueDeps,
   type ReviewVerdict,
-  type TriageValue,
 } from "./queue.js";
 
 /** Commits made by the fix agent in target repos (workflow.md, FR-005). */
@@ -140,7 +141,7 @@ export interface LoopDeps {
    * secrets-guards it before the call, and deletes the branch afterwards. A
    * thrown run maps to the `uncertain` verdict class at the call site.
    */
-  runReview(input: TriageRunInput & { readonly diff: string }): Promise<string>;
+  runReview(input: PlanRunInput & { readonly diff: string }): Promise<string>;
   /**
    * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
    * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
@@ -1131,7 +1132,7 @@ async function runCanary(
 
 /** Everything the queue runner needs beyond the single-issue loop. */
 export type QueueLoopDeps = LoopDeps & QueueDeps & {
-  runTriage(input: TriageRunInput): Promise<string>;
+  runPlan(input: PlanRunInput): Promise<string>;
 };
 
 export interface QueueRunInput {
@@ -1142,7 +1143,6 @@ export interface QueueRunInput {
   readonly profile: ProjectProfile;
   readonly label?: string;
   readonly cap: number;
-  readonly triage: boolean;
   /**
    * WI-3 (FR-007): a pre-parsed queue from `--spec-doc` / `--plain-list`.
    * When present it REPLACES GitHub acquisition — `ghJson` is never called.
@@ -1231,15 +1231,16 @@ export class QueueAbortedError extends Error {
 }
 
 /**
- * Run the queue: acquire → dedup → (opt-in triage) → admit ≤ cap → run each
- * admitted issue sequentially through runSingleIssue. An issue-level failure
- * is recorded and the queue continues; a harness-level failure (stale
- * baseline, credentials) aborts with a `QueueAbortedError` whose `summary`
- * holds the partial run — the caller prints both that and the abort reason.
+ * Run the queue: acquire → dedup → plan (when >1 eligible, WI-13 FR-001) →
+ * admit ≤ cap → run each admitted issue sequentially through runSingleIssue.
+ * An issue-level failure is recorded and the queue continues; a harness-level
+ * failure (stale baseline, credentials) aborts with a `QueueAbortedError`
+ * whose `summary` holds the partial run — the caller prints both that and the
+ * abort reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
   // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
-  // dedup, triage, the cap, and the loop itself are identical from here on.
+  // dedup, the planner, the cap, and the loop itself are identical from here on.
   const issues = input.sourceIssues !== undefined
     ? [...input.sourceIssues]
     : await listOpenIssues(deps, {
@@ -1248,45 +1249,48 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       });
   const split = await splitQueue(deps, input.repoDir, issues);
 
-  // The flag is the opt-in, so triage runs at any queue size — its file-overlap
-  // deferral (decision 14) is what keeps two same-module fixes from becoming
-  // conflicting PRs, and that matters below the cap too. One issue can overlap
-  // nothing and outrank nobody, so it never buys a model call.
-  let triage: TriageValue | undefined;
-  let triageUnusable = false;
-  let triageError: string | undefined;
-  if (input.triage && split.eligible.length > 1) {
-    const prompt = buildTriagePrompt(split.eligible);
+  // WI-13 FR-001: the planner is always on when more than one issue is
+  // eligible — the dependency graph it returns is what lets independent fixes
+  // run in parallel. One eligible issue can block nobody and outrank nobody,
+  // so it never buys a model call.
+  let plan: PlanValue | undefined;
+  let planUnusable = false;
+  let planError: string | undefined;
+  if (split.eligible.length > 1) {
+    const prompt = buildPlanPrompt(split.eligible);
     assertNoSecrets([prompt], deps.env);
     try {
-      const stdout = await deps.runTriage({
+      const stdout = await deps.runPlan({
         cwd: input.repoDir,
         prompt,
         imageName: input.imageName,
         agent: input.agent,
       });
-      triage = parseTriageOutput(stdout, split.eligible.map((i) => i.id));
+      plan = parsePlanOutput(stdout, split.eligible.map((i) => i.id));
     } catch (error) {
-      // The scoring pass is an optimization, never a gate: a failed triage run
+      // The planning pass is an optimization, never a gate: a failed plan run
       // degrades the ordering, it does not cost the queue its issues.
-      triageError = error instanceof Error ? error.message : String(error);
+      planError = error instanceof Error ? error.message : String(error);
     } finally {
       // Runs on the throw path too, so a failed pass never leaks the branch.
-      await deps.deleteBranch(input.repoDir, TRIAGE_BRANCH);
+      await deps.deleteBranch(input.repoDir, PLAN_BRANCH);
     }
-    triageUnusable = triage === undefined;
+    planUnusable = plan === undefined;
   }
 
+  // Interim (T5 dissolves admitIssues): rank by the plan, then feed its
+  // priorities through admission's existing score ranking — same comparator
+  // semantics as orderFromPlan (priority desc, ascending-number ties).
   const admission = admitIssues({
-    issues: split.eligible,
+    issues: orderFromPlan(split.eligible, plan),
     cap: input.cap,
-    ...(triage !== undefined ? { triage } : {}),
-    ...(triageUnusable ? { triageUnusable: true } : {}),
+    ...(plan !== undefined ? { triage: { scores: plan.priority, files: {} } } : {}),
+    ...(planUnusable ? { triageUnusable: true } : {}),
   });
   if (admission.degraded) {
     // The reason can quote a subprocess error, so it passes the guard like any
     // other emitted string before it reaches a terminal or an evidence log.
-    const warning = `[queue] WARNING: triage unusable (${triageError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
+    const warning = `[queue] WARNING: plan unusable (${planError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
     assertNoSecrets([warning], deps.env);
     console.error(warning);
   }
@@ -1440,6 +1444,20 @@ export function parseCap(raw: string): number {
   return n;
 }
 
+/**
+ * WI-13 (FR-009): `--triage` is retired — the dependency-aware planner
+ * replaced it and always runs when more than one issue is eligible. Passing
+ * the dead flag is a startup error naming the replacement, thrown before any
+ * env load, acquisition, clone, or sandbox spend.
+ */
+export function parseRetiredFlags(argv: readonly string[]): void {
+  if (argv.includes("--triage")) {
+    throw new Error(
+      "--triage was removed — the dependency-aware planner now always runs when more than one issue is eligible",
+    );
+  }
+}
+
 /** A source-selection problem (combined flags, missing/unreadable file) — WI-3. */
 export class SourceSelectionError extends Error {
   constructor(message: string) {
@@ -1510,7 +1528,7 @@ export type OverrideOutcome =
   | { readonly kind: "run"; readonly outcome: LoopOutcome };
 
 /**
- * `--issue N` single-issue override: no cap, no triage — the user named the
+ * `--issue N` single-issue override: no cap, no planner — the user named the
  * issue — but dedup still applies, open (in flight) and merged (done) alike
  * (decision 6; WI-6 FR-002). Also cleans a stale fix branch for the named
  * issue so the retry starts from clean main.
@@ -1607,7 +1625,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
 // ---------------------------------------------------------------------------
 // CLI entry (WI-2: queue mode is the default; --issue N is the override):
 // npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
-//                [--max-issues <n>] [--triage]
+//                [--max-issues <n>]
 //                [--spec-doc <path> | --plain-list <path>]  (WI-3: replaces
 //                GitHub issue acquisition with a pre-parsed source)
 //                --provider <name>
@@ -1627,6 +1645,9 @@ async function main(): Promise<void> {
   const optFlag = (name: string): string | undefined =>
     args.includes(`--${name}`) ? flag(name) : undefined;
 
+  // WI-13 (FR-009): retired-flag rejection comes first — pure argv validation,
+  // before any env load, acquisition, clone, worktree, or sandbox spend.
+  parseRetiredFlags(args);
   const repoArg = flag("repo");
   const issueArg = optFlag("issue");
   const providerName = flag("provider");
@@ -1634,7 +1655,6 @@ async function main(): Promise<void> {
   const modelOverride = optFlag("model");
   const cap = parseCap(optFlag("max-issues") ?? "3");
   const label = optFlag("label");
-  const triage = args.includes("--triage");
   // WI-3 (FR-007): validated and parsed before any env load, clone, worktree,
   // or sandbox — a bad source costs nothing.
   const source = parseSourceArgs(args);
@@ -1768,7 +1788,7 @@ async function main(): Promise<void> {
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
-  const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
+  const queueDeps: QueueDeps & { runPlan(input: PlanRunInput): Promise<string> } = {
     ghJson: realGhJson,
     // WI-7 (FR-001): refresh the clone's remote-tracking refs before the dedup
     // reads them — the revert guard and branch listings describe origin's now,
@@ -1807,12 +1827,12 @@ async function main(): Promise<void> {
         // already absent on the remote — nothing to clean up
       }
     },
-    runTriage,
+    runPlan,
   };
   const allDeps = { ...deps, ...queueDeps };
 
   if (issueArg !== undefined) {
-    // Single-issue override (decision 6): no cap, no triage, dedup applies.
+    // Single-issue override (decision 6): no cap, no planner, dedup applies.
     const raw = JSON.parse(
       execFileSync(
         "gh",
@@ -1865,7 +1885,6 @@ async function main(): Promise<void> {
           profile,
           ...(label !== undefined ? { label } : {}),
           cap,
-          triage,
           ...(source !== undefined
             ? { sourceIssues: source.issues, sourceName: source.sourceName }
             : {}),

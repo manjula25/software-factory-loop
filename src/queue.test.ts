@@ -7,14 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   admitIssues,
   buildPlanPrompt,
-  buildTriagePrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
   orderFromPlan,
   PR_PAGE_LIMIT,
   parsePlanOutput,
   parseReviewOutput,
-  parseTriageOutput,
   prListArgs,
   QueueAcquisitionError,
   splitQueue,
@@ -543,35 +541,6 @@ describe("admission: cap, deterministic default, opt-in triage (WI-2 T3)", () =>
   });
 });
 
-describe("parseTriageOutput (WI-2 T3, Zod-validated)", () => {
-  const ids = ["gh-1", "gh-2"];
-
-  it("parses a well-formed triage block", () => {
-    const stdout =
-      'prose\n<triage>{"scores":{"gh-1":3,"gh-2":5},"files":{"gh-1":["src/a.py"],"gh-2":[]}}</triage>\nmore prose';
-    const parsed = parseTriageOutput(stdout, ids);
-
-    expect(parsed).toEqual({
-      scores: { "gh-1": 3, "gh-2": 5 },
-      files: { "gh-1": ["src/a.py"], "gh-2": [] },
-    });
-  });
-
-  it("rejects garbage, missing ids, out-of-range scores, and non-integer scores", () => {
-    expect(parseTriageOutput("no tags at all", ids)).toBeUndefined();
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":3},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // gh-2 missing from scores
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":9,"gh-2":1},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // 9 out of the 1-5 range
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":3.5,"gh-2":1},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // non-integer
-    expect(parseTriageOutput("<triage>not json</triage>", ids)).toBeUndefined();
-  });
-});
-
 describe("parseReviewOutput (WI-6 T6, FR-009)", () => {
   it("parses each of the three contract verdicts", () => {
     expect(parseReviewOutput("prose\n<review>approve</review>\nmore prose")).toBe("approve");
@@ -583,71 +552,6 @@ describe("parseReviewOutput (WI-6 T6, FR-009)", () => {
     expect(parseReviewOutput("the diff looks fine, ship it")).toBe("uncertain"); // no block
     expect(parseReviewOutput("<review>maybe</review>")).toBe("uncertain"); // not a contract verdict
     expect(parseReviewOutput("")).toBe("uncertain");
-  });
-});
-
-describe("buildTriagePrompt (WI-2 T3)", () => {
-  it("lists every queued id with its first description line, and nothing more", () => {
-    const multiline: NormalizedIssue = {
-      id: "gh-7",
-      description: "# crash on empty input\n\nStack trace follows\nline two",
-      sourceType: "github-issue",
-    };
-
-    const prompt = buildTriagePrompt([issue(1), multiline]);
-
-    expect(prompt).toContain("- gh-1: # issue 1");
-    // only the first line travels — the body can be long, and the pass is bounded
-    expect(prompt).toContain("- gh-7: # crash on empty input");
-    expect(prompt).not.toContain("Stack trace follows");
-    expect(prompt).not.toContain("line two");
-  });
-
-  it("asks for the exact block shape parseTriageOutput accepts", () => {
-    const prompt = buildTriagePrompt([issue(1), issue(2)]);
-
-    expect(prompt).toContain("<triage>");
-    expect(prompt).toContain("</triage>");
-    expect(prompt).toContain("scores");
-    expect(prompt).toContain("files");
-    expect(prompt).toMatch(/1 \(low\) to 5 \(urgent\)/);
-  });
-
-  it("round-trips: a reply in the shape the prompt asks for parses and covers every id", () => {
-    // The prompt and the parser are two halves of one contract; this pins them
-    // together so rewording one without the other fails here.
-    const issues = [issue(1), issue(2)];
-    const prompt = buildTriagePrompt(issues);
-    const ids = issues.map((i) => i.id);
-
-    const reply = [
-      "Here is my assessment.",
-      '<triage>{"scores":{"gh-1":4,"gh-2":2},"files":{"gh-1":["src/a.py"],"gh-2":[]}}</triage>',
-    ].join("\n");
-
-    const parsed = parseTriageOutput(reply, ids);
-
-    expect(parsed).toBeDefined();
-    expect(parsed?.scores).toEqual({ "gh-1": 4, "gh-2": 2 });
-    // and the ids the prompt asked about are exactly the ids the parser demands
-    for (const id of ids) {
-      expect(prompt).toContain(id);
-      expect(parsed?.scores[id]).toBeDefined();
-    }
-  });
-
-  it("emits no issue body beyond the first line, so a log-bearing issue cannot bloat the pass", () => {
-    const withLog: NormalizedIssue = {
-      id: "gh-9",
-      description: "# timeout",
-      attachedLog: "Traceback...\n  File \"/home/someone/secret/path.py\"",
-      sourceType: "github-issue",
-    };
-
-    const prompt = buildTriagePrompt([withLog, issue(2)]);
-
-    expect(prompt).not.toContain("Traceback");
-    expect(prompt).not.toContain("/home/someone/secret/path.py");
   });
 });
 

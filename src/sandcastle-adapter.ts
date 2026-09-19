@@ -150,10 +150,10 @@ export function mergeBack(): MergeToHeadBranchStrategy {
   return { type: "merge-to-head" };
 }
 
-export interface TriageRunInput {
+export interface PlanRunInput {
   /** Host repo directory the run anchors to. */
   readonly cwd: string;
-  /** Scoring prompt (already secrets-guarded by the caller). */
+  /** Planning prompt (already secrets-guarded by the caller). */
   readonly prompt: string;
   readonly imageName: string;
   readonly agent: AgentSpec;
@@ -161,8 +161,8 @@ export interface TriageRunInput {
   readonly env?: Readonly<Record<string, string>>;
 }
 
-/** Throwaway branch the triage pass runs on — never a `fix/*` branch. */
-export const TRIAGE_BRANCH = "loop/triage";
+/** Throwaway branch the planning pass runs on — never a `fix/*` branch. */
+export const PLAN_BRANCH = "loop/plan";
 
 /** WI-6 T6 (D7): throwaway branch the pre-merge review pass runs on. */
 export const REVIEW_BRANCH = "loop/review";
@@ -182,7 +182,7 @@ export interface BoundedRunOptions {
  * The shared cost-control factory for every bounded one-shot pass (WI-6 R2):
  * `maxIterations: 1` is what makes an auxiliary pass cheap enough to be worth
  * running at all (constraint 5) — a pass that could iterate would be an
- * unbounded second agent. Both the triage pass and the pre-merge review pass
+ * unbounded second agent. Both the planning pass and the pre-merge review pass
  * build their options here, so the budget bound lives (and is asserted) once.
  */
 export function boundedRunOptions(name: string, branch: string): BoundedRunOptions {
@@ -194,38 +194,38 @@ export function boundedRunOptions(name: string, branch: string): BoundedRunOptio
 }
 
 /**
- * The triage pass's cost controls, as a value rather than an inline literal, so
- * they are assertable without spending a model call (see `boundedRunOptions`).
+ * The planning pass's cost controls, as a value rather than an inline literal,
+ * so they are assertable without spending a model call (see `boundedRunOptions`).
  */
-export function triageRunOptions(): BoundedRunOptions {
-  return boundedRunOptions("triage", TRIAGE_BRANCH);
+export function planRunOptions(): BoundedRunOptions {
+  return boundedRunOptions("plan", PLAN_BRANCH);
 }
 
 /**
- * One bounded scoring pass for queue triage (WI-2 T3): stdout is returned for
- * `<triage>` extraction. The caller deletes the branch afterwards.
+ * One bounded planning pass over the queue (WI-13 T3, FR-001): stdout is
+ * returned for `<plan>` extraction. The caller deletes the branch afterwards.
  */
-export async function runTriage(input: TriageRunInput): Promise<string> {
+export async function runPlan(input: PlanRunInput): Promise<string> {
   const result = await run({
     cwd: input.cwd,
     prompt: input.prompt,
     agent: agentProvider(input.agent),
     sandbox: sandboxProvider(input.imageName, input.env),
-    ...boundedRunOptions("triage", TRIAGE_BRANCH),
+    ...boundedRunOptions("plan", PLAN_BRANCH),
   });
   return result.stdout;
 }
 
 /**
  * One bounded pre-merge review pass (WI-6 T6, FR-009, D7), cloned from
- * `runTriage`: a single `run({...})` on the throwaway `loop/review` branch,
+ * `runPlan`: a single `run({...})` on the throwaway `loop/review` branch,
  * stdout returned for `<review>` extraction. The prompt is prebuilt by the
  * caller (`buildReviewPrompt`: issue description + the diff, three-verdict
  * contract) and secrets-guarded before the call; the caller deletes the branch
  * afterwards. `diff` rides the seam per D7 so the review input is complete at
  * the adapter boundary.
  */
-export async function runReview(input: TriageRunInput & { readonly diff: string }): Promise<string> {
+export async function runReview(input: PlanRunInput & { readonly diff: string }): Promise<string> {
   const result = await run({
     cwd: input.cwd,
     prompt: input.prompt,

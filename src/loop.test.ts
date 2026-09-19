@@ -17,6 +17,7 @@ import {
   formatSingleIssueResult,
   formatSummary,
   parseCap,
+  parseRetiredFlags,
   parseSourceArgs,
   reproTestPath,
   runOverrideIssue,
@@ -1592,9 +1593,10 @@ interface QueueDepsConfig {
   staleBaseline?: boolean;
   /** Preflight reports a stale baseline for this id only — aborts mid-queue. */
   staleBaselineFor?: string;
-  triageStdout?: string;
-  /** The triage run itself throws (sandbox/credentials failure), not its output. */
-  triageThrows?: string;
+  /** WI-13 T3: the planner run's stdout; defaults to a valid equal-priority plan. */
+  planStdout?: string;
+  /** WI-13 T3: the planner run itself throws (sandbox/credentials failure). */
+  planThrows?: string;
   /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
   pathCommittedOnBranch?: boolean;
   /** Opted-in runs: merge fails (conflict/API error) for PRs whose url contains this token. */
@@ -1745,11 +1747,17 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     mainRevertsPr: vi.fn(async () => false),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
-    runTriage: vi.fn(async () => {
-      if (config.triageThrows !== undefined) {
-        throw new Error(config.triageThrows);
+    runPlan: vi.fn(async () => {
+      if (config.planThrows !== undefined) {
+        throw new Error(config.planThrows);
       }
-      return config.triageStdout ?? "";
+      if (config.planStdout !== undefined) {
+        return config.planStdout;
+      }
+      // Equal priorities for every configured issue: a usable plan whose
+      // ordering is the deterministic ascending-number tie rule.
+      const priority = Object.fromEntries(issues.map((i) => [i.id, 3]));
+      return `<plan>${JSON.stringify({ priority, blockedBy: {} })}</plan>`;
     }),
     pathCommittedOnBranch: vi.fn(async () => config.pathCommittedOnBranch === true),
   };
@@ -1763,7 +1771,6 @@ const queueRunInput = (over: Partial<Parameters<typeof runQueue>[0]> = {}) => ({
   agent,
   profile,
   cap: 3,
-  triage: false,
   ...over,
 });
 
@@ -1878,7 +1885,7 @@ describe("runQueue (WI-2 T4)", () => {
     expect(formatSummary(aborted.summary)).toContain("PR: https://example/pr/fix/gh-1");
   });
 
-  it("admits the first cap issues deterministically without triage, never calling the model", async () => {
+  it("admits the first cap issues deterministically when plan priorities tie", async () => {
     const { deps } = makeQueueDeps({
       issues: [1, 2, 3, 4, 5].map(queueIssue),
     });
@@ -1891,71 +1898,17 @@ describe("runQueue (WI-2 T4)", () => {
       ["gh-4", "cap"],
       ["gh-5", "cap"],
     ]);
-    expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
-  it("defers a file-overlapping issue below the cap — the flag, not the cap, is the opt-in", async () => {
-    // cap 3, two eligible issues: the cap forces no choice, but both fixes
-    // touch src/api.py, so admitting each would produce conflicting PRs.
-    const { deps } = makeQueueDeps({
-      issues: [queueIssue(1), queueIssue(2)],
-      triageStdout:
-        '<triage>{"scores":{"gh-1":3,"gh-2":3},"files":{"gh-1":["src/api.py"],"gh-2":["src/api.py"]}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
-
-    expect(deps.runTriage).toHaveBeenCalledTimes(1);
-    expect(summary.attempted).toEqual(["gh-1"]);
-    expect(summary.notAdmitted).toEqual([["gh-2", "file overlap with gh-1"]]);
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
-  });
-
-  it("buys no model call for a single eligible issue — it can outrank and overlap nobody", async () => {
-    const { deps } = makeQueueDeps({
-      issues: [queueIssue(1)],
-      triageStdout: '<triage>{"scores":{"gh-1":5},"files":{}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
-
-    expect(deps.runTriage).not.toHaveBeenCalled();
-    expect(summary.attempted).toEqual(["gh-1"]);
-  });
-
-  it("never calls the model when --triage is absent, however large the queue", async () => {
-    const { deps } = makeQueueDeps({ issues: [1, 2, 3, 4].map(queueIssue) });
-
-    await runQueue(queueRunInput({ cap: 2, triage: false }), deps);
-
-    expect(deps.runTriage).not.toHaveBeenCalled();
-  });
-
-  it("with --triage over cap: ranks by score, defers file-overlapping issues, deletes loop/triage", async () => {
-    const { deps } = makeQueueDeps({
-      issues: [1, 2, 3, 4, 5].map(queueIssue),
-      triageStdout:
-        '<triage>{"scores":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"files":{"gh-4":["src/a.py"],"gh-5":["src/a.py"]}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
-
-    expect(deps.runTriage).toHaveBeenCalledTimes(1);
-    // ranked: gh-5, gh-4 (deferred — overlaps gh-5 on src/a.py), gh-1, gh-2, gh-3
-    expect(summary.attempted).toEqual(["gh-5", "gh-1"]);
-    expect(summary.notAdmitted).toContainEqual(["gh-4", "file overlap with gh-5"]);
-    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/triage");
-  });
-
-  it("degrades loudly to deterministic order when triage output is unusable", async () => {
+  it("degrades loudly to deterministic order when plan output is unusable", async () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { deps } = makeQueueDeps({
         issues: [1, 2, 3, 4, 5].map(queueIssue),
-        triageStdout: "the model refused to answer",
+        planStdout: "the model refused to answer",
       });
 
-      const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
 
       expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to deterministic order/i));
@@ -1964,36 +1917,79 @@ describe("runQueue (WI-2 T4)", () => {
     }
   });
 
-  it("degrades — and still cleans loop/triage — when the triage run itself throws", async () => {
+  it("degrades — and still cleans loop/plan — when the plan run itself throws", async () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { deps } = makeQueueDeps({
         issues: [1, 2, 3, 4, 5].map(queueIssue),
-        triageThrows: "docker: no such image",
+        planThrows: "docker: no such image",
       });
 
-      const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
 
       // the queue keeps its issues: a failed optimization is not a failed run
       expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
       expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("docker: no such image"));
-      expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/triage");
+      expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/plan");
     } finally {
       warn.mockRestore();
     }
   });
 
-  it("blocks the degrade warning when the triage failure would leak an env value", async () => {
+  it("blocks the degrade warning when the plan failure would leak an env value", async () => {
     const { deps } = makeQueueDeps({
       issues: [1, 2, 3].map(queueIssue),
-      triageThrows: "auth rejected token sk-live-secret",
+      planThrows: "auth rejected token sk-live-secret",
     });
     deps.env.ANTHROPIC_API_KEY = "sk-live-secret";
 
-    await expect(runQueue(queueRunInput({ cap: 2, triage: true }), deps)).rejects.toThrow(
+    await expect(runQueue(queueRunInput({ cap: 2 }), deps)).rejects.toThrow(
       /ANTHROPIC_API_KEY/,
     );
+  });
+});
+
+describe("planner-wiring (WI-13 T3, FR-001/FR-009)", () => {
+  it("invokes the planner dep exactly once when more than one issue is eligible", async () => {
+    const { deps } = makeQueueDeps({ issues: [1, 2, 3].map(queueIssue) });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2", "gh-3"]);
+  });
+
+  it("never invokes the planner dep when exactly one issue is eligible", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.runPlan).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["gh-1"]);
+  });
+
+  it("ranks by plan priority under the cap and deletes loop/plan afterwards", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [1, 2, 3, 4, 5].map(queueIssue),
+      planStdout:
+        '<plan>{"priority":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"blockedBy":{}}</plan>',
+    });
+
+    const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1);
+    // ranked: gh-5, gh-4, gh-1, gh-2, gh-3 — the cap admits the top two
+    expect(summary.attempted).toEqual(["gh-5", "gh-4"]);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/plan");
+  });
+
+  it("--triage in argv fails at startup, naming the always-on planner as the replacement", () => {
+    expect(() => parseRetiredFlags(["--repo", "owner/name", "--triage"])).toThrow(
+      "--triage was removed — the dependency-aware planner now always runs when more than one issue is eligible",
+    );
+    // the retired-flag check is pure argv validation — no dep is involved
+    expect(() => parseRetiredFlags(["--repo", "owner/name"])).not.toThrow();
   });
 });
 
