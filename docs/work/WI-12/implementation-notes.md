@@ -55,4 +55,27 @@ Controller: top-level session. Plan: `docs/work/WI-12/implementation-plan.md`
   redundant defense-in-depth (kept); the (f2)/(f3) duplication kept
   deliberately with a cross-reference.
 
+### T3 — FR-003 reverted-path lift characterization pin (accepted 2026-09-19)
+
+- Candidate `a7df163` (base `7b6f502`). Test-only; zero production change;
+  the pin passed against current code on FIRST run (characterization held —
+  no defect found).
+- Deviation (accepted by both reviews): implementer added an optional
+  `sandboxCloseThrowsMsg` knob to the `makeQueueDeps` fixture (same file),
+  `??`-defaulting to the byte-identical WI-11 literal — needed so the queue
+  seam could carry the distinct VERIFY literal for attributability. Spec
+  review ruled it legitimate, not scope creep; code-quality review confirmed
+  default preservation and one-line doc-comment convention.
+- Second iteration detail: `outcome.reverted.teardownFailure` →
+  `outcome.reverted?.teardownFailure` (TS18048), same assertion strength.
+- Controller gates fresh at candidate: typecheck exit 0; `npm test` 10 files /
+  222 tests.
+- Spec review: **PASS** (all three FR-003 surfaces pinned; canary-evidence
+  assertion genuine; no out-of-scope pins).
+- Code-quality review: **PASS**. Two TASTE: knob no-ops without its `For`
+  partner (inherent to the family, fails loudly by content); queue-seam
+  `For`+`Msg` split vs single-issue direct-message asymmetry (existing
+  design, remember if a third message-carrying knob appears).
+
+
 
