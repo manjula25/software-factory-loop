@@ -71,3 +71,43 @@ Evidence boundary:
 
 Reviews: specification PASS, code-quality APPROVED, both at the fixed package
 `be5f210` → `27abf15` (record in implementation-notes.md).
+
+## T3 — canary teardown failures never decide or erase the verdict (FR-003)
+
+Claim: a teardown failure in the canary block (`canary.close()` throwing, or
+the canary branch delete refusing) is recorded beside the verdict and never
+changes it — a green canary stays merged with the failure named on the MERGED
+summary line (`(canary: green; teardown: <reason>)`, via the `mergedPrs` tuple
+growth), a red canary still reverts with the failure in
+`RevertedRecord.teardownFailure` (never in `evidence`) and on the `⚠️ REVERTED`
+line; no unhandled rejection on either path; existing canary tests
+byte-unchanged.
+
+Exact candidate: `23f0a35` (base `0dcf132`), branch `worktree-wi-7`.
+
+| Check | Command | Result |
+|---|---|---|
+| Focused suite | `npm test -- src/loop.test.ts` | 1 file / 96 tests passed (94+2), exit 0 |
+| Typecheck | `npm run typecheck` (tsc --noEmit) | exit 0 |
+| Full suite | `npm test` | 10 files / 204 tests passed (202+2), exit 0 |
+
+RED evidence (leaf-observed, pre-fix; failure mode recorded per plan): green
+path SILENTLY SWALLOWED the close()-throw (outer catch overwrote
+`canaryEvidence`, which the green path discards — merged outcome carried no
+note); red path OVERWROTE the already-decided evidence
+(`expected 'canary sandbox failed to run: git: branch -D refused…' to contain
+'tests/test_contract.py::test_zero_contract'`). Independently confirmed
+against base by the spec reviewer. Verbatim lines in implementation-notes.md.
+
+Evidence boundary:
+- Vitest unit seam + tsc only; no live Docker/gh run of a teardown failure.
+- Non-claim: teardown is not retried; leftover throwaway branches from a
+  failed teardown are tolerated (the next run's stale-branch pass cleans
+  them) — not proven here.
+- Non-claim: the single-issue `--issue` override path prints no
+  `teardownFailure` line (queue summary + record carry it; per plan scope).
+- Confidentiality: teardown strings reach the terminal only via
+  `formatSummary`'s guarded emit — no new unguarded emission.
+
+Reviews: specification PASS, code-quality APPROVED, both at the fixed package
+`0dcf132` → `23f0a35` (record in implementation-notes.md).

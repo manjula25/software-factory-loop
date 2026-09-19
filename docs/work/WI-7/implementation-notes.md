@@ -159,3 +159,91 @@ guarded `Loop finished without a PR` path, exit 1). 4 new tests (i)–(l).
 sync failure is exercised via the LoopDeps seam (consistent with sibling
 revert/canary testing). No Docker/pipeline-integration run of the uncanaried
 path against a real repo.
+
+---
+
+## Task 3 — canary teardown failures never decide/erase the verdict (FR-003, ticket 3)
+
+- **Size:** small-medium (own try/catch in the canary `finally`; optional
+  `teardownFailure` on the green (MERGED-line suffix via grown `mergedPrs`
+  tuple, parallel-field fallback allowed if tuple growth reads worse) and red
+  (`RevertedRecord` field) paths; 2 new tests).
+- **Risk:** medium — same code region as T2 (auto-merge chain tail); verdict
+  preservation is the invariant (green stays merged, red still reverts);
+  existing green/red canary tests must stay byte-unchanged; teardown failure
+  never appended to the evidence string.
+- **Budget:** one leaf implementer session; vitest only, no Docker.
+- **Evidence boundary:** loop seam with throwing teardown deps; teardown not
+  retried; leftover throwaway branches tolerated (next run's stale-branch
+  pass) — not proven here.
+- **Fixed point:** `0dcf132` (clean tree, T2 accepted).
+- **Intended candidate:** working tree vs `0dcf132`; commit message
+  `fix(WI-7): canary teardown failures recorded, never decide/erase the verdict (FR-003)`.
+
+### Checkpoint record — ACCEPTED 2026-09-19
+
+**Candidate:** `23f0a35` (commit `fix(WI-7): canary teardown failures recorded,
+never decide/erase the verdict (FR-003)`), base `0dcf132`. Changed paths:
+`src/loop.ts`, `src/loop.test.ts` (the only two permitted).
+
+**Leaf report:** one leaf session (~25 min, ~14 tool calls, no API/Docker
+spend). No deviations. Knobs: `canaryCloseThrows`/`canaryDeleteBranchThrows`
+(makeDeps), `canaryCloseThrowsFor`/`canaryDeleteBranchThrowsFor`
+(makeQueueDeps). Chose the `mergedPrs` tuple growth (4th element only when
+present) over the parallel-field fallback — exactly one consumer
+(`formatSummary`'s MERGED line) and the suffix lives on that same line.
+
+**RED (leaf-observed; the plan required recording WHICH failure mode the
+current tree exhibits):** neither flip nor propagation —
+- green canary + `close()`-throw: `outcome.teardownFailure` assertion failed
+  (`undefined and string is invalid for this assertion`) — the throw landed in
+  the canary's outer catch, overwrote `canaryEvidence` (which the green path
+  discards), and was SILENTLY SWALLOWED; merged outcome carried no note.
+- red canary + throwing `deleteBranch`: `expected 'canary sandbox failed to
+  run: git: branch -D refused — worktree busy' to contain
+  'tests/test_contract.py::test_zero_contract'` — the base tree OVERWROTE the
+  already-decided red evidence with the teardown error.
+Both confirmed against base by the spec reviewer's independent static trace.
+
+**GREEN:** own try/catch inside the canary `finally` (outer catch byte-unchanged,
+now fires only on real run failures); close-then-delete ordering preserved;
+green path conditional-spreads `teardownFailure` onto the merged outcome;
+`RevertedRecord.teardownFailure` optional field (never appended to `evidence`);
+MERGED line suffix `(canary: green; teardown: <reason>)`; REVERTED line suffix
+`; teardown: <reason>`. 2 new tests (l)/(m).
+
+**Existing canary tests byte-unchanged:** verified by the leaf
+(`git diff -U0` — only 4 factory-wiring lines replaced, no existing
+`it(...)` body/assertion/name edited) and independently by the spec reviewer
+(all existing MERGED/REVERTED pins untouched and passing).
+
+**Controller gate re-run fresh at `23f0a35`:** focused `src/loop.test.ts`
+96/96 (94+2); `npm run typecheck` exit 0; full `npm test` 10 files / 204 tests
+(202+2) exit 0.
+
+**Reviews (fixed package base `0dcf132` → candidate `23f0a35`):**
+- Specification review: **PASS**, zero blocking (verdict preservation, tuple
+  growth, no parallel field, byte-unchanged existing tests, RED genuineness
+  against base all verified).
+- Code-quality review: **APPROVED**, zero critical/important. Confirmed
+  confidentiality seam clean (teardown strings reach the terminal only via
+  `formatSummary`'s guarded emit).
+
+**Adjacent follow-ups (recorded, not fixed):**
+- Single-issue `--issue` override path has no terminal surface for
+  `teardownFailure` (queue summary + record only, per plan scope); possible
+  doc tweak or sibling stderr line in a follow-up.
+- Red-path PR comment names only the evidence, not the teardown failure —
+  judgment call, plan-consistent.
+- Preflight/verification sandboxes' teardown (`pre.close()` + `deleteBranch`
+  in their `finally`, ~src/loop.ts:626) still propagates — same failure class,
+  out of this slice's scope.
+- `_branch` underscore prefix now read in both factory `deleteBranch` bodies —
+  cosmetic.
+- Knob match-strictness asymmetry (makeDeps prefix-match vs makeQueueDeps
+  exact-match) — both correct in context.
+
+**Evidence boundary / non-claims:** vitest unit seam + tsc only; no live
+Docker/gh run of a teardown failure. Teardown is not retried; leftover
+throwaway branches from a failed teardown are tolerated (next run's
+stale-branch pass cleans them) — not proven here.
