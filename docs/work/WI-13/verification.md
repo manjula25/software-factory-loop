@@ -97,3 +97,21 @@ contained none, so the executed path is behavior-identical. A fresh live run at 
 NOT performed (it would repeat model spend for an unchanged green path); this is a stated
 boundary, not silence. The T11 behavior itself is proven at the harness-source seam by test
 (l) with its mutation re-check.
+
+## T12 amendment (2026-09-20, candidate 1da7936)
+
+Live runs 1–3 (each verbatim under `evidence/merger-live-run{,-2,-3}.log`, controller notes
+appended post-run) attempted to exercise the merger gate's conflict path live. Run 3 fired it
+via the production degraded-fallback path (planner deliberately bypassed on scratch branch
+`scratch/wi-13-gate-live`, env-gated `LOOP_BYPASS_PLAN=1`, never merged) and exposed a real
+defect: the gate never published the merger-resolved branch, so `gh pr merge --squash` — which
+merges GitHub's PR head — failed with GraphQL "Pull Request has merge conflicts". The stranded
+PR #47 was completed out-of-band under explicit user authorization (resolution `3972f87`
+pushed, squash-merged as `052c5bf`, issue #44 closed with an honest comment). The defect is
+fixed in T12 (`LoopDeps.pushBranch`, green conflict arm, before review and `mergePr`); dual
+fresh reviews PASS/APPROVED at `1da7936`; proving commands re-run fresh at the new candidate:
+typecheck exit 0, `npm test` **261/261** (259 + 2 T12 tests), focused `verified-merger` 8/8
+and `wave-runner` 12/12. A46 (live exercise of the conflict path) is CLOSED on runs 1–3's
+evidence: probe, merger, fresh-sandbox re-verification, review, and failure posture all fired
+live; what failed was the publish step, now fixed — a fresh bypassed live run at the T12-fixed
+source is pending and will be recorded under `evidence/merger-live-run-4.log` when run.

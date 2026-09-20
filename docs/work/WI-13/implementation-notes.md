@@ -19,6 +19,7 @@ Controller ledger (one row per task):
 | T9 | small/low | 0afa98c | 51a27f7 | (docs inspection) | ACCEPTED — gates green (258/258, typecheck 0, staleness grep clean, source diffs comment-only); spec PASS (11/11 criterion items code-traced); quality APPROVED (both at 51a27f7) |
 | T10 | medium/high | 8e6d9a9 | 3e1b6bf | live run | ACCEPTED — attempt 3 green end-to-end (planner graph, 2 concurrent lanes, PRs #33/#34, merges + green canaries, re-plan → gh-31 → PR #35, merge + green canary, summary 3/3, exit 0); attempts 1–2 failures recorded verbatim (env; baseline gate correctly aborting a bad seed); spec PASS at d035ead, re-confirmed PASS at 3e1b6bf after appending the review-recommended errata (attempt-1 exit-code mislabel; diff verified 2-line append, nothing altered); quality N/A — zero source changes, evidence file has no code-quality axis (controller ruling, recorded) |
 | T11 | medium/high | bc0400b | 3828c21 | `wave-runner` (l) | ACCEPTED — fix pass for the code-review BLOCKING finding (FR-004 wave-granularity stop-the-line); gates green (12/12 focused incl. corrected (c) and (k), 259/259 full +1, typecheck 0, both re-verified independently by each reviewer); spec PASS; quality APPROVED (both at 3828c21); CLAUDE.md loop.ts row updated in the same commit |
+| T12 | medium/high | eafdc52 | 1da7936 | `verified-merger` (a-publish, b-publish) | ACCEPTED — fix pass for the live-run-3 defect (gate never published the merger-resolved branch; `gh pr merge` reads GitHub's PR head → GraphQL conflict); gates green (8/8 focused, 12/12 wave-runner, 261/261 full +2, typecheck 0, re-run fresh by controller); spec PASS; quality APPROVED (both at 1da7936); CLAUDE.md loop.ts row updated in the same commit |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -411,6 +412,39 @@ Controller ledger (one row per task):
     "REVIEW SKIP gh-2" for a skip that never reached review — message text is unambiguous.
   - A53 (T11 spec, minor): a halted opted-in sibling is not added to `completed` — harmless;
     the abort discards re-plan/blockedBy resolution anyway.
+
+## T12 — Fix pass: publish the merger-resolved branch (live-run-3 defect)
+
+- **Origin:** `docs/work/WI-13/evidence/merger-live-run-3.log` (controller notes). The verified-merger
+  gate resolved the conflict on the LOCAL branch, re-verified it green in a fresh sandbox, and passed
+  pre-merge review — but never pushed the resolution. `gh pr merge --squash` merges GitHub's PR head;
+  origin still pointed at the pre-resolution commit, so the merge failed with GraphQL "Pull Request has
+  merge conflicts". The gate's happy path could never complete on GitHub as implemented. Out-of-band
+  completion of the stranded PR #47 (push resolution 3972f87 → squash-merge 052c5bf → honest issue-#44
+  close comment) performed by the controller under explicit user authorization.
+- **Seam:** queue-runner seam (`runSingleIssue` / `runQueue` in `src/loop.test.ts`); new `LoopDeps`
+  member `pushBranch(repoDir, branch)`, called in `runVerifiedMergerGate`'s green conflict arm
+  immediately before `return {proceed: true}` (still inside the serialized chain, so the push precedes
+  the pre-merge review and `mergePr`). Real wiring mirrors `createPr`'s push idiom (`git push origin
+  <branch>`, no `--force` — a non-fast-forward refusal throws into the safe fallback).
+- **Candidate 1da7936** (base eafdc52). RED observed verbatim: (a-publish) `expected "vi.fn()" to be
+  called 1 times, but got 0 times`; (b-publish) mergeFailure undefined (gate proceeded straight to a
+  successful merge — the silent twin of the live defect). Controller gates re-run fresh:
+  `verified-merger` 8/8, `wave-runner` 12/12, full 261/261 (+2), typecheck 0.
+- **Spec review: PASS** (all five claims verified; push confirmed downstream of green re-verification,
+  satisfying FR-008 and constraint 1's "no merge counts without fresh-sandbox verification"; posture
+  strings byte-pattern identical to the sibling arms). **Quality review: APPROVED** (zero
+  critical/important; seam shape adjudged right vs folding into mergePr — mergePr also runs on
+  non-conflict paths where a re-push is wasted work, and the separate seam is what makes the ordering
+  assertions possible; no sandbox lifecycle change; tests deterministic and non-vacuous).
+- **Adjacent findings ledger:**
+  - A54 (T12 spec+quality, minor, pre-existing pattern): the push-failure arm, like its siblings
+    (probe/merger/red), drops the re-verification sandbox's `teardownFailure` — evidence loss only,
+    never decides or erases the verdict. Same class as A34.
+  - A55 (T12 quality, cosmetic): queue-mock `pushThrowsFor` branches on `fix/<id>` while makeDeps'
+    `pushThrows` takes a literal message — each matches its own file's knob convention.
+  - A56 (T12 quality, cosmetic): CLAUDE.md row says "before mergePr" but not "before the review" —
+    adjacent text already establishes review ordering.
 
 ## T10 — Live integration run (user-authorized)
 
