@@ -2,7 +2,8 @@
  * The ONLY module that imports `@ai-hero/sandcastle` (FR-001).
  *
  * Everything the rest of the harness knows about Sandcastle goes through the
- * three exports below (`runFixRun`, `createFixSandbox`, `mergeBack`), all thin
+ * exports below (`runFixRun`, `createFixSandbox`, `mergeBack`, and the
+ * bounded one-shot passes `runPlan`, `runReview`, `runMerger`), all thin
  * typed wrappers over the pinned 0.12.0 API. If a future Sandcastle release
  * breaks us, the fix lands here — or, per the fork-on-demand triggers in
  * harness-prd-v2.md, we fork the package.
@@ -180,10 +181,12 @@ export interface BoundedRunOptions {
 
 /**
  * The shared cost-control factory for every bounded one-shot pass (WI-6 R2):
- * `maxIterations: 1` is what makes an auxiliary pass cheap enough to be worth
- * running at all (constraint 5) — a pass that could iterate would be an
- * unbounded second agent. Both the planning pass and the pre-merge review pass
- * build their options here, so the budget bound lives (and is asserted) once.
+ * a `maxIterations` of 1 (the defaulted param; the merger passes
+ * `MERGER_MAX_ITERATIONS`) is what makes an auxiliary pass cheap enough to be
+ * worth running at all (constraint 5) — a pass that could iterate would be an
+ * unbounded second agent. The planning pass, the pre-merge review pass, and
+ * the merger pass all build their options here, so the budget bound lives
+ * (and is asserted) once.
  */
 export function boundedRunOptions(
   name: string,

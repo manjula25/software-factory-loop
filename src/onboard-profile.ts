@@ -2,7 +2,7 @@
  * Profile shaping for onboarding (WI-3, T1): argv parsing and profile
  * construction in one function, so the confidentiality clearance a human
  * asserts at onboarding is recorded exactly once, in the profile. The flag is
- * valueless like `--triage` — presence means cleared, absence means the field
+ * valueless like `--auto-merge` — presence means cleared, absence means the field
  * is omitted entirely (never `false`, never inferred from anything else).
  */
 
