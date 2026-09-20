@@ -174,6 +174,8 @@ interface DepOverrides {
   mergerThrows?: string;
   /** WI-13 T8 (FR-008): the post-merger re-verification of the resolved branch goes red. */
   mergerResolutionFails?: boolean;
+  /** WI-13 T12 (FR-007/FR-008): publishing the merger-resolved branch (pushBranch) throws. */
+  pushThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
@@ -278,6 +280,13 @@ function makeDeps(overrides: DepOverrides = {}) {
         throw new Error(overrides.mergerThrows);
       }
       return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
+    // WI-13 T12 seam (FR-007/FR-008): publishing the merger-resolved branch to
+    // origin. Defaults to success; `pushThrows` simulates a refused push.
+    pushBranch: vi.fn(async (_repoDir: string, _branch: string) => {
+      if (overrides.pushThrows !== undefined) {
+        throw new Error(overrides.pushThrows);
+      }
     }),
   };
 }
@@ -1675,6 +1684,8 @@ interface QueueDepsConfig {
   mergerThrows?: string;
   /** WI-13 T8 (FR-008): the post-merger re-verification of this id's resolved branch goes red. */
   mergerResolutionFailsFor?: string;
+  /** WI-13 T12 (FR-007/FR-008): publishing this id's merger-resolved branch throws (refused push). */
+  pushThrowsFor?: string;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -1845,6 +1856,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         throw new Error(config.mergerThrows);
       }
       return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
+    // WI-13 T12 seam (FR-007/FR-008): publish the merger-resolved branch —
+    // can be made to refuse per id. Defaults: succeeds, unused without a conflict.
+    pushBranch: vi.fn(async (_repoDir: string, branch: string) => {
+      if (config.pushThrowsFor !== undefined && branch === `fix/${config.pushThrowsFor}`) {
+        throw new Error("git: push rejected — non-fast-forward");
+      }
     }),
   };
   return { deps, maxOpen: () => maxOpen };
@@ -2609,6 +2627,55 @@ describe("verified-merger (WI-13 T8, FR-007/FR-008)", () => {
     );
   });
 
+  it("(a-publish, T12) conflict resolved + re-verified green: the resolved branch is published to origin exactly once — before the review and before mergePr — and the chain completes merged", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1); // the merger actually ran — the branch changed locally
+    expect(deps.pushBranch).toHaveBeenCalledTimes(1);
+    expect(deps.pushBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+    // The publish precedes the pre-merge review: GitHub then shows the
+    // resolved state during review (the reviewer judges what will merge).
+    expect(deps.pushBranch.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+    // ...and the merge: `gh pr merge` merges GitHub's PR head, so origin must
+    // carry the resolution before mergePr reads it (live defect,
+    // merger-live-run-3.log — origin head stale → GraphQL conflict).
+    expect(deps.pushBranch.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.mergePr.mock.invocationCallOrder[0]!,
+    );
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true }); // the chain completes
+  });
+
+  it("(b-publish, T12) a failed publish: mergeFailure posture — PR open, no merge, no review spend; the queue continues and the sibling merge proceeds", async () => {
+    const deps = makeDeps({ branchConflicts: true, pushThrows: "git: push rejected — non-fast-forward" });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(outcome.prUrl).toBe(PR_URL); // PR stays open
+    expect(outcome.mergeFailure).toContain("merger resolution push failed");
+    expect(outcome.mergeFailure).toContain("push rejected");
+    expect(outcome.merged).toBeUndefined(); // not counted merged
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled(); // no review spend on an unpublished resolution
+
+    // Queue posture: exactly the WI-6 merge-failure semantics — gh-1 settles
+    // fixed-with-PR, gh-2's sibling merge proceeds, the run continues.
+    const { deps: qd } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      pushThrowsFor: "gh-1",
+    });
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), qd);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger resolution push failed");
+  });
+
   it("(b) non-opted run with the same conflict: the merger is NEVER invoked (constraint 1) and the PR opens normally", async () => {
     const deps = makeDeps({ branchConflicts: true });
 
@@ -2656,6 +2723,7 @@ describe("verified-merger (WI-13 T8, FR-007/FR-008)", () => {
 
     expect(deps.branchConflictsWithMain).toHaveBeenCalledTimes(1);
     expect(deps.runMerger).not.toHaveBeenCalled();
+    expect(deps.pushBranch).not.toHaveBeenCalled(); // T12: nothing changed locally — nothing to publish
     expect(fixBranchSandboxCalls(deps)).toBe(1); // primary verification only
     expect(deps.runReview).toHaveBeenCalledTimes(1);
     expect(deps.mergePr).toHaveBeenCalledTimes(1);

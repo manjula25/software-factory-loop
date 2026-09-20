@@ -163,6 +163,15 @@ export interface LoopDeps {
     input: PlanRunInput & { readonly branch: string; readonly mainRef: string },
   ): Promise<{ stdout: string; commits: readonly { sha: string }[] }>;
   /**
+   * WI-13 T12 (FR-007/FR-008): push `branch` to origin (`git push origin
+   * <branch>`). Called only on the verified-merger gate's green path, to
+   * publish the merger-resolved branch BEFORE mergePr: `gh pr merge --squash`
+   * merges GitHub's PR head, so a resolution that lives only on the local
+   * branch can never merge (live defect, `merger-live-run-3.log`). A throw
+   * maps to the gate's `mergePr`-style safe fallback at the call site.
+   */
+  pushBranch(repoDir: string, branch: string): Promise<void>;
+  /**
    * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
    * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
    * commit back — any non-zero exit throws, and the loop catches (FR-004's
@@ -1202,6 +1211,26 @@ async function runVerifiedMergerGate(
         ...prOutcome,
         mergeFailure: `merger resolution failed verification: ${verdict.failure}`,
       },
+    };
+  }
+  // WI-13 T12 (FR-007/FR-008 happy-path completion): the resolution currently
+  // lives only on the LOCAL branch — publish it before anything downstream.
+  // `gh pr merge --squash` merges GitHub's PR head, so without this push
+  // origin keeps pointing at the pre-resolution commit and the merge fails
+  // with "Pull Request has merge conflicts" even though this gate re-verified
+  // (and the review is about to approve) the resolved branch (live defect,
+  // `merger-live-run-3.log`). Pushed BEFORE the return so the push completes
+  // before the pre-merge review — GitHub then shows the resolved state during
+  // review. Still inside the caller's serialized chain (shared-git mutex).
+  // A failed publish is not an issue failure — same safe-fallback posture as
+  // the arms above: PR open, loud note, run continues.
+  try {
+    await deps.pushBranch(input.repoDir, branch);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger resolution push failed for ${prUrl}: ${reason}` },
     };
   }
   return { proceed: true, ...(teardownFailure !== undefined ? { teardownFailure } : {}) };
@@ -2448,6 +2477,13 @@ async function main(): Promise<void> {
     // import stays in the adapter); its output is gated by fresh-sandbox
     // re-verification in runSingleIssue's verified-merger gate.
     runMerger,
+    // WI-13 T12 (FR-007/FR-008): publish the merger-resolved branch so
+    // GitHub's PR head carries the verified resolution before `gh pr merge`
+    // reads it — the same push idiom as createPr's initial branch push. Not
+    // exercised by vitest — its correctness is code review + the live runs' job.
+    async pushBranch(repoDir: string, branch: string) {
+      execFileSync("git", ["push", "origin", branch], { cwd: repoDir, stdio: "inherit" });
+    },
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
