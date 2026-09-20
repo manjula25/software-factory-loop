@@ -16,6 +16,7 @@ Controller ledger (one row per task):
 | T6+T6b | medium/high | 6ec50c5 | aee6c78 | `wave-runner` | ACCEPTED — T6 a7b99c6: spec PASS, quality NEEDS_FIXES (2 critical, 2 important); T6b fix aee6c78: gates green (11/11 focused, 251/251 full +7, typecheck 0, loop 131/131 double-run stable); spec PASS; quality APPROVED (both at aee6c78) |
 | T7 | small/low | 7148955 | 9aada27 | boundary file | ACCEPTED — gates green (5/5 boundary focused, 252/252 full +1, typecheck 0); spec PASS; quality APPROVED (both at 9aada27) |
 | T8 | medium/high | 9a8132a | 7ebfa5c | `verified-merger` | ACCEPTED — gates green (6/6 + 11/11 focused, 258/258 full +6, typecheck 0, loop 137/137 double-run); spec PASS; quality APPROVED (both at 7ebfa5c) |
+| T9 | small/low | 0afa98c | 51a27f7 | (docs inspection) | ACCEPTED — gates green (258/258, typecheck 0, staleness grep clean, source diffs comment-only); spec PASS (11/11 criterion items code-traced); quality APPROVED (both at 51a27f7) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -331,3 +332,40 @@ Controller ledger (one row per task):
     to ANY fix-branch sandbox after mergerRan flips — correct today, mildly
     brittle if a second gate invocation is ever added (per-id queue variant
     is precise).
+
+## T9 — Docs honesty
+
+- **Seam:** none (documentation). Files: `CLAUDE.md`,
+  `docs/agents/workflow.md`, comment-only fixes in
+  `src/onboard-profile.ts` (A9/A12) and `src/sandcastle-adapter.ts`
+  (A29/A30). **Budgets:** one leaf session. **Evidence boundary:** docs +
+  comments; no behavioral claim (the suite green proves only no-change).
+- **Candidate 51a27f7** (base 0afa98c). Controller gates fresh: 258/258,
+  typecheck 0, staleness grep clean, source diffs comment-only.
+- **Spec review: PASS** (11/11 criterion items code-traced; the `--triage`
+  retirement error compared byte-for-byte against `parseRetiredFlags`;
+  zero overclaims; hard-constraint text untouched). **Quality review:
+  APPROVED** (zero critical; two importants both explicitly non-blocking
+  taste restructures — see A40/A41).
+- **Adjacent findings ledger:**
+  - A40 (T9 quality, non-blocking taste): workflow.md loop row has crossed
+    into unparseable (~7 semicolon clauses in one table cell). Restructure
+    candidate: synopsis + pointer in the cell, semantics as a bulleted
+    block below the table. Follow-up, not this PR.
+  - A41 (T9 quality, non-blocking taste): CLAUDE.md `src/loop.ts` row is a
+    WI-by-WI changelog drifting from lookup purpose. Restructure candidate:
+    one-line ownership + compact per-WI surface list below. Follow-up.
+  - A42 (T9 quality, minor): the doc's "exactly `--triage was removed — …`"
+    quote is the fastest-rotting phrase — attribute the canonical location
+    (`src/loop.ts`) or soften "exactly". Similar pre-existing rot vector:
+    workflow.md "(9 checks)".
+  - A43 (T9 quality, minor, optional): adapter header parenthetical reads
+    exhaustive but the file also exports types/constants — "the six
+    Sandcastle-touching functions" would close the gap.
+  - A44 (T9 spec, adjacent): workflow.md synopsis omits `--image` —
+    pre-existing omission, defaults anyway.
+  - A45 (T9 implementer, for the owner): CLAUDE.md hard-constraint 5's base
+    sentence ("at most the capped number of issues, triaged by priority")
+    is stale; the 2026-09-19 amendment below it states current semantics.
+    Numbered constraint text is grilling territory — owner may reword in a
+    future grilling-amended edit.
