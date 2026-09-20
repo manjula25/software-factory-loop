@@ -11,6 +11,7 @@ Controller ledger (one row per task):
 | T1 | small/low | 61b90e2 | 9b0fd4a | `plan-parse` | ACCEPTED — gates green (8/8 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 9b0fd4a) |
 | T2 | small/low | 2db81d1 | 9ad7654 | `plan-order` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at 9ad7654) |
 | T3 | small/low | 39eba70 | cca5e53 | `planner-wiring` | ACCEPTED — gates green (4/4 focused, 230/230 full, typecheck 0); spec PASS; quality APPROVED (both at cca5e53) |
+| T4 | small/low | 240afcd | 01bc242 | `admission` | ACCEPTED — gates green (5/5 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 01bc242) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -89,3 +90,36 @@ Controller ledger (one row per task):
     said "untouched" (brief supersedes); transient T3→T4 window with no same-file
     serialization is planned and closed before delivery; makeQueueDeps' default
     runPlan stub is no longer a no-op (future queue-test reviewers take note).
+
+## T4 — Admission rework: optional ceiling, admitIssues dissolved
+
+- **Seam:** runner seam (`runQueue`, `QueueRunInput`, `main()` argv) in
+  `src/loop.ts`; `src/queue.ts` public exports. **Budgets:** one leaf session.
+  **Evidence boundary:** harness-source.
+- **Candidate 01bc242** (base 240afcd). Controller gates re-run fresh: focused
+  `admission` 5/5; full 231/231 (delta +1: −4 admission unit tests, +5 runner
+  tests); typecheck 0. Only remaining `admitIssues` mention is the explanatory
+  comment at `src/loop.ts:1289`.
+- **Spec review: PASS** (zero blocking). **Quality review: APPROVED** (zero
+  critical). Spec review ran across a session restart (resumed reviewer); checks
+  re-run fresh by both reviewers plus controller.
+- **Deviations accepted:** (1) predicted typecheck RED didn't materialize — TS
+  accepted `cap: undefined` through the Partial-spread helper; observed RED was
+  the runtime plan-line failures (3 of 5 new tests); (2) two new tests were
+  pinning tests that passed pre-GREEN (overlap-gone, `--max-issues 1`).
+- **Adjacent findings ledger:**
+  - A11 (BINDING for T9): `docs/agents/workflow.md:24` now stale on three axes —
+    `--triage` (T3), "caps at 3 issues per run" (T4), old triage prose. Same PR
+    via T9; controller judgment: not a candidate change (would invalidate both
+    reviews over a docs line the plan schedules to T9).
+  - A12 (BINDING for T9): CLAUDE.md `src/queue.ts` row still says "capped
+    admission, triage parsing"; `src/onboard-profile.ts:5` still uses `--triage`
+    as its valueless-flag example (A9) — both T9's file set.
+  - A13: `plan: all unblocked` header prints even on degraded/single-issue runs
+    where no blocking concept exists yet — wording ambiguity; T5/T6's blocked-by
+    lines disambiguate. Leave unless T6 wants to revisit.
+  - A14 (taste): `input.cap === undefined` branched three times in six lines; a
+    single split would state "the ceiling cuts one ranked list into two" once.
+    Style only.
+  - A15: unmocked `console.log` plan lines now appear in test output — harmless,
+    noted so nobody mistakes noisier output for a regression.
