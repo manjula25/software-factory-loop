@@ -2229,8 +2229,13 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
       canaryNewFailureFor: "gh-1",
-      mergeThrowsFor: "fix/gh-2", // the sibling's PR stays OPEN — the deliverable FR-004 protects
     });
+    // WI-13 T11: gh-1's red-canary chain settles first, deterministically.
+    // Pre-T11 this test pinned gh-2 ATTEMPTING its merge after the red canary
+    // (`mergeThrowsFor: "fix/gh-2"` landing in mergeFailures) — exactly the
+    // FR-004 defect the code review flagged; the corrected behavior is the
+    // sibling's merge never being attempted (a halt skip, not a merge failure).
+    parkSiblingBehindGh1Revert(deps, "fix/gh-2");
 
     const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
 
@@ -2241,7 +2246,8 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     // The sibling lane settled inside the aborting wave: its PR is real,
     // human-reviewable work and stands in the partial summary.
     expect(aborted.summary.prUrls).toContain("https://example/pr/fix/gh-2");
-    expect(aborted.summary.mergeFailures[0]![0]).toBe("gh-2");
+    expect(aborted.summary.reviewSkipped[0]![0]).toBe("gh-2");
+    expect(aborted.summary.mergeFailures).toEqual([]);
   });
 
   it("(d) opted-in re-plan unblocks: B is attempted only after A MERGES, with exactly two planner calls and two fix attempts", async () => {
@@ -2468,6 +2474,33 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     }
   });
 
+  /**
+   * WI-13 T11 (FR-004 fix): force gh-1's red-canary merge chain to settle
+   * BEFORE the sibling lane's chain can enter the mutex — `parkedBranch`'s fix
+   * run parks until gh-1's revertMerge has landed, so the sibling's chain-top
+   * halt check is exercised deterministically regardless of microtask
+   * scheduling (order-agnostic lane scheduling must not decide the assertion).
+   */
+  const parkSiblingBehindGh1Revert = (deps: ReturnType<typeof makeQueueDeps>["deps"], parkedBranch: string) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const origFixRun = deps.runFixRun.getMockImplementation()!;
+    deps.runFixRun.mockImplementation(async (input: { branch: string }) => {
+      if (input.branch === parkedBranch) {
+        await gate;
+      }
+      return origFixRun(input);
+    });
+    const origRevert = deps.revertMerge.getMockImplementation()!;
+    deps.revertMerge.mockImplementation(async (...args: Parameters<typeof origRevert>) => {
+      const result = await origRevert(...args);
+      release();
+      return result;
+    });
+  };
+
   it("(k) T6b pin: a wave-1 canary-red abort prevents ANY wave 2 — the blocked dependent's agent run never starts", async () => {
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
@@ -2485,6 +2518,33 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     expect(deps.runFixRun).toHaveBeenCalledTimes(1);
     expect((deps.runFixRun.mock.calls[0]![0] as { branch: string }).branch).toBe("fix/gh-1");
     expect(aborted.summary.attempted).toEqual(["gh-1"]);
+  });
+
+  it("(l) red canary in wave 1 prevents the sibling lane's merge in the SAME wave (FR-004 fix, WI-13 T11)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+    });
+    parkSiblingBehindGh1Revert(deps, "fix/gh-2");
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    // FR-004: "no B/C merge is attempted afterwards" — gh-1's PR is the ONLY
+    // merge; gh-2's chain never reaches mergePr (nor any gate/review spend).
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect((deps.mergePr.mock.calls[0]![0] as { prUrl: string }).prUrl).toContain("fix/gh-1");
+    expect(deps.runReview).toHaveBeenCalledTimes(1); // gh-1's review only
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    // The halted sibling keeps its already-open PR as the deliverable, with the
+    // halt skip reason recorded (the spec's stated end-state for lanes B/C).
+    expect(aborted.summary.prUrls).toContain("https://example/pr/fix/gh-2");
+    expect(aborted.summary.fixed).toEqual(["gh-2"]);
+    expect(aborted.summary.reviewSkipped).toEqual([
+      ["gh-2", expect.stringContaining("merge skipped — run halted by gh-1")],
+    ]);
+    expect(formatSummary(aborted.summary)).toContain("REVIEW SKIP gh-2");
   });
 });
 

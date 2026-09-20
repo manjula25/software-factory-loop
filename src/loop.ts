@@ -610,6 +610,52 @@ function createGitChainLock(): SerializeGitChain {
   };
 }
 
+/**
+ * WI-13 T11 (FR-004 fix): a per-run halt signal, created by `runQueue` beside
+ * `gitChainLock` and threaded into every lane. A lane that produces a
+ * harness-level outcome (red canary → revert, uncanaried merge, early
+ * harness failure) sets it; a lane whose serialized merge chain has not
+ * started yet checks it at the chain top — before the merger gate — and
+ * returns its PR open with the skip reason. Stop-the-line is thereby
+ * MERGE-granular, not wave-granular: no sibling merge is attempted after the
+ * first harness-level outcome, inside the same wave. First halt wins,
+ * mirroring the wave loop's `harnessAbort ??=` (the first harness-level
+ * outcome in wave order carries the abort). Single-issue mode passes the
+ * never-halted default — identity behavior, nothing to stop.
+ */
+type RunHaltSignal = {
+  /** The first halt when the run has stopped the line: the halting lane's id and reason. */
+  halted(): { readonly id: string; readonly reason: string } | undefined;
+  halt(id: string, reason: string): void;
+};
+
+function createRunHaltSignal(): RunHaltSignal {
+  let halted: { id: string; reason: string } | undefined;
+  return {
+    halted: () => halted,
+    halt(id, reason) {
+      halted ??= { id, reason };
+    },
+  };
+}
+
+/** The single-issue-mode signal: never set, and setting it is a no-op. */
+function neverHaltedSignal(): RunHaltSignal {
+  return { halted: () => undefined, halt: () => undefined };
+}
+
+/**
+ * WI-13 T11: the ONE harness-level outcome classification, shared by the
+ * halt-setter (`runSingleIssue` / the serialized chain) and the wave loop's
+ * `harnessAbort` collector — reverted and uncanaried outcomes both carry
+ * `failureKind: "harness"`, so the predicate is exactly that flag and the two
+ * call sites can never diverge. (The wave loop's defensive lane-throw arm
+ * classifies a throw as harness-level too and sets the halt in its catch.)
+ */
+function harnessLevelFailure(outcome: LoopOutcome): boolean {
+  return outcome.failureKind === "harness";
+}
+
 export async function runSingleIssue(
   input: SingleIssueInput,
   deps: LoopDeps,
@@ -621,6 +667,33 @@ export async function runSingleIssue(
    * owns the clone, nothing to serialize against.
    */
   serializeGitChain: SerializeGitChain = (section) => section(),
+  /**
+   * WI-13 T11 (FR-004): the per-run halt signal, passed by `runQueue` so the
+   * first harness-level outcome in one lane stops sibling lanes' merges at
+   * chain-granularity (see `RunHaltSignal`). The never-halted default leaves
+   * single-issue mode exactly as it was.
+   */
+  haltSignal: RunHaltSignal = neverHaltedSignal(),
+): Promise<LoopOutcome> {
+  const outcome = await runSingleIssueLane(input, deps, serializeGitChain, haltSignal);
+  // WI-13 T11 (FR-004): the halt is SET at the moment the lane produces a
+  // harness-level outcome. This site covers the EARLY harness outcomes
+  // (nesting guard, stale-baseline preflight) that return before any merge
+  // chain exists; the chain's own harness outcomes (reverted / uncanaried)
+  // set it INSIDE the mutex (see `runSingleIssueLane`) so a sibling lane
+  // queued on the same lock deterministically sees the halt before its chain
+  // starts. First halt wins — this second set is a harmless no-op there.
+  if (harnessLevelFailure(outcome)) {
+    haltSignal.halt(input.issue.id, outcome.failure ?? "harness-level failure");
+  }
+  return outcome;
+}
+
+async function runSingleIssueLane(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  serializeGitChain: SerializeGitChain,
+  haltSignal: RunHaltSignal,
 ): Promise<LoopOutcome> {
   const branch = fixBranch(input.issue);
 
@@ -856,7 +929,17 @@ export async function runSingleIssue(
     // concurrent lanes cannot clobber each other's review branch or contend
     // on git's index lock. `serializeGitChain` is the identity in
     // single-issue mode; see `createGitChainLock` for the region's boundary.
-    return serializeGitChain(async () => {
+    //
+    // WI-13 T11 (FR-004): the chain top is also the run-halt checkpoint. A
+    // lane whose chain produces a harness-level outcome (red canary → revert,
+    // uncanaried merge) sets the run halt INSIDE its section, before the lock
+    // releases — so the next lane queued on this same lock deterministically
+    // sees the halt here, before any merger-gate / review / merge spend, and
+    // returns its PR open with the skip reason. No sibling merge is attempted
+    // after the first harness-level outcome, in the SAME wave — not only in
+    // later waves (the abort itself is still raised after the wave settles;
+    // the sibling's open PR stands as the deliverable).
+    const mergeChain = async (): Promise<LoopOutcome> => {
       // WI-13 T8 (FR-007/FR-008): the verified-merger gate, BEFORE the
       // pre-merge review — FR-008's order: the review must judge the
       // POST-resolution diff, and no review spend on a resolution that fails
@@ -896,6 +979,26 @@ export async function runSingleIssue(
       // base, run the canary suite on it, then close or revert per its verdict
       // (`runCanary`).
       return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+    };
+    return serializeGitChain(async () => {
+      const haltedBy = haltSignal.halted();
+      if (haltedBy !== undefined) {
+        // The pre-merge review skip's own field and posture: a loud note on a
+        // PR'd outcome, never an issue failure — the PR stays open for a human
+        // (the spec's stated end-state for halted sibling lanes) and the
+        // queue's REVIEW SKIP surface carries the reason. Like every
+        // reviewSkip string it is secrets-guarded at the summary emission
+        // seam, not at construction.
+        return {
+          ...prOutcome,
+          reviewSkip: `merge skipped — run halted by ${haltedBy.id}: ${haltedBy.reason}`,
+        };
+      }
+      const outcome = await mergeChain();
+      if (harnessLevelFailure(outcome)) {
+        haltSignal.halt(input.issue.id, outcome.failure ?? "harness-level failure");
+      }
+      return outcome;
     });
   }
   return prOutcome;
@@ -1512,7 +1615,9 @@ export class QueueAbortedError extends Error {
  * set per FR-002 (opted-in: merged ids; non-opted: PR-settled lanes). An
  * issue-level failure is recorded and the queue continues; a harness-level
  * failure (stale baseline, credentials) aborts — raised AFTER the wave's
- * outcomes are collected (FR-004) — with a `QueueAbortedError` whose
+ * outcomes are collected (FR-004), while MERGES stop at the first
+ * harness-level outcome via the run halt each lane's serialized chain checks
+ * (WI-13 T11) — with a `QueueAbortedError` whose
  * `summary` holds the partial run; the caller prints both that and the abort
  * reason.
  */
@@ -1666,6 +1771,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   // merge chain it guards mutates git state shared across the whole run
   // (REVIEW_BRANCH, main, the clone's checkout), not just one wave.
   const gitChainLock = createGitChainLock();
+  // WI-13 T11 (FR-004): the run-level halt signal — set by the first lane that
+  // produces a harness-level outcome, checked at the top of every later lane's
+  // serialized merge chain (before its merger gate), so merges stop at the
+  // first harness-level outcome even inside a wave.
+  const haltSignal = createRunHaltSignal();
   while (current.length > 0) {
     if (waveIndex > 0) {
       // The later wave's lanes were `blocked` on the initial surface; each is
@@ -1691,22 +1801,29 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
             },
             deps,
             gitChainLock,
+            haltSignal,
           ),
         };
       } catch (error) {
         // Defensive only — runSingleIssue returns outcomes rather than
         // throwing. A throw would abort every remaining issue identically:
-        // the harness-level class.
+        // the harness-level class. WI-13 T11: it sets the halt the same way,
+        // so a defensive throw also stops sibling merges.
         // `outcome: undefined` is the explicit discriminant that lets the
         // settle loop below narrow without a cast (T6b, quality Minor 1).
+        haltSignal.halt(issue.id, error instanceof Error ? error.message : String(error));
         return { issue, outcome: undefined, laneError: error };
       }
     });
     const settled = await Promise.allSettled(lanes);
-    // FR-004 (WI-13): the abort is raised AFTER the wave's outcomes are
+    // FR-004 (WI-13): the ABORT is raised AFTER the wave's outcomes are
     // collected, never mid-flight — sibling lanes' open PRs stand as
-    // deliverables in the aborting snapshot. First harness-level outcome (in
-    // wave order) carries the abort, exactly as the sequential runner did.
+    // deliverables in the aborting snapshot. The HALT, though, is
+    // merge-granular (WI-13 T11): the first harness-level outcome sets the
+    // run halt inside the mutex, and every later lane's serialized chain
+    // checks it before its merger gate — merges stop at the first
+    // harness-level outcome, in the same wave. First harness-level outcome
+    // (in wave order) carries the abort, exactly as the sequential runner did.
     let harnessAbort: { id: string; failure: string } | undefined;
     let mergesThisWave = 0;
     for (const result of settled) {
@@ -1798,7 +1915,10 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         issue.id,
         `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
       ]);
-      if (outcome.failureKind === "harness") {
+      // WI-13 T11: the shared harness-level classification — the same
+      // `harnessLevelFailure` predicate the halt-setter uses, so the abort
+      // and the merge halt can never diverge.
+      if (harnessLevelFailure(outcome)) {
         harnessAbort ??= { id: issue.id, failure: outcome.failure ?? "harness-level failure" };
       }
     }
