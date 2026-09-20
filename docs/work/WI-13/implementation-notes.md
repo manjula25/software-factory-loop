@@ -17,6 +17,7 @@ Controller ledger (one row per task):
 | T7 | small/low | 7148955 | 9aada27 | boundary file | ACCEPTED — gates green (5/5 boundary focused, 252/252 full +1, typecheck 0); spec PASS; quality APPROVED (both at 9aada27) |
 | T8 | medium/high | 9a8132a | 7ebfa5c | `verified-merger` | ACCEPTED — gates green (6/6 + 11/11 focused, 258/258 full +6, typecheck 0, loop 137/137 double-run); spec PASS; quality APPROVED (both at 7ebfa5c) |
 | T9 | small/low | 0afa98c | 51a27f7 | (docs inspection) | ACCEPTED — gates green (258/258, typecheck 0, staleness grep clean, source diffs comment-only); spec PASS (11/11 criterion items code-traced); quality APPROVED (both at 51a27f7) |
+| T10 | medium/high | 8e6d9a9 | 3e1b6bf | live run | ACCEPTED — attempt 3 green end-to-end (planner graph, 2 concurrent lanes, PRs #33/#34, merges + green canaries, re-plan → gh-31 → PR #35, merge + green canary, summary 3/3, exit 0); attempts 1–2 failures recorded verbatim (env; baseline gate correctly aborting a bad seed); spec PASS at d035ead, re-confirmed PASS at 3e1b6bf after appending the review-recommended errata (attempt-1 exit-code mislabel; diff verified 2-line append, nothing altered); quality N/A — zero source changes, evidence file has no code-quality axis (controller ruling, recorded) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -369,3 +370,57 @@ Controller ledger (one row per task):
     is stale; the 2026-09-19 amendment below it states current semantics.
     Numbered constraint text is grilling territory — owner may reword in a
     future grilling-amended edit.
+
+## T10 — Live integration run (user-authorized)
+
+- **Seam:** pipeline integration — the full loop against the seeded fixtures
+  repo in local Docker (constraint 6). **User authorization obtained**
+  before spend (seeding, model budget, fixtures-repo mutation, merges).
+- **Seed (owner-facing identity):** fixtures main `e5c388c` — three latent
+  `textops` defects (slugify digit drop; titlecase inner-case collapse;
+  tag_url first-word truncation depending on slugify) + issues #29, #30
+  (independent), #31 (blocked-by-#29, dependency stated in the body).
+  Symptoms verified locally before commit; existing suite unaffected.
+- **Attempt 1 (recorded verbatim):** startup failure — worktree lacks the
+  untracked `.env`, provider resolver refused. No spend. Restart with the
+  main-checkout `.env` exported into the process env (values never echoed).
+- **Attempt 2 (recorded verbatim):** the preflight baseline gate aborted
+  BOTH lanes — the seeded titlecase bug collided with
+  `tests/fixed-issues/test_gh_3.py::test_titlecase_preserves_remaining_casing`.
+  THE GATE WORKING AS DESIGNED: the controller had verified the seed against
+  `test_textops.py` but not the fixed-issues suite; the harness refused to
+  run against a drifted baseline (constraint 4's regression permanence,
+  demonstrated live). No fix-agent spend. Owner corrected the seed
+  (`9bb828b`: titlecase reverted, bug B re-seeded as word_count hyphen
+  split, verified against every existing regression assertion
+  programmatically); issue #30 closed with an explanatory comment, #32
+  opened.
+- **Attempt 3 — GREEN end-to-end** (`docs/work/WI-13/evidence/live-run.log`,
+  verbatim): planner graph exactly as seeded (`plan: all unblocked` /
+  `attempt gh-29` / `attempt gh-32` / `blocked gh-31 by gh-29`) → two
+  concurrent lanes (interleaved `[gh-29]`/`[gh-32]` starts) → PRs #33/#34 →
+  gh-29 merge + green canary → gh-32 merge + green canary (the merge chains
+  serialized behind the shared-git mutex, as designed) → re-plan
+  (`[plan]` again → `plan: attempt gh-31`) → gh-31 lane → PR #35 → merge +
+  green canary → issues #29/#32/#31 closed → summary `attempted: 3 (fixed:
+  3, failed: 0)`, exit 0. No conflict arose → merger pass not exercised
+  live (its seam evidence remains T8's vitest pins; noted as a non-claim).
+- **End-state verified on fixtures main:** three squash-merge commits
+  (`b34ef7c`/`c773dc4`/`286dc82`), three permanent regression tests
+  (`test_gh_29.py`, `test_gh_31.py`, `test_gh_32.py`), all three fixes
+  behaviorally confirmed post-pull.
+- **Reviews: spec review of the evidence vs FR-011's measurable criteria
+  and the plan's expected observation — see below. Quality review N/A**
+  (controller ruling, recorded here): T10 changes zero source lines; the
+  artifact is an evidence log with no code-quality axis. The ruling would
+  NOT stand for a task that changed src/.
+- **Adjacent findings ledger:**
+  - A46 (T10): the merger gate's conflict path was not exercised live (no
+    real conflict arose — the three fixes touched disjoint functions in one
+    file and merged cleanly). Live merger evidence remains a non-claim;
+    the T8 vitest pins are its only behavioral coverage. Candidate: a
+    future live run with deliberately overlapping fixes.
+  - A47 (T10): worktrees don't inherit the untracked `.env` — every live
+    run from a worktree needs the main-checkout `.env` exported (or a
+    symlink). Candidate for workflow.md when it next changes (A40's
+    restructure).
