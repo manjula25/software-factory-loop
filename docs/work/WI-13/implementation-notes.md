@@ -12,6 +12,7 @@ Controller ledger (one row per task):
 | T2 | small/low | 2db81d1 | 9ad7654 | `plan-order` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at 9ad7654) |
 | T3 | small/low | 39eba70 | cca5e53 | `planner-wiring` | ACCEPTED — gates green (4/4 focused, 230/230 full, typecheck 0); spec PASS; quality APPROVED (both at cca5e53) |
 | T4 | small/low | 240afcd | 01bc242 | `admission` | ACCEPTED — gates green (5/5 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 01bc242) |
+| T5 | small/low | 11a078f | f70f4d7 | `waves` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at f70f4d7) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -123,3 +124,39 @@ Controller ledger (one row per task):
     Style only.
   - A15: unmocked `console.log` plan lines now appear in test output — harmless,
     noted so nobody mistakes noisier output for a regression.
+
+## T5 — Wave scheduling: unblockedAfter
+
+- **Seam:** pure export `unblockedAfter` from `src/queue.ts`; tests in
+  `src/queue.test.ts`. **Budgets:** one leaf session. **Evidence boundary:**
+  harness-source. `src/loop.ts` untouched (T6 consumes it).
+- **Candidate f70f4d7** (base 11a078f). Controller gates re-run fresh: focused
+  `waves` 5/5; full 236/236 (delta +5); typecheck 0.
+- **Spec review: PASS** (zero blocking). **Quality review: APPROVED** (zero
+  critical/important).
+- **Deviation accepted (controller's brief was wrong):** instructed test 2
+  ("completed={A} yields [B]") was internally incoherent — blocker-free
+  uncompleted C must appear. Implementer's repair: `unblockedAfter` also
+  excludes ids already in `completed`; tests assert {A} → [B,C] and the
+  realistic wave-2 {A,C} → [B]. Spec reviewer adjudicated the exclusion
+  LOAD-BEARING: non-opted repos never re-plan (FR-006), the same full order is
+  passed every wave, and without exclusion settled issues would be re-attempted
+  — a constraint-5 double-spend; on opted-in repos the per-merge re-plan makes
+  it a harmless no-op.
+- **Adjacent findings ledger:**
+  - A16 (BINDING for T6): `unblockedAfter` re-evaluates ALL not-completed
+    unblocked issues each call — the runner must track attempted lanes
+    separately from the FR-002 completed (merged / PR-settled) set, or a failed
+    lane is re-attempted next wave.
+  - A17 (BINDING for T6): the ceiling slice must apply per wave against the
+    attempted budget (lanes started), or the plan line's "attempted" count
+    drifts from actual starts. Blocked-never-attempted issues cost nothing and
+    consume no ceiling (FR-005).
+  - A18: JSDoc's opted-in/non-opted completed-growth sentence documents T6's
+    caller behavior, not this function's contract — most likely sentence to
+    drift when T6 lands. Watch in T6's review.
+  - A19: the ∅ test's 2-cycle fixture deliberately steps outside the parser's
+    guarantee (cycles are rejected upstream) — the fallback is defense-in-depth;
+    an optional comment line could say so.
+  - Spec adjacents: ∅-case doc phrasing loose (acyclic plans can never yield ∅
+    with issues remaining); pretest-hook git-fetch noise is environmental.
