@@ -29,6 +29,7 @@ import {
   REVIEW_BRANCH,
   createFixSandbox,
   runFixRun,
+  runMerger,
   runPlan,
   runReview,
   type AgentSpec,
@@ -142,6 +143,25 @@ export interface LoopDeps {
    * thrown run maps to the `uncertain` verdict class at the call site.
    */
   runReview(input: PlanRunInput & { readonly diff: string }): Promise<string>;
+  /**
+   * WI-13 T8 (FR-007): whether merging `branch` into the CURRENT main would
+   * conflict — a read-only probe (real wiring: `git merge-tree --write-tree`,
+   * which touches neither the working tree nor any ref). Called only on
+   * opted-in runs and only inside the shared-git mutex, so it judges a main
+   * that is not moving beneath it. A throw is a harness/probe failure, not a
+   * conflict verdict — the gate records it in the safe-fallback posture.
+   */
+  branchConflictsWithMain(repoDir: string, branch: string): Promise<boolean>;
+  /**
+   * WI-13 T7/T8 (FR-007/FR-008): one bounded merger run that merges `mainRef`
+   * into `branch` and resolves the conflicts (the adapter export). Its output
+   * is NEVER trusted (constraint 2): the caller re-verifies the resolved
+   * branch in a fresh sandbox before any merge is counted. Opted-in runs
+   * only; a throw maps to the `mergePr`-style safe fallback at the call site.
+   */
+  runMerger(
+    input: PlanRunInput & { readonly branch: string; readonly mainRef: string },
+  ): Promise<{ stdout: string; commits: readonly { sha: string }[] }>;
   /**
    * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
    * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
@@ -770,71 +790,39 @@ export async function runSingleIssue(
   const greenEvidence = extractEvidence(fix.stdout, "green");
   assertNoSecrets([redEvidence, greenEvidence], deps.env);
 
-  const sandbox = await deps.createFixSandbox({
-    cwd: input.repoDir,
-    branch,
-    imageName: input.imageName,
-  });
+  // WI-13 T8 (FR-008): the verification block — fresh sandbox install →
+  // reproduction test → full suite → `diffVerification` — is ONE
+  // module-private implementation (`verifyInFreshSandbox` below), reused
+  // verbatim by the merger gate's re-verification of a resolved branch: same
+  // rules, same evidence, no divergence between the two call sites. Pure
+  // extraction — the outcomes are byte-equivalent with the former inline
+  // block (the existing suite is the pin).
+  const { verdict, teardownFailure: sandboxTeardown } = await verifyInFreshSandbox(input, deps, branch);
   let prUrl: string | undefined;
-  // WI-8 (FR-001): verification teardown parity. A close() throw in the
-  // finally below is caught, never propagated: it rides whichever outcome the
-  // try decided — the fail outcome after the finally (WI-11 FR-002), or the
+  // WI-8 (FR-001): verification teardown parity. A close() throw inside the
+  // helper is caught, never propagated: it rides whichever outcome the
+  // verification decided — the fail outcome below (WI-11 FR-002), or the
   // PR'd outcome on the green path.
-  let sandboxTeardown: string | undefined;
-  // WI-11 (FR-002): the three verification failure sites used to return from
-  // INSIDE the try, before the finally captured `sandboxTeardown` — a close()
-  // throw on those fail() paths was silently dropped. Each now stores its
-  // outcome and exits the try; the return happens after the finally, with the
-  // teardown reason attached.
   let failOutcome: LoopOutcome | undefined;
-  try {
-    // Each sandbox is a fresh container: the agent's `pip install -e .` (or
-    // equivalent) lived in ITS site-packages, not this one's. Without the
-    // install, every test file errors at collection and reads as new failures.
-    const install = await sandbox.exec(input.profile.installCmd);
-    if (install.exitCode !== 0) {
-      failOutcome = await fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
-    } else {
-      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
-      const repro = await sandbox.exec(reproCmd);
-      const suite = await sandbox.exec(input.profile.testCmd);
-      const parsed = parseSuiteOrReject(suite.stdout);
-      if (!parsed.ok) {
-        failOutcome = await fail(`Verification failed — ${parsed.reason}.`);
-      } else {
-        const verification = diffVerification({
-          baselineFailures: input.profile.baselineFailures,
-          postFixFailures: parsed.failures,
-          reproTestPassed: repro.exitCode === 0,
-        });
-        if (!verification.passed) {
-          const reason = verification.newFailures.length > 0
-            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
-            : "reproduction test did not pass in the fresh sandbox";
-          failOutcome = await fail(`Verification failed — ${reason}.`, verification.newFailures);
-        } else {
-          const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-          const body = buildPrBody(
-            input.issue,
-            redEvidence,
-            greenEvidence,
-            verification,
-            attachmentFailures,
-            input.profile.autoMerge === true,
-          );
-          assertNoSecrets([title, body], deps.env);
+  if (!verdict.passed) {
+    failOutcome = await fail(verdict.failure, verdict.newFailures);
+  } else {
+    // `diffVerification` passes only with an empty new-failure set, so the
+    // green verdict is exactly `{ passed: true, newFailures: [] }`.
+    const verification = { passed: true as const, newFailures: [] as readonly string[] };
+    const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
+    const body = buildPrBody(
+      input.issue,
+      redEvidence,
+      greenEvidence,
+      verification,
+      attachmentFailures,
+      input.profile.autoMerge === true,
+    );
+    assertNoSecrets([title, body], deps.env);
 
-          const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-          prUrl = pr.url;
-        }
-      }
-    }
-  } finally {
-    try {
-      await sandbox.close();
-    } catch (error) {
-      sandboxTeardown = error instanceof Error ? error.message : String(error);
-    }
+    const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
+    prUrl = pr.url;
   }
 
   // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
@@ -851,7 +839,11 @@ export async function runSingleIssue(
     // wins, exactly as on the PR'd path.
     return { ...failOutcome, ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}) };
   }
-  const prOutcome: LoopOutcome = {
+  // `let` for WI-13 T8: the merger gate's re-verification sandbox is another
+  // EARLY origin (it runs pre-merge), so its teardown failure folds into the
+  // PR'd outcome below — first origin still wins (preflight, then the primary
+  // verification sandbox), exactly the established precedence.
+  let prOutcome: LoopOutcome = {
     branch,
     prUrl,
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
@@ -865,6 +857,23 @@ export async function runSingleIssue(
     // on git's index lock. `serializeGitChain` is the identity in
     // single-issue mode; see `createGitChainLock` for the region's boundary.
     return serializeGitChain(async () => {
+      // WI-13 T8 (FR-007/FR-008): the verified-merger gate, BEFORE the
+      // pre-merge review — FR-008's order: the review must judge the
+      // POST-resolution diff, and no review spend on a resolution that fails
+      // verification. The whole gate (conflict probe, merger run,
+      // re-verification) sits INSIDE the mutex: `branchConflictsWithMain`
+      // reads main and `runMerger` writes the branch in the shared clone, and
+      // main only ever moves inside this chain — the probe must judge a
+      // non-moving main. The re-verification sandbox therefore serializes
+      // too on this rare conflict path — accepted: a correct probe snapshot
+      // over the sandbox's concurrency.
+      const gate = await runVerifiedMergerGate(input, deps, prOutcome, prUrl);
+      if (!gate.proceed) {
+        return gate.outcome;
+      }
+      if (gate.teardownFailure !== undefined && prOutcome.teardownFailure === undefined) {
+        prOutcome = { ...prOutcome, teardownFailure: gate.teardownFailure };
+      }
       // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
       // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
       // other outcome returns a PR'd result carrying the skip reason.
@@ -890,6 +899,209 @@ export async function runSingleIssue(
     });
   }
   return prOutcome;
+}
+
+/**
+ * The verdict of one fresh-sandbox verification run (WI-13 T8): the single
+ * implementation (`verifyInFreshSandbox`) is shared by the primary
+ * verification and the merger gate's re-verification, so both run the same
+ * rules and produce the same evidence strings. `failure` is the complete
+ * reason (already `Verification failed — …` shaped, byte-identical to the
+ * former inline block); `newFailures` rides only the diff-verdict arm.
+ */
+type FreshSandboxVerdict =
+  | { readonly passed: true }
+  | { readonly passed: false; readonly failure: string; readonly newFailures?: readonly string[] };
+
+/**
+ * WI-13 T8: ONE fresh-sandbox verification — install → reproduction test →
+ * full suite → `diffVerification` — on `branch`, in a sandbox the agent never
+ * touched (constraint 2). Extracted verbatim from `runSingleIssue`'s former
+ * inline block (pure refactor, outcomes byte-equivalent) so the merger gate
+ * re-verifies a resolved branch through the SAME code: the gate must not be
+ * able to pass a resolution the primary verification would have failed.
+ *
+ * WI-8 (FR-001): teardown parity is preserved — a close() throw in the
+ * finally is caught and returned beside the verdict, never propagated, never
+ * over it.
+ */
+async function verifyInFreshSandbox(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  branch: string,
+): Promise<{ readonly verdict: FreshSandboxVerdict; readonly teardownFailure?: string }> {
+  const sandbox = await deps.createFixSandbox({
+    cwd: input.repoDir,
+    branch,
+    imageName: input.imageName,
+  });
+  // WI-11 (FR-002): the verification failure sites below store their verdict
+  // and exit the try; the return happens after the finally, with any teardown
+  // reason attached — a close() throw can never displace the decided verdict.
+  let teardownFailure: string | undefined;
+  let verdict: FreshSandboxVerdict;
+  try {
+    // Each sandbox is a fresh container: the agent's `pip install -e .` (or
+    // equivalent) lived in ITS site-packages, not this one's. Without the
+    // install, every test file errors at collection and reads as new failures.
+    const install = await sandbox.exec(input.profile.installCmd);
+    if (install.exitCode !== 0) {
+      verdict = {
+        passed: false,
+        failure: `Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`,
+      };
+    } else {
+      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
+      const repro = await sandbox.exec(reproCmd);
+      const suite = await sandbox.exec(input.profile.testCmd);
+      const parsed = parseSuiteOrReject(suite.stdout);
+      if (!parsed.ok) {
+        verdict = { passed: false, failure: `Verification failed — ${parsed.reason}.` };
+      } else {
+        const verification = diffVerification({
+          baselineFailures: input.profile.baselineFailures,
+          postFixFailures: parsed.failures,
+          reproTestPassed: repro.exitCode === 0,
+        });
+        if (!verification.passed) {
+          const reason = verification.newFailures.length > 0
+            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
+            : "reproduction test did not pass in the fresh sandbox";
+          verdict = {
+            passed: false,
+            failure: `Verification failed — ${reason}.`,
+            newFailures: verification.newFailures,
+          };
+        } else {
+          verdict = { passed: true };
+        }
+      }
+    }
+  } finally {
+    try {
+      await sandbox.close();
+    } catch (error) {
+      teardownFailure = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return { verdict, ...(teardownFailure !== undefined ? { teardownFailure } : {}) };
+}
+
+/**
+ * WI-13 T8 (FR-007): the merger prompt — instructs merging `mainRef` (the
+ * current main, inside the mutex) into the fix `branch` and resolving every
+ * conflict so BOTH fixes survive. Secrets-guarded by `assertNoSecrets` at the
+ * call site, like every prompt that leaves the harness for a third-party API.
+ */
+function buildMergerPrompt(
+  issue: NormalizedIssue,
+  profile: ProjectProfile,
+  branch: string,
+  mainRef: string,
+): string {
+  return `You are resolving a git merge conflict on an existing bug-fix branch.
+Another fix has already merged to ${mainRef}, and the branch ${branch} — the verified fix for
+issue ${issue.id} — now conflicts with it. Merge ${mainRef} into ${branch} and resolve every
+conflict so that BOTH fixes survive: keep the changes ${mainRef} already carries, and keep this
+branch's fix together with its reproduction test at \`${reproTestPath(issue)}\`. Resolve only
+the conflict — do not refactor unrelated code, do not touch other open issues' symptoms, and
+never commit anything under \`.loop-harness/\`.
+
+## How to work in this repo (recorded at onboarding — use these exact commands)
+
+- install: ${profile.installCmd}
+- full suite: ${profile.testCmd}
+- one test: ${profile.singleTestCmd}
+
+Your resolution is NOT trusted as final: an independent fresh-sandbox verification re-runs the
+reproduction test and the full suite on the branch afterwards. Use the commands above to check
+your own work before you finish.
+
+## Required output format
+
+End your output with a short summary of each conflict you resolved and how.`;
+}
+
+/**
+ * WI-13 T8 (FR-007/FR-008): the verified-merger gate — opted-in runs only
+ * (the caller gates on `autoMerge === true`, constraint 1). When the fix
+ * branch conflicts with the current main (typically because an earlier fix in
+ * the run already merged), a bounded merger agent resolves the conflict on the
+ * branch, and the resolved branch must re-pass the SAME fresh-sandbox
+ * verification (`verifyInFreshSandbox`) before the existing chain (review →
+ * merge → canary) proceeds — the merger's output is never trusted (constraint
+ * 2). Every failure posture here mirrors `mergePr`'s safe fallback, reusing
+ * the WI-6 `mergeFailure` field (never a new outcome kind) so the downstream
+ * wave semantics treat it exactly like a merge failure: PR open, loud note,
+ * no merge, no review spend, queue continues, issue not counted merged.
+ *
+ * Must be called INSIDE the shared-git mutex (main moves only there; the
+ * merger writes the branch in the shared clone).
+ */
+async function runVerifiedMergerGate(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  prOutcome: LoopOutcome,
+  prUrl: string,
+): Promise<
+  | { readonly proceed: true; readonly teardownFailure?: string }
+  | { readonly proceed: false; readonly outcome: LoopOutcome }
+> {
+  const branch = fixBranch(input.issue);
+  // mainRef is main BY NAME, resolved by git at merger time — inside the
+  // mutex, so the name cannot move beneath the probe or the merger.
+  const mainRef = "main";
+  let conflicts: boolean;
+  try {
+    conflicts = await deps.branchConflictsWithMain(input.repoDir, branch);
+  } catch (error) {
+    // A probe failure says nothing about the fix (divergent clone, git error)
+    // — same safe-fallback posture as `mergePr`'s throw path: PR open, loud
+    // note, run continues.
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger conflict probe failed for ${prUrl}: ${reason}` },
+    };
+  }
+  if (!conflicts) {
+    return { proceed: true };
+  }
+  try {
+    const mergerPrompt = buildMergerPrompt(input.issue, input.profile, branch, mainRef);
+    // The prompt reaches a third-party API — guard it before the call, like
+    // every other emitted string.
+    assertNoSecrets([mergerPrompt], deps.env);
+    await deps.runMerger({
+      cwd: input.repoDir,
+      prompt: mergerPrompt,
+      imageName: input.imageName,
+      agent: input.agent,
+      branch,
+      mainRef,
+    });
+  } catch (error) {
+    // FR-007 boundary: a failed merger run leaves the PR open for a human
+    // with the failure recorded — the existing merge-failure posture.
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger run failed for ${prUrl}: ${reason}` },
+    };
+  }
+  // FR-008: never trust the merger — the resolved branch re-passes the SAME
+  // fresh-sandbox verification before anything downstream may spend on it.
+  const { verdict, teardownFailure } = await verifyInFreshSandbox(input, deps, branch);
+  if (!verdict.passed) {
+    return {
+      proceed: false,
+      outcome: {
+        ...prOutcome,
+        mergeFailure: `merger resolution failed verification: ${verdict.failure}`,
+      },
+    };
+  }
+  return { proceed: true, ...(teardownFailure !== undefined ? { teardownFailure } : {}) };
 }
 
 /**
@@ -2090,6 +2302,32 @@ async function main(): Promise<void> {
         stdio: "inherit",
       });
     },
+    // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
+    // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in
+    // the object database: no checkout, no ref mutation, no working-tree
+    // touch. Exit 0 = clean merge (no conflict); exit 1 = conflicts; anything
+    // else is a real git failure and rethrows (the gate records it in the
+    // safe-fallback posture). Not exercised by vitest — its correctness is
+    // code review + the T10 live run's job.
+    async branchConflictsWithMain(dir: string, probeBranch: string) {
+      try {
+        execFileSync("git", ["merge-tree", "--write-tree", probeBranch, "main"], {
+          cwd: dir,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        return false;
+      } catch (error) {
+        if ((error as { status?: number }).status === 1) {
+          return true;
+        }
+        throw error;
+      }
+    },
+    // WI-13 T8 (FR-007/FR-008): the bounded merger run (the only Sandcastle
+    // import stays in the adapter); its output is gated by fresh-sandbox
+    // re-verification in runSingleIssue's verified-merger gate.
+    runMerger,
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.

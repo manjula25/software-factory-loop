@@ -168,11 +168,21 @@ interface DepOverrides {
   reviewThrows?: string;
   /** The diff `fixDiff` returns — override to inject a secret-bearing diff (WI-7 FR-004 pin). */
   reviewDiff?: string;
+  /** WI-13 T8 (FR-007): `branchConflictsWithMain`'s answer on opted-in runs. */
+  branchConflicts?: boolean;
+  /** WI-13 T8 (FR-007): the merger run itself throws (API down / budget refusal). */
+  mergerThrows?: string;
+  /** WI-13 T8 (FR-008): the post-merger re-verification of the resolved branch goes red. */
+  mergerResolutionFails?: boolean;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
   const env = overrides.env ?? {};
   let sandboxCalls = 0;
+  // WI-13 T8: once the merger has run, the NEXT verification sandbox on the
+  // fix branch is the gate's re-verification of the resolved branch — the
+  // knob that turns it red must apply only there, never to the primary pass.
+  let mergerRan = false;
   return {
     env,
     runFixRun: vi.fn(async (_input: { branch: string; prompt: string }) => overrides.fixOutcome ?? fixOutcome()),
@@ -200,7 +210,10 @@ function makeDeps(overrides: DepOverrides = {}) {
         }
         return base;
       }
-      const verification = overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX);
+      const verification =
+        mergerRan && overrides.mergerResolutionFails === true
+          ? sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1)
+          : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
       // WI-8 FR-001: same knob for the fresh verification sandbox.
       if (overrides.sandboxCloseThrows !== undefined) {
         const message = overrides.sandboxCloseThrows;
@@ -256,6 +269,16 @@ function makeDeps(overrides: DepOverrides = {}) {
       return overrides.reviewStdout ?? `<review>${overrides.reviewVerdict ?? "approve"}</review>`;
     }),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
+    // WI-13 T8 seams (FR-007/FR-008): the read-only conflict probe + the
+    // bounded merger run. Defaults: no conflict, runMerger unused.
+    branchConflictsWithMain: vi.fn(async (_repoDir: string, _branch: string) => overrides.branchConflicts === true),
+    runMerger: vi.fn(async (_input: { branch: string; mainRef: string }) => {
+      mergerRan = true;
+      if (overrides.mergerThrows !== undefined) {
+        throw new Error(overrides.mergerThrows);
+      }
+      return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
   };
 }
 
@@ -1646,6 +1669,12 @@ interface QueueDepsConfig {
   reviewStdout?: string;
   /** The review run itself throws for every issue (API down / budget refusal). */
   reviewThrows?: string;
+  /** WI-13 T8 (FR-007): the fix branch of this issue id conflicts with the current main. */
+  conflictFor?: string;
+  /** WI-13 T8 (FR-007): the merger run itself throws (API down / budget refusal). */
+  mergerThrows?: string;
+  /** WI-13 T8 (FR-008): the post-merger re-verification of this id's resolved branch goes red. */
+  mergerResolutionFailsFor?: string;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -1669,6 +1698,10 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
   // T6b: the planner-call counter distinguishes the initial plan (call 1)
   // from the post-merge re-plan (call 2+) when `rePlanStdout` is set.
   let planCalls = 0;
+  // WI-13 T8: ids whose merger run has already happened — the re-verification
+  // sandbox that follows is the gate's, so a red knob for it must apply only
+  // there, never to the lane's primary verification pass.
+  const mergerRanFor = new Set<string>();
   const deps = {
     env: {} as Record<string, string>,
     runFixRun: vi.fn(async (input: { branch: string; name?: string }) => {
@@ -1709,7 +1742,9 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         }
         return track(handle);
       }
-      const fails = config.failReproFor === active.id;
+      const fails =
+        config.failReproFor === active.id ||
+        (config.mergerResolutionFailsFor === active.id && mergerRanFor.has(active.id));
       const handle = issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0);
       // WI-11 FR-001: same knob for the queue-mode verification sandbox — the
       // early teardown origin, distinct from the canary's own close knob.
@@ -1795,6 +1830,22 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       return `<plan>${JSON.stringify({ priority, blockedBy: {} })}</plan>`;
     }),
     pathCommittedOnBranch: vi.fn(async () => config.pathCommittedOnBranch === true),
+    // WI-13 T8 seams (FR-007/FR-008): the read-only conflict probe + the
+    // bounded merger run. Defaults: no conflict, runMerger unused.
+    branchConflictsWithMain: vi.fn(
+      async (_repoDir: string, branch: string) =>
+        config.conflictFor !== undefined && branch === `fix/${config.conflictFor}`,
+    ),
+    runMerger: vi.fn(async (input: { branch: string }) => {
+      const merged = issues.find((i) => input.branch === fixBranch(i));
+      if (merged !== undefined) {
+        mergerRanFor.add(merged.id);
+      }
+      if (config.mergerThrows !== undefined) {
+        throw new Error(config.mergerThrows);
+      }
+      return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
   };
   return { deps, maxOpen: () => maxOpen };
 }
@@ -2339,6 +2390,15 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     deps.revertMerge.mockImplementation(track(deps.revertMerge.getMockImplementation()!));
     deps.commentOnPr.mockImplementation(track(deps.commentOnPr.getMockImplementation()!));
     deps.closeIssue.mockImplementation(track(deps.closeIssue.getMockImplementation()!));
+    // A25 (controller ledger, WI-13 T8): `fixDiff` — the pre-merge review's
+    // read of `main...<branch>` — is a SHARED-git dep too (main moves only
+    // inside the chain), so it joins the depth probe: a future narrowing of
+    // the locked section around `runReview` alone would otherwise evade this
+    // probe. The shipped lock already covers it; this is hardening. The T8
+    // conflict probe (`branchConflictsWithMain`, also inside the lock for the
+    // same reason — it must judge a non-moving main) joins it identically.
+    deps.fixDiff.mockImplementation(track(deps.fixDiff.getMockImplementation()!));
+    deps.branchConflictsWithMain.mockImplementation(track(deps.branchConflictsWithMain.getMockImplementation()!));
     // Branch-scoped probes: only the SHARED review branch and the canary
     // branches count — per-lane preflight/fix branches never contend.
     const origDelete = deps.deleteBranch.getMockImplementation()!;
@@ -2425,6 +2485,143 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     expect(deps.runFixRun).toHaveBeenCalledTimes(1);
     expect((deps.runFixRun.mock.calls[0]![0] as { branch: string }).branch).toBe("fix/gh-1");
     expect(aborted.summary.attempted).toEqual(["gh-1"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-13 T8: the verified-merger gate (FR-007/FR-008). Opted-in runs only: when
+// a verified fix branch conflicts with the current main (an earlier fix in the
+// run already merged), a bounded merger agent resolves the conflict on the
+// branch, and the RESOLVED branch must re-pass the same fresh-sandbox
+// verification BEFORE the existing review → merge → canary chain proceeds —
+// the merger's output is never trusted (constraint 2).
+// ---------------------------------------------------------------------------
+
+describe("verified-merger (WI-13 T8, FR-007/FR-008)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+  const fixBranchSandboxCalls = (deps: ReturnType<typeof makeDeps>): number =>
+    deps.createFixSandbox.mock.calls.filter(
+      (c) => (c[0] as { branch: string }).branch === "fix/gh-1",
+    ).length;
+
+  it("(a-red) conflict on an opted-in run: the merger runs, the resolved branch re-verifies in a FRESH sandbox, and red → mergeFailure posture, no merge, no review spend, PR open", async () => {
+    const deps = makeDeps({ branchConflicts: true, mergerResolutionFails: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.branchConflictsWithMain).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    const mergerInput = deps.runMerger.mock.calls[0]![0] as { branch: string; mainRef: string; prompt: string };
+    expect(mergerInput.branch).toBe("fix/gh-1");
+    expect(mergerInput.mainRef).toBe("main");
+    expect(mergerInput.prompt).toContain("fix/gh-1"); // the prompt names the branch it resolves
+    // FR-008: a FRESH verification sandbox ran on the resolved branch AFTER the
+    // merger — sandbox call 3 is the gate's (1 = preflight, 2 = primary).
+    expect(deps.runMerger.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.createFixSandbox.mock.invocationCallOrder[2]!,
+    );
+    expect(fixBranchSandboxCalls(deps)).toBe(2);
+    // Red: the WI-6 mergeFailure posture reused verbatim — never a new outcome kind.
+    expect(outcome.mergeFailure).toContain("merger resolution failed verification");
+    expect(outcome.prUrl).toBe(PR_URL); // PR stays open
+    expect(outcome.merged).toBeUndefined(); // not counted merged
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled(); // no review spend on a failed resolution (FR-008 order)
+  });
+
+  it("(a-green) conflict resolved correctly: the existing chain proceeds unchanged — review → mergePr → canary-green merged outcome; probe pinned BEFORE the review", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    expect(fixBranchSandboxCalls(deps)).toBe(2); // the gate re-verified the resolved branch
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true });
+    // FR-008's order: the conflict probe precedes the pre-merge review — the
+    // review judges the POST-resolution diff.
+    expect(deps.branchConflictsWithMain.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("(b) non-opted run with the same conflict: the merger is NEVER invoked (constraint 1) and the PR opens normally", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, profile); // no autoMerge
+
+    expect(deps.branchConflictsWithMain).not.toHaveBeenCalled();
+    expect(deps.runMerger).not.toHaveBeenCalled();
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.mergeFailure).toBeUndefined();
+  });
+
+  it("(c) a thrown merger run: PR open, loud mergeFailure note, the queue is not halted and the sibling merge proceeds", async () => {
+    const deps = makeDeps({
+      branchConflicts: true,
+      mergerThrows: "sandcastle: merger run failed — budget exceeded",
+    });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.mergeFailure).toContain("merger run failed");
+    expect(outcome.mergeFailure).toContain("budget exceeded");
+    expect(deps.mergePr).not.toHaveBeenCalled();
+
+    // Queue posture: the lane settles fixed-with-PR, the sibling merges, the
+    // run continues — exactly the WI-6 merge-failure semantics.
+    const { deps: qd } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      mergerThrows: "sandcastle: merger run failed — budget exceeded",
+    });
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), qd);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger run failed");
+  });
+
+  it("(d) no conflict: the probe runs, the merger does not, and the chain is unchanged — probe pinned BEFORE the review", async () => {
+    const deps = makeDeps();
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.branchConflictsWithMain).toHaveBeenCalledTimes(1);
+    expect(deps.runMerger).not.toHaveBeenCalled();
+    expect(fixBranchSandboxCalls(deps)).toBe(1); // primary verification only
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toBeDefined();
+    expect(deps.branchConflictsWithMain.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("(a-red, queue seam) the failed resolution is NOT counted merged: MERGE FAILED line carries the merger verdict, the sibling merge proceeds, the queue continues", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      mergerResolutionFailsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1); // gh-2's merge only
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]); // gh-1 NOT counted merged
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger resolution failed verification");
+    expect(formatSummary(summary)).toContain("MERGE FAILED gh-1: ");
+    expect(summary.fixed).toContain("gh-1"); // the open PR is real work — the WI-6 posture
   });
 });
 
