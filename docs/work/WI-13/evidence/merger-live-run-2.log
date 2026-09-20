@@ -1,0 +1,81 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: all unblocked
+plan: attempt gh-41
+plan: blocked gh-40 by gh-41
+[gh-41] Started on branch fix/gh-41
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-41-gh-41.log
+remote: 
+remote: Create a pull request for 'fix/gh-41' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-41        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-41 -> fix/gh-41
+branch 'fix/gh-41' set up to track 'origin/fix/gh-41'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-41
+   5ac80c7..b5f6dce  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 5ac80c7..b5f6dce
+Fast-forward
+ src/loopfix/moneyops.py          | 3 ++-
+ tests/fixed-issues/test_gh_41.py | 6 ++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_41.py
+✓ Closed issue #41 (moneyfmt: negative amounts lose their minus sign)
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: attempt gh-40
+[gh-40] Started on branch fix/gh-40
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-40-gh-40.log
+remote: 
+remote: Create a pull request for 'fix/gh-40' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-40        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-40 -> fix/gh-40
+branch 'fix/gh-40' set up to track 'origin/fix/gh-40'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-40
+   b5f6dce..fc95d67  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating b5f6dce..fc95d67
+Fast-forward
+ src/loopfix/moneyops.py          | 1 +
+ tests/fixed-issues/test_gh_40.py | 6 ++++++
+ tests/fixed-issues/test_gh_41.py | 2 +-
+ 3 files changed, 8 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_40.py
+✓ Closed issue #40 (moneyfmt: thousands separators missing from the dollars part)
+Run summary — attempted: 2 (fixed: 2, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/42
+PR: https://github.com/manjula25/loop-fixtures-py/pull/43
+MERGED gh-41: https://github.com/manjula25/loop-fixtures-py/pull/42 @ b5f6dce47a776c64c8cf3319c74696013f46da5b (canary: green)
+MERGED gh-40: https://github.com/manjula25/loop-fixtures-py/pull/43 @ fc95d6720550b824b349de6af0296b4b7b1764df (canary: green)
+HARNESS_EXIT=0
+
+--- Controller notes (2026-09-20, appended after the run; no recorded line above altered) ---
+Seed: issues #40/#41 — two latent defects on ADJACENT lines of a new moneyfmt function
+(thousands separators on line 1; negative sign on line 2), different symptom domains and
+root causes, with explicit "independent of any other open issue" notes in both bodies.
+OUTCOME: the gate did NOT fire — the planner again serialized the pair (`blocked gh-40 by
+gh-41`, line 9), so gh-40's branch was cut from post-merge main and merged cleanly
+(fast-forward, line 52-53). Run green end-to-end (exit 0, 2/2 fixed, issues closed, OIDs
+verified against GitHub). Two lessons recorded: (1) each issue's independence note NAMED the
+other defect, advertising the same-function overlap to the planner — the note designed to
+defeat edge-detection likely caused it; (2) the planner serializes same-function fix pairs
+aggressively and defensibly — twice in a row it prevented the conflict from existing at all.
+Bonus evidence: gh-40's fix UPDATED gh-41's already-merged regression test (line 56,
+test_gh_41.py | 2 +-) to keep it correct under the separators change — constraint 4's
+permanence honored by modification, not deletion; green canary confirms. A46 REMAINS OPEN.
+Recorded honestly; not re-rolled.

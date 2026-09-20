@@ -5,16 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  admitIssues,
-  buildTriagePrompt,
+  buildPlanPrompt,
   ISSUE_PAGE_LIMIT,
   listOpenIssues,
+  orderFromPlan,
   PR_PAGE_LIMIT,
+  parsePlanOutput,
   parseReviewOutput,
-  parseTriageOutput,
   prListArgs,
   QueueAcquisitionError,
   splitQueue,
+  unblockedAfter,
+  type PlanValue,
   type QueueDeps,
 } from "./queue.js";
 import type { NormalizedIssue } from "./issues.js";
@@ -480,94 +482,6 @@ describe("revert guard on the merged dedup (WI-6 T4, FR-006)", () => {
   });
 });
 
-describe("admission: cap, deterministic default, opt-in triage (WI-2 T3)", () => {
-  const five = [1, 2, 3, 4, 5].map(issue);
-
-  it("admits the first cap issues in ascending order without triage — no model call", () => {
-    const result = admitIssues({ issues: five, cap: 3 });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
-    expect(result.notAdmitted).toEqual([
-      { issue: five[3], reason: "cap" },
-      { issue: five[4], reason: "cap" },
-    ]);
-    expect(result.degraded).toBe(false);
-  });
-
-  it("orders by returned score, ties by ascending issue number", () => {
-    const result = admitIssues({
-      issues: five,
-      cap: 3,
-      triage: {
-        scores: { "gh-1": 2, "gh-2": 5, "gh-3": 5, "gh-4": 4, "gh-5": 1 },
-        files: {},
-      },
-    });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-2", "gh-3", "gh-4"]);
-  });
-
-  it("defers a file-overlapping issue and admits the next non-overlapping candidate (decision 14)", () => {
-    const result = admitIssues({
-      issues: five,
-      cap: 2,
-      triage: {
-        scores: { "gh-1": 5, "gh-2": 4, "gh-3": 3, "gh-4": 2, "gh-5": 1 },
-        files: {
-          "gh-1": ["src/calculator.py"],
-          "gh-2": ["src/calculator.py", "src/other.py"],
-          "gh-3": ["src/disjoint.py"],
-          "gh-4": [],
-          "gh-5": [],
-        },
-      },
-    });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-3"]);
-    expect(result.notAdmitted).toEqual([
-      { issue: five[1], reason: "file overlap with gh-1" },
-      { issue: five[3], reason: "cap" },
-      { issue: five[4], reason: "cap" },
-    ]);
-  });
-
-  it("degrades to deterministic order when the triage pass ran but its output was unusable", () => {
-    const result = admitIssues({ issues: five, cap: 3, triageUnusable: true });
-
-    expect(result.admitted.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
-    expect(result.degraded).toBe(true);
-  });
-});
-
-describe("parseTriageOutput (WI-2 T3, Zod-validated)", () => {
-  const ids = ["gh-1", "gh-2"];
-
-  it("parses a well-formed triage block", () => {
-    const stdout =
-      'prose\n<triage>{"scores":{"gh-1":3,"gh-2":5},"files":{"gh-1":["src/a.py"],"gh-2":[]}}</triage>\nmore prose';
-    const parsed = parseTriageOutput(stdout, ids);
-
-    expect(parsed).toEqual({
-      scores: { "gh-1": 3, "gh-2": 5 },
-      files: { "gh-1": ["src/a.py"], "gh-2": [] },
-    });
-  });
-
-  it("rejects garbage, missing ids, out-of-range scores, and non-integer scores", () => {
-    expect(parseTriageOutput("no tags at all", ids)).toBeUndefined();
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":3},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // gh-2 missing from scores
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":9,"gh-2":1},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // 9 out of the 1-5 range
-    expect(
-      parseTriageOutput('<triage>{"scores":{"gh-1":3.5,"gh-2":1},"files":{}}</triage>', ids),
-    ).toBeUndefined(); // non-integer
-    expect(parseTriageOutput("<triage>not json</triage>", ids)).toBeUndefined();
-  });
-});
-
 describe("parseReviewOutput (WI-6 T6, FR-009)", () => {
   it("parses each of the three contract verdicts", () => {
     expect(parseReviewOutput("prose\n<review>approve</review>\nmore prose")).toBe("approve");
@@ -582,57 +496,151 @@ describe("parseReviewOutput (WI-6 T6, FR-009)", () => {
   });
 });
 
-describe("buildTriagePrompt (WI-2 T3)", () => {
-  it("lists every queued id with its first description line, and nothing more", () => {
-    const multiline: NormalizedIssue = {
-      id: "gh-7",
-      description: "# crash on empty input\n\nStack trace follows\nline two",
-      sourceType: "github-issue",
-    };
+describe("plan-parse: parsePlanOutput (WI-13 T1, FR-001)", () => {
+  const ids = ["gh-1", "gh-2"];
 
-    const prompt = buildTriagePrompt([issue(1), multiline]);
+  it("parses a well-formed plan block with full id coverage", () => {
+    const stdout =
+      'prose\n<plan>{"priority":{"gh-1":5,"gh-2":3},"blockedBy":{"gh-2":["gh-1"]}}</plan>\nmore prose';
+    const parsed = parsePlanOutput(stdout, ids);
 
-    expect(prompt).toContain("- gh-1: # issue 1");
-    // only the first line travels — the body can be long, and the pass is bounded
-    expect(prompt).toContain("- gh-7: # crash on empty input");
-    expect(prompt).not.toContain("Stack trace follows");
-    expect(prompt).not.toContain("line two");
+    expect(parsed).toEqual({
+      priority: { "gh-1": 5, "gh-2": 3 },
+      blockedBy: { "gh-2": ["gh-1"] },
+    });
   });
 
-  it("asks for the exact block shape parseTriageOutput accepts", () => {
-    const prompt = buildTriagePrompt([issue(1), issue(2)]);
-
-    expect(prompt).toContain("<triage>");
-    expect(prompt).toContain("</triage>");
-    expect(prompt).toContain("scores");
-    expect(prompt).toContain("files");
-    expect(prompt).toMatch(/1 \(low\) to 5 \(urgent\)/);
+  it("accepts an empty blockedBy — no issue blocks another", () => {
+    const parsed = parsePlanOutput(
+      '<plan>{"priority":{"gh-1":1,"gh-2":2},"blockedBy":{}}</plan>',
+      ids,
+    );
+    expect(parsed).toEqual({ priority: { "gh-1": 1, "gh-2": 2 }, blockedBy: {} });
   });
 
-  it("round-trips: a reply in the shape the prompt asks for parses and covers every id", () => {
-    // The prompt and the parser are two halves of one contract; this pins them
-    // together so rewording one without the other fails here.
-    const issues = [issue(1), issue(2)];
-    const prompt = buildTriagePrompt(issues);
-    const ids = issues.map((i) => i.id);
-
-    const reply = [
-      "Here is my assessment.",
-      '<triage>{"scores":{"gh-1":4,"gh-2":2},"files":{"gh-1":["src/a.py"],"gh-2":[]}}</triage>',
-    ].join("\n");
-
-    const parsed = parseTriageOutput(reply, ids);
-
-    expect(parsed).toBeDefined();
-    expect(parsed?.scores).toEqual({ "gh-1": 4, "gh-2": 2 });
-    // and the ids the prompt asked about are exactly the ids the parser demands
-    for (const id of ids) {
-      expect(prompt).toContain(id);
-      expect(parsed?.scores[id]).toBeDefined();
-    }
+  it("rejects a missing block and bad JSON", () => {
+    expect(parsePlanOutput("no tags at all", ids)).toBeUndefined();
+    expect(parsePlanOutput("<plan>not json</plan>", ids)).toBeUndefined();
   });
 
-  it("emits no issue body beyond the first line, so a log-bearing issue cannot bloat the pass", () => {
+  it("rejects Zod-invalid bodies", () => {
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":9,"gh-2":1},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // 9 out of the 1-5 range
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":3.5,"gh-2":1},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // non-integer
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-2":1},"blockedBy":{"gh-1":"gh-2"}}</plan>', ids),
+    ).toBeUndefined(); // blockedBy value not an array
+  });
+
+  it("rejects an id coverage gap — every queued id must appear in priority", () => {
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":3},"blockedBy":{}}</plan>', ids),
+    ).toBeUndefined(); // gh-2 missing from priority
+  });
+
+  it("rejects unknown-id edges — a blocker the queue never held", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined(); // gh-9 not in ids
+  });
+
+  it("rejects self-edges — an issue cannot block itself", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-1":["gh-1"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects any cycle among the edges, direct or indirect", () => {
+    // direct: gh-1 -> gh-2 -> gh-1
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-1":["gh-2"],"gh-2":["gh-1"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+    // indirect: gh-1 -> gh-2 -> gh-3 -> gh-1
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3,"gh-3":3},"blockedBy":{"gh-1":["gh-2"],"gh-2":["gh-3"],"gh-3":["gh-1"]}}</plan>',
+        ["gh-1", "gh-2", "gh-3"],
+      ),
+    ).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-13 T6b FIX 2 (quality Important): the re-plan split — priority is
+  // validated against the ASKED set (`ids`); blockedBy keys and edge targets
+  // against the FULL set (`edgeIds`, defaulting to `ids`).
+  // -------------------------------------------------------------------------
+
+  it("T6b: with edgeIds, priority covering the asked set + an edge naming a full-set-but-not-asked id → ACCEPTED", () => {
+    const parsed = parsePlanOutput(
+      '<plan>{"priority":{"gh-2":5},"blockedBy":{"gh-2":["gh-1"]}}</plan>',
+      ["gh-2"], // the re-plan was asked about the remaining issue only
+      { edgeIds: ["gh-1", "gh-2"] }, // gh-1 merged this run — still edgeable
+    );
+
+    expect(parsed).toEqual({ priority: { "gh-2": 5 }, blockedBy: { "gh-2": ["gh-1"] } });
+  });
+
+  it("T6b: with edgeIds, a priority gap in the ASKED set still rejects", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-2":5},"blockedBy":{}}</plan>',
+        ["gh-2", "gh-3"], // gh-3 was asked and must be prioritized
+        { edgeIds: ["gh-1", "gh-2", "gh-3"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("T6b: with edgeIds, an edge naming an id outside even the full set still rejects", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-2":5},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ["gh-2"],
+        { edgeIds: ["gh-1", "gh-2"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("T6b: edgeIds omitted — both checks run against `ids`, byte-identical to the two-arg contract (T1 pins hold)", () => {
+    // A full-set priority answer to a full-set ask still parses...
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":5,"gh-2":3},"blockedBy":{}}</plan>', ids),
+    ).toEqual({ priority: { "gh-1": 5, "gh-2": 3 }, blockedBy: {} });
+    // ...and an edge naming an id outside `ids` still rejects.
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("plan-order: buildPlanPrompt / orderFromPlan (WI-13 T2, FR-001)", () => {
+  it("buildPlanPrompt lists both ids, the <plan> contract line, and the all-blocked rule sentence", () => {
+    const prompt = buildPlanPrompt([issue(1), issue(2)]);
+
+    expect(prompt).toContain("gh-1");
+    expect(prompt).toContain("gh-2");
+    expect(prompt).toContain('<plan>{"priority":{"<id>":1-5},"blockedBy":{"<id>":["<id>"]}}</plan>');
+    // the all-blocked rule: the planner can never deadlock the queue
+    expect(prompt).toContain(
+      "give the single highest-priority candidate the highest priority and NO blockers",
+    );
+  });
+
+  it("emits no issue body beyond the first line, so a log-bearing issue cannot leak into the prompt", () => {
     const withLog: NormalizedIssue = {
       id: "gh-9",
       description: "# timeout",
@@ -640,9 +648,108 @@ describe("buildTriagePrompt (WI-2 T3)", () => {
       sourceType: "github-issue",
     };
 
-    const prompt = buildTriagePrompt([withLog, issue(2)]);
+    const prompt = buildPlanPrompt([withLog, issue(2)]);
 
+    expect(prompt).toContain("- gh-9: # timeout");
     expect(prompt).not.toContain("Traceback");
     expect(prompt).not.toContain("/home/someone/secret/path.py");
+  });
+
+  it("orderFromPlan ranks by priority desc, ties by ascending issue number", () => {
+    const plan: PlanValue = {
+      priority: { "gh-1": 2, "gh-2": 5, "gh-3": 5, "gh-4": 1 },
+      blockedBy: { "gh-2": ["gh-1"] },
+    };
+
+    const ordered = orderFromPlan([issue(1), issue(2), issue(3), issue(4)], plan);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-2", "gh-3", "gh-1", "gh-4"]);
+  });
+
+  it("orderFromPlan with no plan returns ascending issue-number order, input unmutated", () => {
+    const input = [issue(3), issue(1), issue(2)];
+
+    const ordered = orderFromPlan(input, undefined);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
+    expect(input.map((i) => i.id)).toEqual(["gh-3", "gh-1", "gh-2"]);
+  });
+
+  it("orderFromPlan iterates the queue's issues, never the plan keys — extra priority ids surface nothing", () => {
+    // Controller finding A1: the parser tolerates extra priority keys, so a
+    // key-driven walk could surface phantom issues downstream.
+    const plan: PlanValue = {
+      priority: { "gh-1": 1, "gh-2": 2, "gh-9": 5 },
+      blockedBy: {},
+    };
+
+    const ordered = orderFromPlan([issue(2), issue(1)], plan);
+
+    expect(ordered.map((i) => i.id)).toEqual(["gh-2", "gh-1"]);
+  });
+});
+
+describe("waves: unblockedAfter (WI-13 T5, FR-002/FR-003)", () => {
+  const edges: Record<string, readonly string[]> = { "gh-2": ["gh-1"] };
+
+  it("empty completed yields the initial wave: B waits for A, C runs", () => {
+    const wave = unblockedAfter([issue(1), issue(2), issue(3)], edges, new Set());
+
+    expect(wave.map((i) => i.id)).toEqual(["gh-1", "gh-3"]);
+  });
+
+  it("completed A unblocks B", () => {
+    // With only A completed, B joins the unblocked set (C, no edges, stays
+    // unblocked — the caller marks settled lanes completed, it does not
+    // re-shrink the order).
+    const afterA = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      edges,
+      new Set(["gh-1"]),
+    );
+    expect(afterA.map((i) => i.id)).toEqual(["gh-2", "gh-3"]);
+
+    // The realistic wave-2 call: wave 1 was [A, C], both settled — exactly [B].
+    const wave2 = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      edges,
+      new Set(["gh-1", "gh-3"]),
+    );
+    expect(wave2.map((i) => i.id)).toEqual(["gh-2"]);
+  });
+
+  it("edges pointing outside the run are ignored — an absent blocker cannot gate a run", () => {
+    const wave = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      { "gh-3": ["gh-99"] },
+      new Set(),
+    );
+
+    expect(wave.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
+  });
+
+  it("an all-blocked remaining set yields [] — the fallback is the runner's (T6)", () => {
+    const wave = unblockedAfter(
+      [issue(1), issue(2)],
+      { "gh-1": ["gh-2"], "gh-2": ["gh-1"] },
+      new Set(),
+    );
+
+    expect(wave).toEqual([]);
+  });
+
+  it("two blockers gate until BOTH are completed; duplicate blockers are idempotent", () => {
+    const twoBlockers: Record<string, readonly string[]> = {
+      "gh-3": ["gh-1", "gh-2", "gh-1"],
+    };
+    const order = [issue(1), issue(2), issue(3)];
+
+    // gh-1 completed, gh-2 not: gh-3 stays blocked (gh-2 rides along, free).
+    expect(
+      unblockedAfter(order, twoBlockers, new Set(["gh-1"])).map((i) => i.id),
+    ).toEqual(["gh-2"]);
+    expect(
+      unblockedAfter(order, twoBlockers, new Set(["gh-1", "gh-2"])).map((i) => i.id),
+    ).toEqual(["gh-3"]);
   });
 });

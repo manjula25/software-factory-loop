@@ -17,6 +17,7 @@ import {
   formatSingleIssueResult,
   formatSummary,
   parseCap,
+  parseRetiredFlags,
   parseSourceArgs,
   reproTestPath,
   runOverrideIssue,
@@ -167,11 +168,23 @@ interface DepOverrides {
   reviewThrows?: string;
   /** The diff `fixDiff` returns — override to inject a secret-bearing diff (WI-7 FR-004 pin). */
   reviewDiff?: string;
+  /** WI-13 T8 (FR-007): `branchConflictsWithMain`'s answer on opted-in runs. */
+  branchConflicts?: boolean;
+  /** WI-13 T8 (FR-007): the merger run itself throws (API down / budget refusal). */
+  mergerThrows?: string;
+  /** WI-13 T8 (FR-008): the post-merger re-verification of the resolved branch goes red. */
+  mergerResolutionFails?: boolean;
+  /** WI-13 T12 (FR-007/FR-008): publishing the merger-resolved branch (pushBranch) throws. */
+  pushThrows?: string;
 }
 
 function makeDeps(overrides: DepOverrides = {}) {
   const env = overrides.env ?? {};
   let sandboxCalls = 0;
+  // WI-13 T8: once the merger has run, the NEXT verification sandbox on the
+  // fix branch is the gate's re-verification of the resolved branch — the
+  // knob that turns it red must apply only there, never to the primary pass.
+  let mergerRan = false;
   return {
     env,
     runFixRun: vi.fn(async (_input: { branch: string; prompt: string }) => overrides.fixOutcome ?? fixOutcome()),
@@ -199,7 +212,10 @@ function makeDeps(overrides: DepOverrides = {}) {
         }
         return base;
       }
-      const verification = overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX);
+      const verification =
+        mergerRan && overrides.mergerResolutionFails === true
+          ? sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1)
+          : (overrides.sandbox ?? sandboxHandle(SUITE_AFTER_FIX));
       // WI-8 FR-001: same knob for the fresh verification sandbox.
       if (overrides.sandboxCloseThrows !== undefined) {
         const message = overrides.sandboxCloseThrows;
@@ -255,6 +271,23 @@ function makeDeps(overrides: DepOverrides = {}) {
       return overrides.reviewStdout ?? `<review>${overrides.reviewVerdict ?? "approve"}</review>`;
     }),
     pathCommittedOnBranch: overrides.pathCommittedOnBranch ?? (async () => false),
+    // WI-13 T8 seams (FR-007/FR-008): the read-only conflict probe + the
+    // bounded merger run. Defaults: no conflict, runMerger unused.
+    branchConflictsWithMain: vi.fn(async (_repoDir: string, _branch: string) => overrides.branchConflicts === true),
+    runMerger: vi.fn(async (_input: { branch: string; mainRef: string }) => {
+      mergerRan = true;
+      if (overrides.mergerThrows !== undefined) {
+        throw new Error(overrides.mergerThrows);
+      }
+      return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
+    // WI-13 T12 seam (FR-007/FR-008): publishing the merger-resolved branch to
+    // origin. Defaults to success; `pushThrows` simulates a refused push.
+    pushBranch: vi.fn(async (_repoDir: string, _branch: string) => {
+      if (overrides.pushThrows !== undefined) {
+        throw new Error(overrides.pushThrows);
+      }
+    }),
   };
 }
 
@@ -542,7 +575,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     });
   });
 
-  it("(c) canary red halts the queue: runQueue throws QueueAbortedError and no further admitted issue is attempted", async () => {
+  it("(c) canary red halts the queue: runQueue throws QueueAbortedError once the wave has settled — no further WAVE starts (WI-13 T6)", async () => {
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
       canaryNewFailureFor: "gh-1",
@@ -555,9 +588,13 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toMatch(/REVERTED.*gh-1/);
-    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
-    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+    // WI-13 T6 (FR-004): gh-1 and gh-2 shared the wave, so both lanes settled
+    // before the abort was raised; the halt means no LATER wave would start —
+    // pinned by the wave-runner (c) test with a would-be third lane's posture.
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(aborted.summary.reverted[0]!.id).toBe("gh-1");
+    expect(deps.createPr).toHaveBeenCalledTimes(2);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(2);
   });
 
   it("(d) canary red: exactly one comment on the merged PR, its body carrying @<notifyHandle> and REVERTED", async () => {
@@ -676,7 +713,8 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(error).toBeInstanceOf(QueueAbortedError); // halt is unconditional on red
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toContain("revert conflict on main");
-    expect(aborted.summary.attempted).toEqual(["gh-1"]);
+    // WI-13 T6: both lanes settled in the shared wave before the abort (FR-004).
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
     expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // notification is best-effort, still attempted
     expect(aborted.summary.reverted[0]!.revertCommit).toBeUndefined();
     expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
@@ -760,6 +798,10 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
       syncMainThrowsFor: "gh-1",
+      // WI-13 T6: gh-2's merge fails so ONLY gh-1's lane reaches syncMain —
+      // its throw is lane-attributable under concurrent lanes (and gh-2's PR
+      // stands open, exactly the deliverable FR-004 protects).
+      mergeThrowsFor: "fix/gh-2",
     });
 
     const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
@@ -768,7 +810,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
 
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
-    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]); // both lanes settled in the wave (WI-13 T6)
     expect(aborted.summary.uncanariedMerges).toEqual([
       [
         "gh-1",
@@ -1592,9 +1634,16 @@ interface QueueDepsConfig {
   staleBaseline?: boolean;
   /** Preflight reports a stale baseline for this id only — aborts mid-queue. */
   staleBaselineFor?: string;
-  triageStdout?: string;
-  /** The triage run itself throws (sandbox/credentials failure), not its output. */
-  triageThrows?: string;
+  /** WI-13 T3: the planner run's stdout; defaults to a valid equal-priority plan. */
+  planStdout?: string;
+  /**
+   * WI-13 T6b: stdout for the SECOND and later planner calls (the re-plan) —
+   * when set, `planStdout` covers only the initial plan, so a test can pin
+   * the re-plan's own contract.
+   */
+  rePlanStdout?: string;
+  /** WI-13 T3: the planner run itself throws (sandbox/credentials failure). */
+  planThrows?: string;
   /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
   pathCommittedOnBranch?: boolean;
   /** Opted-in runs: merge fails (conflict/API error) for PRs whose url contains this token. */
@@ -1629,6 +1678,14 @@ interface QueueDepsConfig {
   reviewStdout?: string;
   /** The review run itself throws for every issue (API down / budget refusal). */
   reviewThrows?: string;
+  /** WI-13 T8 (FR-007): the fix branch of this issue id conflicts with the current main. */
+  conflictFor?: string;
+  /** WI-13 T8 (FR-007): the merger run itself throws (API down / budget refusal). */
+  mergerThrows?: string;
+  /** WI-13 T8 (FR-008): the post-merger re-verification of this id's resolved branch goes red. */
+  mergerResolutionFailsFor?: string;
+  /** WI-13 T12 (FR-007/FR-008): publishing this id's merger-resolved branch throws (refused push). */
+  pushThrowsFor?: string;
 }
 
 function makeQueueDeps(config: QueueDepsConfig = {}) {
@@ -1636,6 +1693,11 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
   let active: NormalizedIssue = issues[0]!;
   let openNow = 0;
   let maxOpen = 0;
+  // WI-13 T6: lanes run concurrently, so shared mutable `active` cannot
+  // identify a `syncMain` caller (syncMain takes no branch). The merge record
+  // can: only a lane whose mergePr succeeded ever reaches syncMain, and
+  // mergePr knows its PR url.
+  const mergedIds = new Set<string>();
   const track = (handle: FixSandboxHandle): FixSandboxHandle => ({
     ...handle,
     async close() {
@@ -1644,10 +1706,19 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     },
   });
 
+  // T6b: the planner-call counter distinguishes the initial plan (call 1)
+  // from the post-merge re-plan (call 2+) when `rePlanStdout` is set.
+  let planCalls = 0;
+  // WI-13 T8: ids whose merger run has already happened — the re-verification
+  // sandbox that follows is the gate's, so a red knob for it must apply only
+  // there, never to the lane's primary verification pass.
+  const mergerRanFor = new Set<string>();
   const deps = {
     env: {} as Record<string, string>,
     runFixRun: vi.fn(async (input: { branch: string; name?: string }) => {
-      active = issues.find((i) => fixBranch(i) === input.branch) ?? issues[0]!;
+      // T6b (quality Minor 4): no `active` write here — every read of the
+      // shared `active` sits inside createFixSandbox, which overwrites it at
+      // entry before reading, so a mid-lane write was vestigial.
       return { stdout: agentStdout(), commits: [{ sha: "abc" }], branch: input.branch };
     }),
     createFixSandbox: vi.fn(async (input: { branch: string; baseBranch?: string }) => {
@@ -1682,7 +1753,9 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         }
         return track(handle);
       }
-      const fails = config.failReproFor === active.id;
+      const fails =
+        config.failReproFor === active.id ||
+        (config.mergerResolutionFailsFor === active.id && mergerRanFor.has(active.id));
       const handle = issueSandbox(active, SUITE_AFTER_FIX, fails ? 1 : 0);
       // WI-11 FR-001: same knob for the queue-mode verification sandbox — the
       // early teardown origin, distinct from the canary's own close knob.
@@ -1703,11 +1776,16 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (config.mergeThrowsFor !== undefined && input.prUrl.includes(config.mergeThrowsFor)) {
         throw new Error("gh: merge conflict — base branch moved");
       }
+      const merged = issues.find((i) => input.prUrl.includes(fixBranch(i)));
+      if (merged !== undefined) {
+        mergedIds.add(merged.id);
+      }
       return { mergeCommit: "mdef456" };
     }),
     // WI-6 T4 seams
     syncMain: vi.fn(async (_repoDir: string) => {
-      if (config.syncMainThrowsFor !== undefined && active.id === config.syncMainThrowsFor) {
+      if (config.syncMainThrowsFor !== undefined && mergedIds.has(config.syncMainThrowsFor)) {
+        mergedIds.delete(config.syncMainThrowsFor);
         throw new Error("divergent main");
       }
     }),
@@ -1745,13 +1823,47 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     mainRevertsPr: vi.fn(async () => false),
     listFixBranches: vi.fn(async () => []),
     deleteRemoteBranch: vi.fn(async () => {}),
-    runTriage: vi.fn(async () => {
-      if (config.triageThrows !== undefined) {
-        throw new Error(config.triageThrows);
+    runPlan: vi.fn(async () => {
+      if (config.planThrows !== undefined) {
+        throw new Error(config.planThrows);
       }
-      return config.triageStdout ?? "";
+      planCalls += 1;
+      const stdout =
+        planCalls > 1 && config.rePlanStdout !== undefined
+          ? config.rePlanStdout
+          : config.planStdout;
+      if (stdout !== undefined) {
+        return stdout;
+      }
+      // Equal priorities for every configured issue: a usable plan whose
+      // ordering is the deterministic ascending-number tie rule.
+      const priority = Object.fromEntries(issues.map((i) => [i.id, 3]));
+      return `<plan>${JSON.stringify({ priority, blockedBy: {} })}</plan>`;
     }),
     pathCommittedOnBranch: vi.fn(async () => config.pathCommittedOnBranch === true),
+    // WI-13 T8 seams (FR-007/FR-008): the read-only conflict probe + the
+    // bounded merger run. Defaults: no conflict, runMerger unused.
+    branchConflictsWithMain: vi.fn(
+      async (_repoDir: string, branch: string) =>
+        config.conflictFor !== undefined && branch === `fix/${config.conflictFor}`,
+    ),
+    runMerger: vi.fn(async (input: { branch: string }) => {
+      const merged = issues.find((i) => input.branch === fixBranch(i));
+      if (merged !== undefined) {
+        mergerRanFor.add(merged.id);
+      }
+      if (config.mergerThrows !== undefined) {
+        throw new Error(config.mergerThrows);
+      }
+      return { stdout: "merger resolution summary", commits: [{ sha: "m3rg3c0m" }] };
+    }),
+    // WI-13 T12 seam (FR-007/FR-008): publish the merger-resolved branch —
+    // can be made to refuse per id. Defaults: succeeds, unused without a conflict.
+    pushBranch: vi.fn(async (_repoDir: string, branch: string) => {
+      if (config.pushThrowsFor !== undefined && branch === `fix/${config.pushThrowsFor}`) {
+        throw new Error("git: push rejected — non-fast-forward");
+      }
+    }),
   };
   return { deps, maxOpen: () => maxOpen };
 }
@@ -1762,13 +1874,14 @@ const queueRunInput = (over: Partial<Parameters<typeof runQueue>[0]> = {}) => ({
   imageName: "sandcastle-loop",
   agent,
   profile,
-  cap: 3,
-  triage: false,
+  // WI-13 T4: the default posture is NO ceiling (FR-005) — tests that cap
+  // pass `cap: N` explicitly.
+  cap: undefined,
   ...over,
 });
 
 describe("runQueue (WI-2 T4)", () => {
-  it("runs issues sequentially; an issue-level failure continues the queue; summary is honest", async () => {
+  it("runs a wave's lanes concurrently (WI-13 T6); an issue-level failure continues the queue; summary is honest", async () => {
     const { deps, maxOpen } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
       failReproFor: "gh-2",
@@ -1790,8 +1903,9 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.createPr).toHaveBeenCalledTimes(2);
     // the failed issue's branch was cleaned up
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-2");
-    // strictly one sandbox at a time
-    expect(maxOpen()).toBe(1);
+    // WI-13 T6 (FR-003): one wave, three concurrent lanes — each lane holds one
+    // sandbox at a time (the preflight closes before verification opens).
+    expect(maxOpen()).toBe(3);
   });
 
   it("skips a merged-covered issue as done and carries it into the summary counts line (WI-6 T2)", async () => {
@@ -1854,9 +1968,11 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.createPr).not.toHaveBeenCalled();
   });
 
-  it("an abort mid-queue still carries the PR the run already earned", async () => {
-    // gh-1 fixes and opens a PR; gh-2 trips the stale-baseline preflight. That
-    // PR is real, human-reviewable work — the abort must not swallow it.
+  it("an abort mid-run still carries the PRs the wave already earned (WI-13 T6)", async () => {
+    // gh-1 and gh-3 fix and open PRs; gh-2 trips the stale-baseline preflight.
+    // All three lanes share the wave: the harness-level abort is raised AFTER
+    // the wave's outcomes are collected (FR-004), so those PRs — real,
+    // human-reviewable work — are never swallowed by the halt.
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
       staleBaselineFor: "gh-2",
@@ -1867,18 +1983,20 @@ describe("runQueue (WI-2 T4)", () => {
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toMatch(/gh-2/);
-    expect(aborted.summary.prUrls).toEqual(["https://example/pr/fix/gh-1"]);
-    expect(aborted.summary.fixed).toEqual(["gh-1"]);
+    expect(aborted.summary.prUrls).toEqual([
+      "https://example/pr/fix/gh-1",
+      "https://example/pr/fix/gh-3",
+    ]);
+    expect(aborted.summary.fixed).toEqual(["gh-1", "gh-3"]);
     // attempted stays the honest total, and every attempt is accounted for
-    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2", "gh-3"]);
     expect(aborted.summary.failed.map(([id]) => id)).toEqual(["gh-2"]);
-    // gh-3 was admitted but never reached — no third sandbox was opened
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
+    expect(deps.createPr).toHaveBeenCalledTimes(2);
     // and that partial summary is printable, PR line included
     expect(formatSummary(aborted.summary)).toContain("PR: https://example/pr/fix/gh-1");
   });
 
-  it("admits the first cap issues deterministically without triage, never calling the model", async () => {
+  it("admits the first cap issues deterministically when plan priorities tie", async () => {
     const { deps } = makeQueueDeps({
       issues: [1, 2, 3, 4, 5].map(queueIssue),
     });
@@ -1891,71 +2009,17 @@ describe("runQueue (WI-2 T4)", () => {
       ["gh-4", "cap"],
       ["gh-5", "cap"],
     ]);
-    expect(deps.runTriage).not.toHaveBeenCalled();
   });
 
-  it("defers a file-overlapping issue below the cap — the flag, not the cap, is the opt-in", async () => {
-    // cap 3, two eligible issues: the cap forces no choice, but both fixes
-    // touch src/api.py, so admitting each would produce conflicting PRs.
-    const { deps } = makeQueueDeps({
-      issues: [queueIssue(1), queueIssue(2)],
-      triageStdout:
-        '<triage>{"scores":{"gh-1":3,"gh-2":3},"files":{"gh-1":["src/api.py"],"gh-2":["src/api.py"]}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
-
-    expect(deps.runTriage).toHaveBeenCalledTimes(1);
-    expect(summary.attempted).toEqual(["gh-1"]);
-    expect(summary.notAdmitted).toEqual([["gh-2", "file overlap with gh-1"]]);
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
-  });
-
-  it("buys no model call for a single eligible issue — it can outrank and overlap nobody", async () => {
-    const { deps } = makeQueueDeps({
-      issues: [queueIssue(1)],
-      triageStdout: '<triage>{"scores":{"gh-1":5},"files":{}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 3, triage: true }), deps);
-
-    expect(deps.runTriage).not.toHaveBeenCalled();
-    expect(summary.attempted).toEqual(["gh-1"]);
-  });
-
-  it("never calls the model when --triage is absent, however large the queue", async () => {
-    const { deps } = makeQueueDeps({ issues: [1, 2, 3, 4].map(queueIssue) });
-
-    await runQueue(queueRunInput({ cap: 2, triage: false }), deps);
-
-    expect(deps.runTriage).not.toHaveBeenCalled();
-  });
-
-  it("with --triage over cap: ranks by score, defers file-overlapping issues, deletes loop/triage", async () => {
-    const { deps } = makeQueueDeps({
-      issues: [1, 2, 3, 4, 5].map(queueIssue),
-      triageStdout:
-        '<triage>{"scores":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"files":{"gh-4":["src/a.py"],"gh-5":["src/a.py"]}}</triage>',
-    });
-
-    const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
-
-    expect(deps.runTriage).toHaveBeenCalledTimes(1);
-    // ranked: gh-5, gh-4 (deferred — overlaps gh-5 on src/a.py), gh-1, gh-2, gh-3
-    expect(summary.attempted).toEqual(["gh-5", "gh-1"]);
-    expect(summary.notAdmitted).toContainEqual(["gh-4", "file overlap with gh-5"]);
-    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/triage");
-  });
-
-  it("degrades loudly to deterministic order when triage output is unusable", async () => {
+  it("degrades loudly to deterministic order when plan output is unusable", async () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { deps } = makeQueueDeps({
         issues: [1, 2, 3, 4, 5].map(queueIssue),
-        triageStdout: "the model refused to answer",
+        planStdout: "the model refused to answer",
       });
 
-      const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
 
       expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to deterministic order/i));
@@ -1964,36 +2028,728 @@ describe("runQueue (WI-2 T4)", () => {
     }
   });
 
-  it("degrades — and still cleans loop/triage — when the triage run itself throws", async () => {
+  it("degrades — and still cleans loop/plan — when the plan run itself throws", async () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const { deps } = makeQueueDeps({
         issues: [1, 2, 3, 4, 5].map(queueIssue),
-        triageThrows: "docker: no such image",
+        planThrows: "docker: no such image",
       });
 
-      const summary = await runQueue(queueRunInput({ cap: 2, triage: true }), deps);
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
 
       // the queue keeps its issues: a failed optimization is not a failed run
       expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
       expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("docker: no such image"));
-      expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/triage");
+      expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/plan");
     } finally {
       warn.mockRestore();
     }
   });
 
-  it("blocks the degrade warning when the triage failure would leak an env value", async () => {
+  it("blocks the degrade warning when the plan failure would leak an env value", async () => {
     const { deps } = makeQueueDeps({
       issues: [1, 2, 3].map(queueIssue),
-      triageThrows: "auth rejected token sk-live-secret",
+      planThrows: "auth rejected token sk-live-secret",
     });
     deps.env.ANTHROPIC_API_KEY = "sk-live-secret";
 
-    await expect(runQueue(queueRunInput({ cap: 2, triage: true }), deps)).rejects.toThrow(
+    await expect(runQueue(queueRunInput({ cap: 2 }), deps)).rejects.toThrow(
       /ANTHROPIC_API_KEY/,
     );
+  });
+});
+
+describe("planner-wiring (WI-13 T3, FR-001/FR-009)", () => {
+  it("invokes the planner dep exactly once when more than one issue is eligible", async () => {
+    const { deps } = makeQueueDeps({ issues: [1, 2, 3].map(queueIssue) });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2", "gh-3"]);
+  });
+
+  it("never invokes the planner dep when exactly one issue is eligible", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.runPlan).not.toHaveBeenCalled();
+    expect(summary.attempted).toEqual(["gh-1"]);
+  });
+
+  it("ranks by plan priority under the cap and deletes loop/plan afterwards", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [1, 2, 3, 4, 5].map(queueIssue),
+      planStdout:
+        '<plan>{"priority":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"blockedBy":{}}</plan>',
+    });
+
+    const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1);
+    // ranked: gh-5, gh-4, gh-1, gh-2, gh-3 — the cap admits the top two
+    expect(summary.attempted).toEqual(["gh-5", "gh-4"]);
+    expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "loop/plan");
+  });
+
+  it("--triage in argv fails at startup, naming the always-on planner as the replacement", () => {
+    expect(() => parseRetiredFlags(["--repo", "owner/name", "--triage"])).toThrow(
+      "--triage was removed — the dependency-aware planner now always runs when more than one issue is eligible",
+    );
+    // the retired-flag check is pure argv validation — no dep is involved
+    expect(() => parseRetiredFlags(["--repo", "owner/name"])).not.toThrow();
+  });
+});
+
+describe("admission (WI-13 T4, FR-005)", () => {
+  /** Distinct priorities make the ranking deterministic: gh-5 > gh-4 > gh-1..3 (ties ascending). */
+  const RANKED_PLAN =
+    '<plan>{"priority":{"gh-1":1,"gh-2":1,"gh-3":1,"gh-4":4,"gh-5":5},"blockedBy":{}}</plan>';
+
+  it("no ceiling: every ranked issue the plan surfaced is attempted, none notAdmitted", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [1, 2, 3, 4, 5].map(queueIssue) });
+
+      const summary = await runQueue(queueRunInput({ cap: undefined }), deps);
+
+      expect(summary.attempted).toEqual(["gh-1", "gh-2", "gh-3", "gh-4", "gh-5"]);
+      expect(summary.notAdmitted).toEqual([]);
+      expect(log.mock.calls.map((c) => c[0])).toContain("plan: all unblocked");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("ceiling 2 of 5: the plan's top two are attempted; three carry reason cap", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [1, 2, 3, 4, 5].map(queueIssue),
+        planStdout: RANKED_PLAN,
+      });
+
+      const summary = await runQueue(queueRunInput({ cap: 2 }), deps);
+
+      // ranked gh-5, gh-4, gh-1, gh-2, gh-3 — the ceiling admits the top two
+      expect(summary.attempted).toEqual(["gh-5", "gh-4"]);
+      expect(summary.notAdmitted).toEqual([
+        ["gh-1", "cap"],
+        ["gh-2", "cap"],
+        ["gh-3", "cap"],
+      ]);
+      expect(log.mock.calls.map((c) => c[0])).toContain("plan: attempted ≤ 2");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("file-overlap deferral is gone: two formerly same-file issues are both attempted (edges own serialization — T5)", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ cap: undefined }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.notAdmitted).toEqual([]);
+    expect(formatSummary(summary)).not.toMatch(/overlap/i);
+  });
+
+  it("the plan line precedes spend: header + per-issue attempt/cap lines land before the first lane's agent call", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({
+        issues: [1, 2, 3, 4, 5].map(queueIssue),
+        planStdout: RANKED_PLAN,
+      });
+
+      await runQueue(queueRunInput({ cap: 2 }), deps);
+
+      // the run's entire stdout is the surfaced plan, in ranked order
+      expect(log.mock.calls.map((c) => c[0])).toEqual([
+        "plan: attempted ≤ 2",
+        "plan: attempt gh-5",
+        "plan: attempt gh-4",
+        "plan: cap gh-1",
+        "plan: cap gh-2",
+        "plan: cap gh-3",
+      ]);
+      // ...and every line is emitted before the first lane's observable dep call
+      const lastPlanLine = log.mock.invocationCallOrder[log.mock.calls.length - 1]!;
+      const firstAgentCall = deps.runFixRun.mock.invocationCallOrder[0]!;
+      expect(lastPlanLine).toBeLessThan(firstAgentCall);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("--max-issues 1 is the sequential dial: exactly one issue attempted", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2), queueIssue(3)] });
+
+    const summary = await runQueue(queueRunInput({ cap: 1 }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([
+      ["gh-2", "cap"],
+      ["gh-3", "cap"],
+    ]);
+  });
+});
+
+describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
+  /** A free A and a B blocked by A — FR-002's canonical shape, plan-fed. */
+  const BLOCKED_PLAN =
+    '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-1"]}}</plan>';
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+
+  it("(a) two independent issues run concurrently — lane B's agent run starts before lane A's finishes", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+    const events: string[] = [];
+    let releaseB!: () => void;
+    const bStarted = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    deps.runFixRun.mockImplementation(async (input: { branch: string }) => {
+      events.push(`start:${input.branch}`);
+      if (input.branch === "fix/gh-2") {
+        releaseB();
+      }
+      if (input.branch === "fix/gh-1") {
+        // Lane A's agent run parks until B's has started (the 100ms escape
+        // keeps a sequential runner failing on the assertion, not hanging).
+        await Promise.race([bStarted, new Promise((resolve) => setTimeout(resolve, 100))]);
+      }
+      events.push(`end:${input.branch}`);
+      return { stdout: agentStdout(), commits: [{ sha: "abc" }], branch: input.branch };
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    // The overlap proof: B's lane was in flight while A's agent run still ran.
+    expect(events.indexOf("start:fix/gh-2")).toBeLessThan(events.indexOf("end:fix/gh-1"));
+    expect(events.indexOf("start:fix/gh-2")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("(b) lane independence: one lane's issue-level failure never aborts the sibling — both outcomes in the summary", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.failed.map(([id]) => id)).toEqual(["gh-1"]);
+    expect(summary.fixed).toEqual(["gh-2"]);
+  });
+
+  it("(c) stop-the-line preserved: a reverted lane aborts via QueueAbortedError whose snapshot carries the sibling lane's open PR", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+    });
+    // WI-13 T11: gh-1's red-canary chain settles first, deterministically.
+    // Pre-T11 this test pinned gh-2 ATTEMPTING its merge after the red canary
+    // (`mergeThrowsFor: "fix/gh-2"` landing in mergeFailures) — exactly the
+    // FR-004 defect the code review flagged; the corrected behavior is the
+    // sibling's merge never being attempted (a halt skip, not a merge failure).
+    parkSiblingBehindGh1Revert(deps, "fix/gh-2");
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    expect(aborted.summary.reverted[0]!.id).toBe("gh-1");
+    // The sibling lane settled inside the aborting wave: its PR is real,
+    // human-reviewable work and stands in the partial summary.
+    expect(aborted.summary.prUrls).toContain("https://example/pr/fix/gh-2");
+    expect(aborted.summary.reviewSkipped[0]![0]).toBe("gh-2");
+    expect(aborted.summary.mergeFailures).toEqual([]);
+  });
+
+  it("(d) opted-in re-plan unblocks: B is attempted only after A MERGES, with exactly two planner calls and two fix attempts", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+      const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+      // FR-006: the initial plan + exactly one re-plan after the merge wave.
+      expect(deps.runPlan).toHaveBeenCalledTimes(2);
+      expect(deps.runFixRun).toHaveBeenCalledTimes(2); // two fix-agent attempts total
+      expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+      expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-2"]);
+      // B's lane started only after A's merge (FR-002 opted-in arm).
+      const bFix = deps.runFixRun.mock.calls.findIndex(
+        (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+      );
+      expect(deps.mergePr.mock.invocationCallOrder[0]!).toBeLessThan(
+        deps.runFixRun.mock.invocationCallOrder[bFix]!,
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("(e) non-opted PR-settled unblocks: B starts only after A's lane settles WITH a PR; exactly one planner call", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+    const summary = await runQueue(queueRunInput(), deps); // NOT autoMerge
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1); // no merge event → no re-plan (FR-006)
+    expect(deps.runFixRun).toHaveBeenCalledTimes(2);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    // B's lane started only after A's PR existed (FR-002 non-opted arm).
+    const bFix = deps.runFixRun.mock.calls.findIndex(
+      (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+    );
+    const aPr = deps.createPr.mock.calls.findIndex(
+      (c) => (c[0] as { head: string }).head === "fix/gh-1",
+    );
+    expect(deps.createPr.mock.invocationCallOrder[aPr]!).toBeLessThan(
+      deps.runFixRun.mock.invocationCallOrder[bFix]!,
+    );
+  });
+
+  it("(f) --max-issues 1 bounds attempts: one lane runs, the other carries cap and costs nothing", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ cap: 1 }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([["gh-2", "cap"]]);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("(g) plan lines precede spend: the initial surface lands before wave 1, later-wave attempt lines before their lane", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+      await runQueue(queueRunInput(), deps);
+
+      const lines = log.mock.calls.map((c) => c[0]);
+      expect(lines).toEqual([
+        "plan: all unblocked",
+        "plan: attempt gh-1",
+        "plan: blocked gh-2 by gh-1",
+        "plan: attempt gh-2", // re-surfaced before wave 2's lane starts
+      ]);
+      // The whole initial surface precedes the first lane's agent call...
+      const lastInitialLine = log.mock.invocationCallOrder[2]!;
+      expect(lastInitialLine).toBeLessThan(deps.runFixRun.mock.invocationCallOrder[0]!);
+      // ...and the wave-2 attempt line precedes that wave's first agent call.
+      const bFix = deps.runFixRun.mock.calls.findIndex(
+        (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+      );
+      const wave2Line = log.mock.invocationCallOrder[lines.indexOf("plan: attempt gh-2")]!;
+      expect(wave2Line).toBeLessThan(deps.runFixRun.mock.invocationCallOrder[bFix]!);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("(h) a failed blocker leaves its dependent not-attempted with the reason named — never force-attempted (FR-002 boundary)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      planStdout: BLOCKED_PLAN,
+      failReproFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]); // gh-2 never attempted
+    expect(summary.failed.map(([id]) => id)).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([["gh-2", "blocked by gh-1"]]);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1); // A's own attempt only
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-13 T6b: fixes for T6's blocking code-quality review findings.
+  // -------------------------------------------------------------------------
+
+  it("(i) T6b FIX 1: the shared-git merge chain is serialized per run — two opted-in lanes never overlap review/merge/canary/revert, and both merges land", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+    // Chain-depth probe: every dep that touches SHARED git state (the single
+    // REVIEW_BRANCH, main, the clone's checkout) increments a depth counter
+    // for the duration of its call. Within one lane these calls are strictly
+    // sequential, so depth > 1 at any instant means two lanes' chains
+    // overlapped — exactly the mutual-exclusion property, order-agnostic.
+    let depth = 0;
+    let maxDepth = 0;
+    const track = <A extends unknown[], R>(original: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        depth += 1;
+        maxDepth = Math.max(maxDepth, depth);
+        try {
+          return await original(...args);
+        } finally {
+          depth -= 1;
+        }
+      };
+    // Parking: the FIRST review call waits until a second review starts (or
+    // 100ms escape). Pre-fix, lane B's review starts while lane A's is parked
+    // (depth 2 → the shared-REVIEW_BRANCH/git-index contention the review
+    // found); post-fix lane B's chain cannot enter until A's completes.
+    let reviews = 0;
+    let secondReview!: () => void;
+    const secondReviewStarted = new Promise<void>((resolve) => {
+      secondReview = resolve;
+    });
+    deps.runReview.mockImplementation(
+      track(async () => {
+        reviews += 1;
+        if (reviews === 2) {
+          secondReview();
+        }
+        if (reviews === 1) {
+          await Promise.race([secondReviewStarted, new Promise((resolve) => setTimeout(resolve, 100))]);
+        }
+        return "<review>approve</review>";
+      }),
+    );
+    deps.mergePr.mockImplementation(track(deps.mergePr.getMockImplementation()!));
+    deps.syncMain.mockImplementation(track(deps.syncMain.getMockImplementation()!));
+    deps.revertMerge.mockImplementation(track(deps.revertMerge.getMockImplementation()!));
+    deps.commentOnPr.mockImplementation(track(deps.commentOnPr.getMockImplementation()!));
+    deps.closeIssue.mockImplementation(track(deps.closeIssue.getMockImplementation()!));
+    // A25 (controller ledger, WI-13 T8): `fixDiff` — the pre-merge review's
+    // read of `main...<branch>` — is a SHARED-git dep too (main moves only
+    // inside the chain), so it joins the depth probe: a future narrowing of
+    // the locked section around `runReview` alone would otherwise evade this
+    // probe. The shipped lock already covers it; this is hardening. The T8
+    // conflict probe (`branchConflictsWithMain`, also inside the lock for the
+    // same reason — it must judge a non-moving main) joins it identically.
+    deps.fixDiff.mockImplementation(track(deps.fixDiff.getMockImplementation()!));
+    deps.branchConflictsWithMain.mockImplementation(track(deps.branchConflictsWithMain.getMockImplementation()!));
+    // Branch-scoped probes: only the SHARED review branch and the canary
+    // branches count — per-lane preflight/fix branches never contend.
+    const origDelete = deps.deleteBranch.getMockImplementation()!;
+    const trackedDelete = track(origDelete);
+    deps.deleteBranch.mockImplementation(async (repoDir: string, branch: string) => {
+      if (branch === REVIEW_BRANCH || branch.startsWith("loop/canary-")) {
+        return trackedDelete(repoDir, branch);
+      }
+      return origDelete(repoDir, branch);
+    });
+    const origCreate = deps.createFixSandbox.getMockImplementation()!;
+    const trackedCreate = track(origCreate);
+    deps.createFixSandbox.mockImplementation(async (input: { branch: string; baseBranch?: string }) => {
+      if (input.branch.startsWith("loop/canary-")) {
+        return trackedCreate(input);
+      }
+      return origCreate(input);
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    // MUTUAL EXCLUSION: at no instant did two lanes' chains overlap.
+    expect(maxDepth).toBe(1);
+    // And serialization cost nothing: both lanes merged (no spurious
+    // `uncertain` from a clobbered REVIEW_BRANCH, no uncanaried merge from
+    // git index.lock contention surfacing as a failed main sync).
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-2"]);
+    expect(summary.reviewSkipped).toEqual([]);
+    expect(summary.mergeFailures).toEqual([]);
+    expect(summary.uncanariedMerges).toEqual([]);
+    expect(summary.reverted).toEqual([]);
+    expect(reviews).toBe(2); // both lanes' review passes ran
+    expect(deps.closeIssue).toHaveBeenCalledTimes(2); // both chains reached issue-close
+  });
+
+  it("(j) T6b FIX 2: a compliant re-plan (priority over the asked set, an edge naming the merged id) is ACCEPTED — no `plan unusable` warning, its ordering applies", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // Chain gh-2 ← gh-1 ← nothing, gh-3 ← gh-2: wave 1 is exactly [gh-1]
+      // under cap 2, so one merge leaves budget for a second wave.
+      const { deps } = makeQueueDeps({
+        issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
+        planStdout:
+          '<plan>{"priority":{"gh-1":3,"gh-2":3,"gh-3":3},"blockedBy":{"gh-2":["gh-1"],"gh-3":["gh-2"]}}</plan>',
+        // The re-plan was asked only about the REMAINING {gh-2, gh-3}: its
+        // priority covers exactly those, and its edges name merged gh-1 —
+        // compliant under the asked-set contract, rejected by the old
+        // full-set priority coverage (the defect).
+        rePlanStdout:
+          '<plan>{"priority":{"gh-2":1,"gh-3":5},"blockedBy":{"gh-3":["gh-1"]}}</plan>',
+      });
+
+      const summary = await runQueue(queueRunInput({ profile: optedIn, cap: 2 }), deps);
+
+      expect(deps.runPlan).toHaveBeenCalledTimes(2); // initial + one re-plan
+      // The re-plan's verdict applied: no degradation warning fired...
+      expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/plan unusable/));
+      // ...and its ordering drove wave 2: gh-3 (priority 5) is attempted,
+      // not the pre-re-plan chain order's gh-2.
+      expect(summary.attempted).toEqual(["gh-1", "gh-3"]);
+      expect(summary.notAdmitted).toEqual([["gh-2", "cap"]]);
+      expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-3"]);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  /**
+   * WI-13 T11 (FR-004 fix): force gh-1's red-canary merge chain to settle
+   * BEFORE the sibling lane's chain can enter the mutex — `parkedBranch`'s fix
+   * run parks until gh-1's revertMerge has landed, so the sibling's chain-top
+   * halt check is exercised deterministically regardless of microtask
+   * scheduling (order-agnostic lane scheduling must not decide the assertion).
+   */
+  const parkSiblingBehindGh1Revert = (deps: ReturnType<typeof makeQueueDeps>["deps"], parkedBranch: string) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const origFixRun = deps.runFixRun.getMockImplementation()!;
+    deps.runFixRun.mockImplementation(async (input: { branch: string }) => {
+      if (input.branch === parkedBranch) {
+        await gate;
+      }
+      return origFixRun(input);
+    });
+    const origRevert = deps.revertMerge.getMockImplementation()!;
+    deps.revertMerge.mockImplementation(async (...args: Parameters<typeof origRevert>) => {
+      const result = await origRevert(...args);
+      release();
+      return result;
+    });
+  };
+
+  it("(k) T6b pin: a wave-1 canary-red abort prevents ANY wave 2 — the blocked dependent's agent run never starts", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      planStdout: BLOCKED_PLAN,
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    // The abort fired after wave 1 settled and BEFORE wave 2 started: gh-2's
+    // fix agent was never spent, even though A's merge had completed it.
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+    expect((deps.runFixRun.mock.calls[0]![0] as { branch: string }).branch).toBe("fix/gh-1");
+    expect(aborted.summary.attempted).toEqual(["gh-1"]);
+  });
+
+  it("(l) red canary in wave 1 prevents the sibling lane's merge in the SAME wave (FR-004 fix, WI-13 T11)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+    });
+    parkSiblingBehindGh1Revert(deps, "fix/gh-2");
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    // FR-004: "no B/C merge is attempted afterwards" — gh-1's PR is the ONLY
+    // merge; gh-2's chain never reaches mergePr (nor any gate/review spend).
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect((deps.mergePr.mock.calls[0]![0] as { prUrl: string }).prUrl).toContain("fix/gh-1");
+    expect(deps.runReview).toHaveBeenCalledTimes(1); // gh-1's review only
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    // The halted sibling keeps its already-open PR as the deliverable, with the
+    // halt skip reason recorded (the spec's stated end-state for lanes B/C).
+    expect(aborted.summary.prUrls).toContain("https://example/pr/fix/gh-2");
+    expect(aborted.summary.fixed).toEqual(["gh-2"]);
+    expect(aborted.summary.reviewSkipped).toEqual([
+      ["gh-2", expect.stringContaining("merge skipped — run halted by gh-1")],
+    ]);
+    expect(formatSummary(aborted.summary)).toContain("REVIEW SKIP gh-2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-13 T8: the verified-merger gate (FR-007/FR-008). Opted-in runs only: when
+// a verified fix branch conflicts with the current main (an earlier fix in the
+// run already merged), a bounded merger agent resolves the conflict on the
+// branch, and the RESOLVED branch must re-pass the same fresh-sandbox
+// verification BEFORE the existing review → merge → canary chain proceeds —
+// the merger's output is never trusted (constraint 2).
+// ---------------------------------------------------------------------------
+
+describe("verified-merger (WI-13 T8, FR-007/FR-008)", () => {
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+  const PR_URL = "https://github.com/manjula25/loop-fixtures-py/pull/9";
+  const run = (deps: ReturnType<typeof makeDeps>, p: ProjectProfile) =>
+    runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: p }, deps);
+  const fixBranchSandboxCalls = (deps: ReturnType<typeof makeDeps>): number =>
+    deps.createFixSandbox.mock.calls.filter(
+      (c) => (c[0] as { branch: string }).branch === "fix/gh-1",
+    ).length;
+
+  it("(a-red) conflict on an opted-in run: the merger runs, the resolved branch re-verifies in a FRESH sandbox, and red → mergeFailure posture, no merge, no review spend, PR open", async () => {
+    const deps = makeDeps({ branchConflicts: true, mergerResolutionFails: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.branchConflictsWithMain).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    const mergerInput = deps.runMerger.mock.calls[0]![0] as { branch: string; mainRef: string; prompt: string };
+    expect(mergerInput.branch).toBe("fix/gh-1");
+    expect(mergerInput.mainRef).toBe("main");
+    expect(mergerInput.prompt).toContain("fix/gh-1"); // the prompt names the branch it resolves
+    // FR-008: a FRESH verification sandbox ran on the resolved branch AFTER the
+    // merger — sandbox call 3 is the gate's (1 = preflight, 2 = primary).
+    expect(deps.runMerger.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.createFixSandbox.mock.invocationCallOrder[2]!,
+    );
+    expect(fixBranchSandboxCalls(deps)).toBe(2);
+    // Red: the WI-6 mergeFailure posture reused verbatim — never a new outcome kind.
+    expect(outcome.mergeFailure).toContain("merger resolution failed verification");
+    expect(outcome.prUrl).toBe(PR_URL); // PR stays open
+    expect(outcome.merged).toBeUndefined(); // not counted merged
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled(); // no review spend on a failed resolution (FR-008 order)
+  });
+
+  it("(a-green) conflict resolved correctly: the existing chain proceeds unchanged — review → mergePr → canary-green merged outcome; probe pinned BEFORE the review", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    expect(fixBranchSandboxCalls(deps)).toBe(2); // the gate re-verified the resolved branch
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true });
+    // FR-008's order: the conflict probe precedes the pre-merge review — the
+    // review judges the POST-resolution diff.
+    expect(deps.branchConflictsWithMain.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("(a-publish, T12) conflict resolved + re-verified green: the resolved branch is published to origin exactly once — before the review and before mergePr — and the chain completes merged", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1); // the merger actually ran — the branch changed locally
+    expect(deps.pushBranch).toHaveBeenCalledTimes(1);
+    expect(deps.pushBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-1");
+    // The publish precedes the pre-merge review: GitHub then shows the
+    // resolved state during review (the reviewer judges what will merge).
+    expect(deps.pushBranch.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+    // ...and the merge: `gh pr merge` merges GitHub's PR head, so origin must
+    // carry the resolution before mergePr reads it (live defect,
+    // merger-live-run-3.log — origin head stale → GraphQL conflict).
+    expect(deps.pushBranch.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.mergePr.mock.invocationCallOrder[0]!,
+    );
+    expect(outcome.merged).toMatchObject({ prUrl: PR_URL, canaryGreen: true }); // the chain completes
+  });
+
+  it("(b-publish, T12) a failed publish: mergeFailure posture — PR open, no merge, no review spend; the queue continues and the sibling merge proceeds", async () => {
+    const deps = makeDeps({ branchConflicts: true, pushThrows: "git: push rejected — non-fast-forward" });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(outcome.prUrl).toBe(PR_URL); // PR stays open
+    expect(outcome.mergeFailure).toContain("merger resolution push failed");
+    expect(outcome.mergeFailure).toContain("push rejected");
+    expect(outcome.merged).toBeUndefined(); // not counted merged
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled(); // no review spend on an unpublished resolution
+
+    // Queue posture: exactly the WI-6 merge-failure semantics — gh-1 settles
+    // fixed-with-PR, gh-2's sibling merge proceeds, the run continues.
+    const { deps: qd } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      pushThrowsFor: "gh-1",
+    });
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), qd);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger resolution push failed");
+  });
+
+  it("(b) non-opted run with the same conflict: the merger is NEVER invoked (constraint 1) and the PR opens normally", async () => {
+    const deps = makeDeps({ branchConflicts: true });
+
+    const outcome = await run(deps, profile); // no autoMerge
+
+    expect(deps.branchConflictsWithMain).not.toHaveBeenCalled();
+    expect(deps.runMerger).not.toHaveBeenCalled();
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.mergeFailure).toBeUndefined();
+  });
+
+  it("(c) a thrown merger run: PR open, loud mergeFailure note, the queue is not halted and the sibling merge proceeds", async () => {
+    const deps = makeDeps({
+      branchConflicts: true,
+      mergerThrows: "sandcastle: merger run failed — budget exceeded",
+    });
+
+    const outcome = await run(deps, optedIn);
+
+    expect(outcome.prUrl).toBe(PR_URL);
+    expect(outcome.mergeFailure).toContain("merger run failed");
+    expect(outcome.mergeFailure).toContain("budget exceeded");
+    expect(deps.mergePr).not.toHaveBeenCalled();
+
+    // Queue posture: the lane settles fixed-with-PR, the sibling merges, the
+    // run continues — exactly the WI-6 merge-failure semantics.
+    const { deps: qd } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      mergerThrows: "sandcastle: merger run failed — budget exceeded",
+    });
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), qd);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.fixed).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]);
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger run failed");
+  });
+
+  it("(d) no conflict: the probe runs, the merger does not, and the chain is unchanged — probe pinned BEFORE the review", async () => {
+    const deps = makeDeps();
+
+    const outcome = await run(deps, optedIn);
+
+    expect(deps.branchConflictsWithMain).toHaveBeenCalledTimes(1);
+    expect(deps.runMerger).not.toHaveBeenCalled();
+    expect(deps.pushBranch).not.toHaveBeenCalled(); // T12: nothing changed locally — nothing to publish
+    expect(fixBranchSandboxCalls(deps)).toBe(1); // primary verification only
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1);
+    expect(outcome.merged).toBeDefined();
+    expect(deps.branchConflictsWithMain.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.runReview.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("(a-red, queue seam) the failed resolution is NOT counted merged: MERGE FAILED line carries the merger verdict, the sibling merge proceeds, the queue continues", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      conflictFor: "gh-1",
+      mergerResolutionFailsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(deps.runMerger).toHaveBeenCalledTimes(1);
+    expect(deps.mergePr).toHaveBeenCalledTimes(1); // gh-2's merge only
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-2"]); // gh-1 NOT counted merged
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(summary.mergeFailures[0]![1]).toContain("merger resolution failed verification");
+    expect(formatSummary(summary)).toContain("MERGE FAILED gh-1: ");
+    expect(summary.fixed).toContain("gh-1"); // the open PR is real work — the WI-6 posture
   });
 });
 
@@ -2458,7 +3214,7 @@ describe("attachments in the loop (WI-3 T2)", () => {
     }
   });
 
-  it("a committed .loop-harness on main aborts the queue (harness-level) — attempted stays honest, nothing further runs", async () => {
+  it("a committed .loop-harness on main aborts the queue (harness-level) — attempted stays honest, the sibling lane's PR stands (WI-13 T6)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
     try {
       const { deps } = makeQueueDeps({
@@ -2473,10 +3229,12 @@ describe("attachments in the loop (WI-3 T2)", () => {
       expect(error).toBeInstanceOf(QueueAbortedError);
       const aborted = error as QueueAbortedError;
       expect(aborted.message).toMatch(/committed/);
-      expect(aborted.summary.attempted).toEqual(["gh-1"]); // honest: gh-1 was reached
-      expect(aborted.summary.fixed).toEqual([]);
-      expect(deps.runFixRun).not.toHaveBeenCalled();
-      expect(deps.createPr).not.toHaveBeenCalled();
+      // WI-13 T6: both lanes settled in the shared wave before the abort —
+      // gh-1 hit the repo-wide guard, attachment-free gh-2 earned its PR.
+      expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+      expect(aborted.summary.fixed).toEqual(["gh-2"]);
+      expect(deps.runFixRun).toHaveBeenCalledTimes(1); // gh-2's lane only — the guard refused gh-1 pre-spend
+      expect(deps.createPr).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
     }

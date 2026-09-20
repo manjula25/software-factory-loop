@@ -1,0 +1,91 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[queue] WARNING: plan unusable (planner bypassed (LOOP_BYPASS_PLAN=1, scratch live test)) — falling back to deterministic order (ascending issue number).
+plan: all unblocked
+plan: attempt gh-48
+plan: attempt gh-49
+[gh-49] Started on branch fix/gh-49
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-49-gh-49.log
+[gh-48] Started on branch fix/gh-48
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-48-gh-48.log
+remote: 
+remote: Create a pull request for 'fix/gh-49' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-49        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-49 -> fix/gh-49
+branch 'fix/gh-49' set up to track 'origin/fix/gh-49'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+remote: 
+remote: Create a pull request for 'fix/gh-48' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-48        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-48 -> fix/gh-48
+branch 'fix/gh-48' set up to track 'origin/fix/gh-48'.
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-49
+   991f9af..e306151  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 991f9af..e306151
+Fast-forward
+ src/loopfix/nameops.py           | 2 +-
+ tests/fixed-issues/test_gh_49.py | 5 +++++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_49.py
+✓ Closed issue #49 (initials: initials are not uppercased)
+[merger] Started on branch fix/gh-48
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-48-merger.log
+To github.com:manjula25/loop-fixtures-py.git
+   a9de728..67b6944  fix/gh-48 -> fix/gh-48
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-48
+   e306151..12758a1  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating e306151..12758a1
+Fast-forward
+ src/loopfix/nameops.py           | 5 ++++-
+ tests/fixed-issues/test_gh_48.py | 5 +++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_48.py
+✓ Closed issue #48 (initials: hyphenated name segments contribute only one initial)
+Run summary — attempted: 2 (fixed: 2, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/51
+PR: https://github.com/manjula25/loop-fixtures-py/pull/50
+MERGED gh-48: https://github.com/manjula25/loop-fixtures-py/pull/51 @ 12758a1044319217749a29a007f80793f076acd2 (canary: green)
+MERGED gh-49: https://github.com/manjula25/loop-fixtures-py/pull/50 @ e306151e3401bf674858639521702e9b50590ddd (canary: green)
+HARNESS_EXIT=0
+
+--- Controller notes (2026-09-20, appended after the run; no recorded line above altered) ---
+Setup: identical to run 3 except the source is T12-FIXED — scratch branch
+scratch/wi-13-gate-live-2 @ 937f24f = worktree-wi-13 7733c1f (T12 publish fix landed,
+dual-reviewed) + the same 9-line env-gated LOOP_BYPASS_PLAN=1 planner bypass (never merges,
+not a flag — FR-009). The run takes the PRODUCTION degraded-fallback path (warning line 5, no
+edges, both issues concurrent in wave 1, lines 7-9). Seed 991f9af (nameops.initials, two
+adjacent-line defects, issue bodies mutually silent), issues #48/#49.
+
+OUTCOME — the verified-merger gate's HAPPY PATH, green, live, for the first time:
+1. Wave 1: both lanes concurrent (interleaved starts, lines 9-13).
+2. gh-49 merged first: PR #50 @ e306151, canary green, issue closed.
+3. gh-48's chain: merge-tree probe detected the conflict → [merger] ran (line 37) →
+   resolved correctly on the local branch → fresh-sandbox re-verification green →
+   THE T12 PUBLISH (lines 39-40: "a9de728..67b6944 fix/gh-48 -> fix/gh-48" — the resolved
+   branch pushed to origin BEFORE review and mergePr; this exact step was missing in run 3) →
+   pre-merge review approved → mergePr SUCCEEDED: PR #51 @ 12758a1 → canary green →
+   issue #48 closed.
+4. Summary 2/2 fixed, exit 0. End-state verified on GitHub: main @ 12758a1, both issues
+   closed, both PRs merged, both regression tests permanent (tests/fixed-issues/test_gh_48.py,
+   test_gh_49.py), and nameops.initials carries BOTH behaviors combined ("Jean-Luc Picard"
+   → "J.L.P", "ada lovelace" → "A.L" — behaviorally confirmed post-pull).
+
+A46 fully closed: the gate's complete conflict path — probe, merger, re-verification,
+publish (T12), review, merge, canary — is now live-proven green end-to-end. Run 3's defect
+was the only blocker and this run is its regression evidence at the pipeline surface.
+Recorded honestly; single run; not re-rolled.

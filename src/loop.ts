@@ -25,30 +25,32 @@ import {
 } from "./issues.js";
 import { resolveProvider } from "./providers.js";
 import {
+  PLAN_BRANCH,
   REVIEW_BRANCH,
-  TRIAGE_BRANCH,
   createFixSandbox,
   runFixRun,
+  runMerger,
+  runPlan,
   runReview,
-  runTriage,
   type AgentSpec,
-  type TriageRunInput,
+  type PlanRunInput,
 } from "./sandcastle-adapter.js";
 import { diffVerification, parsePytestFailures, SUITE_SUMMARY_RE } from "./verify.js";
 import {
-  admitIssues,
-  buildTriagePrompt,
+  buildPlanPrompt,
   listOpenIssues,
+  orderFromPlan,
   prListArgs,
+  parsePlanOutput,
   parseReviewOutput,
-  parseTriageOutput,
   realGhJson,
   splitQueue,
+  unblockedAfter,
   type MergedPr,
   type OpenPr,
+  type PlanValue,
   type QueueDeps,
   type ReviewVerdict,
-  type TriageValue,
 } from "./queue.js";
 
 /** Commits made by the fix agent in target repos (workflow.md, FR-005). */
@@ -140,7 +142,35 @@ export interface LoopDeps {
    * secrets-guards it before the call, and deletes the branch afterwards. A
    * thrown run maps to the `uncertain` verdict class at the call site.
    */
-  runReview(input: TriageRunInput & { readonly diff: string }): Promise<string>;
+  runReview(input: PlanRunInput & { readonly diff: string }): Promise<string>;
+  /**
+   * WI-13 T8 (FR-007): whether merging `branch` into the CURRENT main would
+   * conflict — a read-only probe (real wiring: `git merge-tree --write-tree`,
+   * which touches neither the working tree nor any ref). Called only on
+   * opted-in runs and only inside the shared-git mutex, so it judges a main
+   * that is not moving beneath it. A throw is a harness/probe failure, not a
+   * conflict verdict — the gate records it in the safe-fallback posture.
+   */
+  branchConflictsWithMain(repoDir: string, branch: string): Promise<boolean>;
+  /**
+   * WI-13 T7/T8 (FR-007/FR-008): one bounded merger run that merges `mainRef`
+   * into `branch` and resolves the conflicts (the adapter export). Its output
+   * is NEVER trusted (constraint 2): the caller re-verifies the resolved
+   * branch in a fresh sandbox before any merge is counted. Opted-in runs
+   * only; a throw maps to the `mergePr`-style safe fallback at the call site.
+   */
+  runMerger(
+    input: PlanRunInput & { readonly branch: string; readonly mainRef: string },
+  ): Promise<{ stdout: string; commits: readonly { sha: string }[] }>;
+  /**
+   * WI-13 T12 (FR-007/FR-008): push `branch` to origin (`git push origin
+   * <branch>`). Called only on the verified-merger gate's green path, to
+   * publish the merger-resolved branch BEFORE mergePr: `gh pr merge --squash`
+   * merges GitHub's PR head, so a resolution that lives only on the local
+   * branch can never merge (live defect, `merger-live-run-3.log`). A throw
+   * maps to the gate's `mergePr`-style safe fallback at the call site.
+   */
+  pushBranch(repoDir: string, branch: string): Promise<void>;
   /**
    * WI-6 (D1): squash-merge an existing PR and report the merge commit. Real
    * wiring shells `gh pr merge --squash --delete-branch` then reads the merge
@@ -555,7 +585,125 @@ the onboarding baseline shows no new failures${verification.newFailures.length >
 ${closing}`;
 }
 
-export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): Promise<LoopOutcome> {
+/**
+ * WI-13 T6b (code-quality review, BOTH criticals): a per-run async mutex over
+ * each lane's shared-git merge chain — `runPreMergeReview → mergePr → canary
+ * (sync/revert/close)`. With independent opted-in lanes running concurrently
+ * in one wave, that chain is the only region that mutates git state SHARED
+ * across lanes: the pre-merge review's single `REVIEW_BRANCH` (one lane's
+ * `deleteBranch` lands under another's in-flight review and errors it to
+ * `uncertain`, skipping a merge that had approved), and main plus the clone's
+ * checkout (`mergePr` / `syncMainToOrigin` / `revertMerge` contend on
+ * git's index.lock, surfacing as a failed main sync — recorded as an
+ * uncanaried merge and a SPURIOUS queue halt). Promise-chain implementation,
+ * no new dependencies; the chain advances on settle, success or failure, so
+ * one lane's rejected section can never wedge the lock for every later lane.
+ * Everything per-lane — attachment fetch, preflight and verification
+ * sandboxes, the fix agent itself — stays OUTSIDE the lock and concurrent
+ * (the wave runner's lane concurrency, FR-003, is unchanged; only the
+ * shared-git chain serializes). The canary suite run stays INSIDE by design: its branch forks
+ * from main inside the clone and main only ever moves inside this chain, so
+ * a canary must judge a main that is not moving beneath it.
+ */
+type SerializeGitChain = <T>(section: () => Promise<T>) => Promise<T>;
+
+function createGitChainLock(): SerializeGitChain {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(section: () => Promise<T>): Promise<T> => {
+    const run = tail.then(section);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
+
+/**
+ * WI-13 T11 (FR-004 fix): a per-run halt signal, created by `runQueue` beside
+ * `gitChainLock` and threaded into every lane. A lane that produces a
+ * harness-level outcome (red canary → revert, uncanaried merge, early
+ * harness failure) sets it; a lane whose serialized merge chain has not
+ * started yet checks it at the chain top — before the merger gate — and
+ * returns its PR open with the skip reason. Stop-the-line is thereby
+ * MERGE-granular, not wave-granular: no sibling merge is attempted after the
+ * first harness-level outcome, inside the same wave. First halt wins,
+ * mirroring the wave loop's `harnessAbort ??=` (the first harness-level
+ * outcome in wave order carries the abort). Single-issue mode passes the
+ * never-halted default — identity behavior, nothing to stop.
+ */
+type RunHaltSignal = {
+  /** The first halt when the run has stopped the line: the halting lane's id and reason. */
+  halted(): { readonly id: string; readonly reason: string } | undefined;
+  halt(id: string, reason: string): void;
+};
+
+function createRunHaltSignal(): RunHaltSignal {
+  let halted: { id: string; reason: string } | undefined;
+  return {
+    halted: () => halted,
+    halt(id, reason) {
+      halted ??= { id, reason };
+    },
+  };
+}
+
+/** The single-issue-mode signal: never set, and setting it is a no-op. */
+function neverHaltedSignal(): RunHaltSignal {
+  return { halted: () => undefined, halt: () => undefined };
+}
+
+/**
+ * WI-13 T11: the ONE harness-level outcome classification, shared by the
+ * halt-setter (`runSingleIssue` / the serialized chain) and the wave loop's
+ * `harnessAbort` collector — reverted and uncanaried outcomes both carry
+ * `failureKind: "harness"`, so the predicate is exactly that flag and the two
+ * call sites can never diverge. (The wave loop's defensive lane-throw arm
+ * classifies a throw as harness-level too and sets the halt in its catch.)
+ */
+function harnessLevelFailure(outcome: LoopOutcome): boolean {
+  return outcome.failureKind === "harness";
+}
+
+export async function runSingleIssue(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  /**
+   * WI-13 T6b: the per-run shared-git mutex, passed by `runQueue`'s wave
+   * runner so concurrent lanes serialize their merge chains (see
+   * `createGitChainLock`). The identity default leaves single-issue mode —
+   * `runOverrideIssue`, the CLI `--issue` path — exactly as it was: one lane
+   * owns the clone, nothing to serialize against.
+   */
+  serializeGitChain: SerializeGitChain = (section) => section(),
+  /**
+   * WI-13 T11 (FR-004): the per-run halt signal, passed by `runQueue` so the
+   * first harness-level outcome in one lane stops sibling lanes' merges at
+   * chain-granularity (see `RunHaltSignal`). The never-halted default leaves
+   * single-issue mode exactly as it was.
+   */
+  haltSignal: RunHaltSignal = neverHaltedSignal(),
+): Promise<LoopOutcome> {
+  const outcome = await runSingleIssueLane(input, deps, serializeGitChain, haltSignal);
+  // WI-13 T11 (FR-004): the halt is SET at the moment the lane produces a
+  // harness-level outcome. This site covers the EARLY harness outcomes
+  // (nesting guard, stale-baseline preflight) that return before any merge
+  // chain exists; the chain's own harness outcomes (reverted / uncanaried)
+  // set it INSIDE the mutex (see `runSingleIssueLane`) so a sibling lane
+  // queued on the same lock deterministically sees the halt before its chain
+  // starts. First halt wins — this second set is a harmless no-op there.
+  if (harnessLevelFailure(outcome)) {
+    haltSignal.halt(input.issue.id, outcome.failure ?? "harness-level failure");
+  }
+  return outcome;
+}
+
+async function runSingleIssueLane(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  serializeGitChain: SerializeGitChain,
+  haltSignal: RunHaltSignal,
+): Promise<LoopOutcome> {
   const branch = fixBranch(input.issue);
 
   // FR-002: the gate refuses BEFORE the preflight sandbox — an uncleared repo
@@ -724,71 +872,39 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
   const greenEvidence = extractEvidence(fix.stdout, "green");
   assertNoSecrets([redEvidence, greenEvidence], deps.env);
 
-  const sandbox = await deps.createFixSandbox({
-    cwd: input.repoDir,
-    branch,
-    imageName: input.imageName,
-  });
+  // WI-13 T8 (FR-008): the verification block — fresh sandbox install →
+  // reproduction test → full suite → `diffVerification` — is ONE
+  // module-private implementation (`verifyInFreshSandbox` below), reused
+  // verbatim by the merger gate's re-verification of a resolved branch: same
+  // rules, same evidence, no divergence between the two call sites. Pure
+  // extraction — the outcomes are byte-equivalent with the former inline
+  // block (the existing suite is the pin).
+  const { verdict, teardownFailure: sandboxTeardown } = await verifyInFreshSandbox(input, deps, branch);
   let prUrl: string | undefined;
-  // WI-8 (FR-001): verification teardown parity. A close() throw in the
-  // finally below is caught, never propagated: it rides whichever outcome the
-  // try decided — the fail outcome after the finally (WI-11 FR-002), or the
+  // WI-8 (FR-001): verification teardown parity. A close() throw inside the
+  // helper is caught, never propagated: it rides whichever outcome the
+  // verification decided — the fail outcome below (WI-11 FR-002), or the
   // PR'd outcome on the green path.
-  let sandboxTeardown: string | undefined;
-  // WI-11 (FR-002): the three verification failure sites used to return from
-  // INSIDE the try, before the finally captured `sandboxTeardown` — a close()
-  // throw on those fail() paths was silently dropped. Each now stores its
-  // outcome and exits the try; the return happens after the finally, with the
-  // teardown reason attached.
   let failOutcome: LoopOutcome | undefined;
-  try {
-    // Each sandbox is a fresh container: the agent's `pip install -e .` (or
-    // equivalent) lived in ITS site-packages, not this one's. Without the
-    // install, every test file errors at collection and reads as new failures.
-    const install = await sandbox.exec(input.profile.installCmd);
-    if (install.exitCode !== 0) {
-      failOutcome = await fail(`Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`);
-    } else {
-      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
-      const repro = await sandbox.exec(reproCmd);
-      const suite = await sandbox.exec(input.profile.testCmd);
-      const parsed = parseSuiteOrReject(suite.stdout);
-      if (!parsed.ok) {
-        failOutcome = await fail(`Verification failed — ${parsed.reason}.`);
-      } else {
-        const verification = diffVerification({
-          baselineFailures: input.profile.baselineFailures,
-          postFixFailures: parsed.failures,
-          reproTestPassed: repro.exitCode === 0,
-        });
-        if (!verification.passed) {
-          const reason = verification.newFailures.length > 0
-            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
-            : "reproduction test did not pass in the fresh sandbox";
-          failOutcome = await fail(`Verification failed — ${reason}.`, verification.newFailures);
-        } else {
-          const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
-          const body = buildPrBody(
-            input.issue,
-            redEvidence,
-            greenEvidence,
-            verification,
-            attachmentFailures,
-            input.profile.autoMerge === true,
-          );
-          assertNoSecrets([title, body], deps.env);
+  if (!verdict.passed) {
+    failOutcome = await fail(verdict.failure, verdict.newFailures);
+  } else {
+    // `diffVerification` passes only with an empty new-failure set, so the
+    // green verdict is exactly `{ passed: true, newFailures: [] }`.
+    const verification = { passed: true as const, newFailures: [] as readonly string[] };
+    const title = `[loop] fix ${input.issue.id}: ${input.issue.description.split("\n")[0].replace(/^#\s*/, "")}`;
+    const body = buildPrBody(
+      input.issue,
+      redEvidence,
+      greenEvidence,
+      verification,
+      attachmentFailures,
+      input.profile.autoMerge === true,
+    );
+    assertNoSecrets([title, body], deps.env);
 
-          const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
-          prUrl = pr.url;
-        }
-      }
-    }
-  } finally {
-    try {
-      await sandbox.close();
-    } catch (error) {
-      sandboxTeardown = error instanceof Error ? error.message : String(error);
-    }
+    const pr = await deps.createPr({ repoDir: input.repoDir, title, body, base: "main", head: branch });
+    prUrl = pr.url;
   }
 
   // WI-6 T3 (D3): the auto-merge chain runs AFTER the verification sandbox's
@@ -805,37 +921,319 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     // wins, exactly as on the PR'd path.
     return { ...failOutcome, ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}) };
   }
-  const prOutcome: LoopOutcome = {
+  // `let` for WI-13 T8: the merger gate's re-verification sandbox is another
+  // EARLY origin (it runs pre-merge), so its teardown failure folds into the
+  // PR'd outcome below — first origin still wins (preflight, then the primary
+  // verification sandbox), exactly the established precedence.
+  let prOutcome: LoopOutcome = {
     branch,
     prUrl,
     ...(attachmentFailures.length > 0 ? { attachmentFailures: [...attachmentFailures] } : {}),
     ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}),
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
-    // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
-    // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
-    // other outcome returns a PR'd result carrying the skip reason.
-    const review = await runPreMergeReview(input, deps, prUrl);
-    if (!review.approved) {
-      return { ...prOutcome, reviewSkip: review.reviewSkip };
-    }
-    let mergeCommit: string;
-    try {
-      mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
-    } catch (error) {
-      // FR-004 safe fallback: no auto-merge, the PR stays open, the run
-      // continues — but never silently. A merge failure is not an issue
-      // failure: the fix IS verified and PR'd (the queue counts it fixed).
-      const reason = error instanceof Error ? error.message : String(error);
-      return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
-    }
+    // WI-13 T6b (both criticals): the whole opted-in chain — review pass
+    // (shared REVIEW_BRANCH), merge, canary, revert, issue-close (main + the
+    // clone's checkout) — runs under the per-run mutex in queue mode, so
+    // concurrent lanes cannot clobber each other's review branch or contend
+    // on git's index lock. `serializeGitChain` is the identity in
+    // single-issue mode; see `createGitChainLock` for the region's boundary.
+    //
+    // WI-13 T11 (FR-004): the chain top is also the run-halt checkpoint. A
+    // lane whose chain produces a harness-level outcome (red canary → revert,
+    // uncanaried merge) sets the run halt INSIDE its section, before the lock
+    // releases — so the next lane queued on this same lock deterministically
+    // sees the halt here, before any merger-gate / review / merge spend, and
+    // returns its PR open with the skip reason. No sibling merge is attempted
+    // after the first harness-level outcome, in the SAME wave — not only in
+    // later waves (the abort itself is still raised after the wave settles;
+    // the sibling's open PR stands as the deliverable).
+    const mergeChain = async (): Promise<LoopOutcome> => {
+      // WI-13 T8 (FR-007/FR-008): the verified-merger gate, BEFORE the
+      // pre-merge review — FR-008's order: the review must judge the
+      // POST-resolution diff, and no review spend on a resolution that fails
+      // verification. The whole gate (conflict probe, merger run,
+      // re-verification) sits INSIDE the mutex: `branchConflictsWithMain`
+      // reads main and `runMerger` writes the branch in the shared clone, and
+      // main only ever moves inside this chain — the probe must judge a
+      // non-moving main. The re-verification sandbox therefore serializes
+      // too on this rare conflict path — accepted: a correct probe snapshot
+      // over the sandbox's concurrency.
+      const gate = await runVerifiedMergerGate(input, deps, prOutcome, prUrl);
+      if (!gate.proceed) {
+        return gate.outcome;
+      }
+      if (gate.teardownFailure !== undefined && prOutcome.teardownFailure === undefined) {
+        prOutcome = { ...prOutcome, teardownFailure: gate.teardownFailure };
+      }
+      // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
+      // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
+      // other outcome returns a PR'd result carrying the skip reason.
+      const review = await runPreMergeReview(input, deps, prUrl);
+      if (!review.approved) {
+        return { ...prOutcome, reviewSkip: review.reviewSkip };
+      }
+      let mergeCommit: string;
+      try {
+        mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
+      } catch (error) {
+        // FR-004 safe fallback: no auto-merge, the PR stays open, the run
+        // continues — but never silently. A merge failure is not an issue
+        // failure: the fix IS verified and PR'd (the queue counts it fixed).
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
+      }
 
-    // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
-    // base, run the canary suite on it, then close or revert per its verdict
-    // (`runCanary`).
-    return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+      // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
+      // base, run the canary suite on it, then close or revert per its verdict
+      // (`runCanary`).
+      return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+    };
+    return serializeGitChain(async () => {
+      const haltedBy = haltSignal.halted();
+      if (haltedBy !== undefined) {
+        // The pre-merge review skip's own field and posture: a loud note on a
+        // PR'd outcome, never an issue failure — the PR stays open for a human
+        // (the spec's stated end-state for halted sibling lanes) and the
+        // queue's REVIEW SKIP surface carries the reason. Like every
+        // reviewSkip string it is secrets-guarded at the summary emission
+        // seam, not at construction.
+        return {
+          ...prOutcome,
+          reviewSkip: `merge skipped — run halted by ${haltedBy.id}: ${haltedBy.reason}`,
+        };
+      }
+      const outcome = await mergeChain();
+      if (harnessLevelFailure(outcome)) {
+        haltSignal.halt(input.issue.id, outcome.failure ?? "harness-level failure");
+      }
+      return outcome;
+    });
   }
   return prOutcome;
+}
+
+/**
+ * The verdict of one fresh-sandbox verification run (WI-13 T8): the single
+ * implementation (`verifyInFreshSandbox`) is shared by the primary
+ * verification and the merger gate's re-verification, so both run the same
+ * rules and produce the same evidence strings. `failure` is the complete
+ * reason (already `Verification failed — …` shaped, byte-identical to the
+ * former inline block); `newFailures` rides only the diff-verdict arm.
+ */
+type FreshSandboxVerdict =
+  | { readonly passed: true }
+  | { readonly passed: false; readonly failure: string; readonly newFailures?: readonly string[] };
+
+/**
+ * WI-13 T8: ONE fresh-sandbox verification — install → reproduction test →
+ * full suite → `diffVerification` — on `branch`, in a sandbox the agent never
+ * touched (constraint 2). Extracted verbatim from `runSingleIssue`'s former
+ * inline block (pure refactor, outcomes byte-equivalent) so the merger gate
+ * re-verifies a resolved branch through the SAME code: the gate must not be
+ * able to pass a resolution the primary verification would have failed.
+ *
+ * WI-8 (FR-001): teardown parity is preserved — a close() throw in the
+ * finally is caught and returned beside the verdict, never propagated, never
+ * over it.
+ */
+async function verifyInFreshSandbox(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  branch: string,
+): Promise<{ readonly verdict: FreshSandboxVerdict; readonly teardownFailure?: string }> {
+  const sandbox = await deps.createFixSandbox({
+    cwd: input.repoDir,
+    branch,
+    imageName: input.imageName,
+  });
+  // WI-11 (FR-002): the verification failure sites below store their verdict
+  // and exit the try; the return happens after the finally, with any teardown
+  // reason attached — a close() throw can never displace the decided verdict.
+  let teardownFailure: string | undefined;
+  let verdict: FreshSandboxVerdict;
+  try {
+    // Each sandbox is a fresh container: the agent's `pip install -e .` (or
+    // equivalent) lived in ITS site-packages, not this one's. Without the
+    // install, every test file errors at collection and reads as new failures.
+    const install = await sandbox.exec(input.profile.installCmd);
+    if (install.exitCode !== 0) {
+      verdict = {
+        passed: false,
+        failure: `Verification failed — install command exited ${install.exitCode} in the fresh sandbox.`,
+      };
+    } else {
+      const reproCmd = input.profile.singleTestCmd.replace("{test}", reproTestPath(input.issue));
+      const repro = await sandbox.exec(reproCmd);
+      const suite = await sandbox.exec(input.profile.testCmd);
+      const parsed = parseSuiteOrReject(suite.stdout);
+      if (!parsed.ok) {
+        verdict = { passed: false, failure: `Verification failed — ${parsed.reason}.` };
+      } else {
+        const verification = diffVerification({
+          baselineFailures: input.profile.baselineFailures,
+          postFixFailures: parsed.failures,
+          reproTestPassed: repro.exitCode === 0,
+        });
+        if (!verification.passed) {
+          const reason = verification.newFailures.length > 0
+            ? `new failures vs baseline: ${verification.newFailures.join(", ")}`
+            : "reproduction test did not pass in the fresh sandbox";
+          verdict = {
+            passed: false,
+            failure: `Verification failed — ${reason}.`,
+            newFailures: verification.newFailures,
+          };
+        } else {
+          verdict = { passed: true };
+        }
+      }
+    }
+  } finally {
+    try {
+      await sandbox.close();
+    } catch (error) {
+      teardownFailure = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return { verdict, ...(teardownFailure !== undefined ? { teardownFailure } : {}) };
+}
+
+/**
+ * WI-13 T8 (FR-007): the merger prompt — instructs merging `mainRef` (the
+ * current main, inside the mutex) into the fix `branch` and resolving every
+ * conflict so BOTH fixes survive. Secrets-guarded by `assertNoSecrets` at the
+ * call site, like every prompt that leaves the harness for a third-party API.
+ */
+function buildMergerPrompt(
+  issue: NormalizedIssue,
+  profile: ProjectProfile,
+  branch: string,
+  mainRef: string,
+): string {
+  return `You are resolving a git merge conflict on an existing bug-fix branch.
+Another fix has already merged to ${mainRef}, and the branch ${branch} — the verified fix for
+issue ${issue.id} — now conflicts with it. Merge ${mainRef} into ${branch} and resolve every
+conflict so that BOTH fixes survive: keep the changes ${mainRef} already carries, and keep this
+branch's fix together with its reproduction test at \`${reproTestPath(issue)}\`. Resolve only
+the conflict — do not refactor unrelated code, do not touch other open issues' symptoms, and
+never commit anything under \`.loop-harness/\`.
+
+## How to work in this repo (recorded at onboarding — use these exact commands)
+
+- install: ${profile.installCmd}
+- full suite: ${profile.testCmd}
+- one test: ${profile.singleTestCmd}
+
+Your resolution is NOT trusted as final: an independent fresh-sandbox verification re-runs the
+reproduction test and the full suite on the branch afterwards. Use the commands above to check
+your own work before you finish.
+
+## Required output format
+
+End your output with a short summary of each conflict you resolved and how.`;
+}
+
+/**
+ * WI-13 T8 (FR-007/FR-008): the verified-merger gate — opted-in runs only
+ * (the caller gates on `autoMerge === true`, constraint 1). When the fix
+ * branch conflicts with the current main (typically because an earlier fix in
+ * the run already merged), a bounded merger agent resolves the conflict on the
+ * branch, and the resolved branch must re-pass the SAME fresh-sandbox
+ * verification (`verifyInFreshSandbox`) before the existing chain (review →
+ * merge → canary) proceeds — the merger's output is never trusted (constraint
+ * 2). Every failure posture here mirrors `mergePr`'s safe fallback, reusing
+ * the WI-6 `mergeFailure` field (never a new outcome kind) so the downstream
+ * wave semantics treat it exactly like a merge failure: PR open, loud note,
+ * no merge, no review spend, queue continues, issue not counted merged.
+ *
+ * Must be called INSIDE the shared-git mutex (main moves only there; the
+ * merger writes the branch in the shared clone).
+ */
+async function runVerifiedMergerGate(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  prOutcome: LoopOutcome,
+  prUrl: string,
+): Promise<
+  | { readonly proceed: true; readonly teardownFailure?: string }
+  | { readonly proceed: false; readonly outcome: LoopOutcome }
+> {
+  const branch = fixBranch(input.issue);
+  // mainRef is main BY NAME, resolved by git at merger time — inside the
+  // mutex, so the name cannot move beneath the probe or the merger.
+  const mainRef = "main";
+  let conflicts: boolean;
+  try {
+    conflicts = await deps.branchConflictsWithMain(input.repoDir, branch);
+  } catch (error) {
+    // A probe failure says nothing about the fix (divergent clone, git error)
+    // — same safe-fallback posture as `mergePr`'s throw path: PR open, loud
+    // note, run continues.
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger conflict probe failed for ${prUrl}: ${reason}` },
+    };
+  }
+  if (!conflicts) {
+    return { proceed: true };
+  }
+  try {
+    const mergerPrompt = buildMergerPrompt(input.issue, input.profile, branch, mainRef);
+    // The prompt reaches a third-party API — guard it before the call, like
+    // every other emitted string.
+    assertNoSecrets([mergerPrompt], deps.env);
+    await deps.runMerger({
+      cwd: input.repoDir,
+      prompt: mergerPrompt,
+      imageName: input.imageName,
+      agent: input.agent,
+      branch,
+      mainRef,
+    });
+  } catch (error) {
+    // FR-007 boundary: a failed merger run leaves the PR open for a human
+    // with the failure recorded — the existing merge-failure posture.
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger run failed for ${prUrl}: ${reason}` },
+    };
+  }
+  // FR-008: never trust the merger — the resolved branch re-passes the SAME
+  // fresh-sandbox verification before anything downstream may spend on it.
+  const { verdict, teardownFailure } = await verifyInFreshSandbox(input, deps, branch);
+  if (!verdict.passed) {
+    return {
+      proceed: false,
+      outcome: {
+        ...prOutcome,
+        mergeFailure: `merger resolution failed verification: ${verdict.failure}`,
+      },
+    };
+  }
+  // WI-13 T12 (FR-007/FR-008 happy-path completion): the resolution currently
+  // lives only on the LOCAL branch — publish it before anything downstream.
+  // `gh pr merge --squash` merges GitHub's PR head, so without this push
+  // origin keeps pointing at the pre-resolution commit and the merge fails
+  // with "Pull Request has merge conflicts" even though this gate re-verified
+  // (and the review is about to approve) the resolved branch (live defect,
+  // `merger-live-run-3.log`). Pushed BEFORE the return so the push completes
+  // before the pre-merge review — GitHub then shows the resolved state during
+  // review. Still inside the caller's serialized chain (shared-git mutex).
+  // A failed publish is not an issue failure — same safe-fallback posture as
+  // the arms above: PR open, loud note, run continues.
+  try {
+    await deps.pushBranch(input.repoDir, branch);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      proceed: false,
+      outcome: { ...prOutcome, mergeFailure: `merger resolution push failed for ${prUrl}: ${reason}` },
+    };
+  }
+  return { proceed: true, ...(teardownFailure !== undefined ? { teardownFailure } : {}) };
 }
 
 /**
@@ -1131,7 +1529,7 @@ async function runCanary(
 
 /** Everything the queue runner needs beyond the single-issue loop. */
 export type QueueLoopDeps = LoopDeps & QueueDeps & {
-  runTriage(input: TriageRunInput): Promise<string>;
+  runPlan(input: PlanRunInput): Promise<string>;
 };
 
 export interface QueueRunInput {
@@ -1141,8 +1539,12 @@ export interface QueueRunInput {
   readonly agent: AgentSpec;
   readonly profile: ProjectProfile;
   readonly label?: string;
-  readonly cap: number;
-  readonly triage: boolean;
+  /**
+   * WI-13 (FR-005): an EXPLICIT optional ceiling — `--max-issues N` when
+   * passed; absent (`undefined`), every unblocked issue the plan surfaced runs.
+   * No default. Validated (integer ≥ 1) by the CLI at startup when present.
+   */
+  readonly cap: number | undefined;
   /**
    * WI-3 (FR-007): a pre-parsed queue from `--spec-doc` / `--plain-list`.
    * When present it REPLACES GitHub acquisition — `ghJson` is never called.
@@ -1159,7 +1561,11 @@ export interface QueueSummary {
   readonly skippedDuplicate: string[];
   /** Ids a merged PR already fixed — done, not re-admitted (WI-6 FR-002). */
   readonly skippedMerged: string[];
-  /** [id, reason] — the cap, or "file overlap with gh-N" (decision 14). */
+  /**
+   * [id, reason] — WI-13 FR-005: `"cap"` when the explicit ceiling cut an
+   * issue the plan surfaced. (`"blocked by <ids>"` joins with the dependency
+   * edges in T6.)
+   */
   readonly notAdmitted: [string, string][];
   /** [id, url] — attachment fetches that failed (FR-004); notes, never gates. */
   readonly attachmentFailures: [string, string][];
@@ -1231,15 +1637,22 @@ export class QueueAbortedError extends Error {
 }
 
 /**
- * Run the queue: acquire → dedup → (opt-in triage) → admit ≤ cap → run each
- * admitted issue sequentially through runSingleIssue. An issue-level failure
- * is recorded and the queue continues; a harness-level failure (stale
- * baseline, credentials) aborts with a `QueueAbortedError` whose `summary`
- * holds the partial run — the caller prints both that and the abort reason.
+ * Run the queue: acquire → dedup → plan (when >1 eligible, WI-13 FR-001) →
+ * rank + optional ceiling (WI-13 FR-005) → run the unblocked set in
+ * CONCURRENT WAVES through runSingleIssue (WI-13 T6, FR-003), re-planning
+ * after each merge wave on opted-in repos (FR-006) and growing the completed
+ * set per FR-002 (opted-in: merged ids; non-opted: PR-settled lanes). An
+ * issue-level failure is recorded and the queue continues; a harness-level
+ * failure (stale baseline, credentials) aborts — raised AFTER the wave's
+ * outcomes are collected (FR-004), while MERGES stop at the first
+ * harness-level outcome via the run halt each lane's serialized chain checks
+ * (WI-13 T11) — with a `QueueAbortedError` whose
+ * `summary` holds the partial run; the caller prints both that and the abort
+ * reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
   // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
-  // dedup, triage, the cap, and the loop itself are identical from here on.
+  // dedup, the planner, the cap, and the loop itself are identical from here on.
   const issues = input.sourceIssues !== undefined
     ? [...input.sourceIssues]
     : await listOpenIssues(deps, {
@@ -1248,52 +1661,58 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       });
   const split = await splitQueue(deps, input.repoDir, issues);
 
-  // The flag is the opt-in, so triage runs at any queue size — its file-overlap
-  // deferral (decision 14) is what keeps two same-module fixes from becoming
-  // conflicting PRs, and that matters below the cap too. One issue can overlap
-  // nothing and outrank nobody, so it never buys a model call.
-  let triage: TriageValue | undefined;
-  let triageUnusable = false;
-  let triageError: string | undefined;
-  if (input.triage && split.eligible.length > 1) {
-    const prompt = buildTriagePrompt(split.eligible);
+  // WI-13 FR-001: the planner is always on when more than one issue is
+  // eligible — the dependency graph it returns is what lets independent fixes
+  // run in parallel. One eligible issue can block nobody and outrank nobody,
+  // so it never buys a model call.
+  let plan: PlanValue | undefined;
+  let planUnusable = false;
+  let planError: string | undefined;
+  if (split.eligible.length > 1) {
+    const prompt = buildPlanPrompt(split.eligible);
     assertNoSecrets([prompt], deps.env);
     try {
-      const stdout = await deps.runTriage({
+      const stdout = await deps.runPlan({
         cwd: input.repoDir,
         prompt,
         imageName: input.imageName,
         agent: input.agent,
       });
-      triage = parseTriageOutput(stdout, split.eligible.map((i) => i.id));
+      plan = parsePlanOutput(stdout, split.eligible.map((i) => i.id));
     } catch (error) {
-      // The scoring pass is an optimization, never a gate: a failed triage run
+      // The planning pass is an optimization, never a gate: a failed plan run
       // degrades the ordering, it does not cost the queue its issues.
-      triageError = error instanceof Error ? error.message : String(error);
+      planError = error instanceof Error ? error.message : String(error);
     } finally {
       // Runs on the throw path too, so a failed pass never leaks the branch.
-      await deps.deleteBranch(input.repoDir, TRIAGE_BRANCH);
+      await deps.deleteBranch(input.repoDir, PLAN_BRANCH);
     }
-    triageUnusable = triage === undefined;
+    planUnusable = plan === undefined;
   }
 
-  const admission = admitIssues({
-    issues: split.eligible,
-    cap: input.cap,
-    ...(triage !== undefined ? { triage } : {}),
-    ...(triageUnusable ? { triageUnusable: true } : {}),
-  });
-  if (admission.degraded) {
+  // WI-13 FR-005 (T4, kept): the plan ranks (`orderFromPlan`) and the explicit
+  // ceiling bounds ATTEMPTED issues — `admitIssues` stays dissolved. WI-13 T6:
+  // the ranked order plus the plan's `blockedBy` edges now drive WAVES — each
+  // wave is the unblocked-and-unattempted set (`unblockedAfter`, T5), sliced to
+  // the remaining budget, executed CONCURRENTLY (FR-003). File-overlap
+  // deferral stays gone: serialization lives entirely in the edges.
+  let ranked = orderFromPlan(split.eligible, plan);
+  let edges: Readonly<Record<string, readonly string[]>> = plan?.blockedBy ?? {};
+  const warnPlanUnusable = (reason: string | undefined) => {
     // The reason can quote a subprocess error, so it passes the guard like any
     // other emitted string before it reaches a terminal or an evidence log.
-    const warning = `[queue] WARNING: triage unusable (${triageError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
+    const warning = `[queue] WARNING: plan unusable (${reason ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
     assertNoSecrets([warning], deps.env);
     console.error(warning);
+  };
+  if (planUnusable) {
+    warnPlanUnusable(planError);
   }
 
   const attempted: string[] = [];
   const fixed: string[] = [];
   const failed: [string, string][] = [];
+  const notAdmitted: [string, string][] = [];
   const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
   const mergedPrs: [string, string, string, string?][] = [];
@@ -1308,7 +1727,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     failed: [...failed],
     skippedDuplicate: split.skippedDuplicate,
     skippedMerged: split.skippedMerged,
-    notAdmitted: admission.notAdmitted.map((n) => [n.issue.id, n.reason] as [string, string]),
+    notAdmitted: [...notAdmitted],
     attachmentFailures: [...attachmentFailures],
     prUrls: [...prUrls],
     mergedPrs: [...mergedPrs],
@@ -1320,80 +1739,324 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
-  for (const issue of admission.admitted) {
-    const outcome = await runSingleIssue(
-      {
-        issue,
-        repoDir: input.repoDir,
-        imageName: input.imageName,
-        agent: input.agent,
-        profile: input.profile,
-      },
-      deps,
+  // A16 (controller ledger): `unblockedAfter` returns every not-completed
+  // unblocked issue each call, so the runner tracks the attempted set itself —
+  // a settled lane (fixed, failed, merged, reverted — any terminal outcome) is
+  // NEVER re-attempted in a later wave. The FR-002 `completed` set is a
+  // DIFFERENT, smaller set: opted-in profiles grow it with MERGED ids only (a
+  // merge failure or review skip does NOT unblock dependents — "not attempted
+  // until A has MERGED"); non-opted profiles grow it with lanes that settled
+  // WITH a PR (the human-merges-in-order posture).
+  const autoMerge = input.profile.autoMerge === true;
+  const attemptedIds = new Set<string>();
+  const completed = new Set<string>();
+  const inRun = new Set(ranked.map((issue) => issue.id));
+  const budgetLeft = () => input.cap === undefined || attemptedIds.size < input.cap;
+  /** A17: the cap bounds lanes STARTED — each wave is sliced to what remains. */
+  const nextWave = (): NormalizedIssue[] => {
+    const unblocked = unblockedAfter(ranked, edges, completed).filter(
+      (issue) => !attemptedIds.has(issue.id),
     );
-    attempted.push(issue.id);
-    for (const url of outcome.attachmentFailures ?? []) {
-      attachmentFailures.push([issue.id, url]);
+    return input.cap === undefined ? unblocked : unblocked.slice(0, input.cap - attemptedIds.size);
+  };
+  /** In-run blockers of `issue` that never completed — `unblockedAfter`'s gate. */
+  const unresolvedInRunBlockers = (issue: NormalizedIssue): readonly string[] =>
+    (edges[issue.id] ?? []).filter((blocker) => inRun.has(blocker) && !completed.has(blocker));
+
+  // WI-13 FR-005: the surfaced plan prints BEFORE any fix-agent spend — the
+  // operator sees what the run will attempt (and what the ceiling cut) before
+  // the first lane starts. Per-issue vocabulary (T6): `attempt` for wave-1
+  // lanes, `blocked <id> by <ids>` for issues the edges hold back (they may be
+  // re-surfaced as attempts in later waves), `cap` for issues the ceiling cut.
+  // Every line passes the secrets guard at this emission seam like all emitted
+  // strings.
+  const firstWave = nextWave();
+  const firstWaveIds = new Set(firstWave.map((issue) => issue.id));
+  const planLines = [
+    input.cap === undefined ? "plan: all unblocked" : `plan: attempted ≤ ${input.cap}`,
+    ...ranked.map((issue) => {
+      if (firstWaveIds.has(issue.id)) {
+        return `plan: attempt ${issue.id}`;
+      }
+      const blockers = unresolvedInRunBlockers(issue);
+      return blockers.length > 0
+        ? `plan: blocked ${issue.id} by ${blockers.join(", ")}`
+        : `plan: cap ${issue.id}`;
+    }),
+  ];
+  assertNoSecrets(planLines, deps.env);
+  for (const line of planLines) {
+    console.log(line);
+  }
+
+  // WI-13 T6 (FR-003): the wave loop. Each wave's lanes run concurrently via
+  // Promise.allSettled — outcomes are collected in wave order (deterministic;
+  // `attempted`, `fixed`, `prUrls`, `failed` keep their ranked-order shape).
+  // A lane promise never rejects (the catch wraps it defensively), so
+  // allSettled lets every sibling settle before the wave is judged.
+  let current = firstWave;
+  let waveIndex = 0;
+  // WI-13 T6b: ONE lock per run, shared by every lane of every wave — the
+  // merge chain it guards mutates git state shared across the whole run
+  // (REVIEW_BRANCH, main, the clone's checkout), not just one wave.
+  const gitChainLock = createGitChainLock();
+  // WI-13 T11 (FR-004): the run-level halt signal — set by the first lane that
+  // produces a harness-level outcome, checked at the top of every later lane's
+  // serialized merge chain (before its merger gate), so merges stop at the
+  // first harness-level outcome even inside a wave.
+  const haltSignal = createRunHaltSignal();
+  while (current.length > 0) {
+    if (waveIndex > 0) {
+      // The later wave's lanes were `blocked` on the initial surface; each is
+      // re-surfaced as an attempt line before its spend (FR-005's print-first
+      // rule, extended to waves).
+      const reSurfaced = current.map((issue) => `plan: attempt ${issue.id}`);
+      assertNoSecrets(reSurfaced, deps.env);
+      for (const line of reSurfaced) {
+        console.log(line);
+      }
     }
-    // WI-6 T4: collected before the abort below — the aborting snapshot still
-    // carries the ⚠️ REVERTED record for the summary.
-    if (outcome.reverted !== undefined) {
-      reverted.push(outcome.reverted);
+    const lanes = current.map(async (issue) => {
+      try {
+        return {
+          issue,
+          outcome: await runSingleIssue(
+            {
+              issue,
+              repoDir: input.repoDir,
+              imageName: input.imageName,
+              agent: input.agent,
+              profile: input.profile,
+            },
+            deps,
+            gitChainLock,
+            haltSignal,
+          ),
+        };
+      } catch (error) {
+        // Defensive only — runSingleIssue returns outcomes rather than
+        // throwing. A throw would abort every remaining issue identically:
+        // the harness-level class. WI-13 T11: it sets the halt the same way,
+        // so a defensive throw also stops sibling merges.
+        // `outcome: undefined` is the explicit discriminant that lets the
+        // settle loop below narrow without a cast (T6b, quality Minor 1).
+        haltSignal.halt(issue.id, error instanceof Error ? error.message : String(error));
+        return { issue, outcome: undefined, laneError: error };
+      }
+    });
+    const settled = await Promise.allSettled(lanes);
+    // FR-004 (WI-13): the ABORT is raised AFTER the wave's outcomes are
+    // collected, never mid-flight — sibling lanes' open PRs stand as
+    // deliverables in the aborting snapshot. The HALT, though, is
+    // merge-granular (WI-13 T11): the first harness-level outcome sets the
+    // run halt inside the mutex, and every later lane's serialized chain
+    // checks it before its merger gate — merges stop at the first
+    // harness-level outcome, in the same wave. First harness-level outcome
+    // (in wave order) carries the abort, exactly as the sequential runner did.
+    let harnessAbort: { id: string; failure: string } | undefined;
+    let mergesThisWave = 0;
+    for (const result of settled) {
+      if (result.status === "rejected") {
+        // Unreachable — each lane's catch turns a throw into a laneError —
+        // but allSettled's type demands the arm, and skipping a phantom
+        // rejection is the honest no-op (there is no issue to record).
+        continue;
+      }
+      // T6b (quality Minor 1): narrowed by the `outcome` discriminant instead
+      // of a cast — the try arm always carries a defined outcome, the catch
+      // arm always carries `undefined` plus the laneError.
+      const { issue } = result.value;
+      if (result.value.outcome === undefined) {
+        const laneError = result.value.laneError;
+        const reason = laneError instanceof Error ? laneError.message : String(laneError);
+        attemptedIds.add(issue.id);
+        attempted.push(issue.id);
+        failed.push([issue.id, reason]);
+        harnessAbort ??= { id: issue.id, failure: reason };
+        continue;
+      }
+      const outcome: LoopOutcome = result.value.outcome;
+      attemptedIds.add(issue.id);
+      attempted.push(issue.id);
+      for (const url of outcome.attachmentFailures ?? []) {
+        attachmentFailures.push([issue.id, url]);
+      }
+      // WI-6 T4: collected before the abort below — the aborting snapshot still
+      // carries the ⚠️ REVERTED record for the summary.
+      if (outcome.reverted !== undefined) {
+        reverted.push(outcome.reverted);
+      }
+      // WI-7 (FR-002): same pattern — the record is collected before the abort
+      // throw so the aborting summary still carries the ⚠️ UNCANARIED MERGE line.
+      if (outcome.uncanaried !== undefined) {
+        uncanariedMerges.push([outcome.uncanaried.id, uncanariedDetail(outcome.uncanaried)]);
+      }
+      if (outcome.prUrl) {
+        fixed.push(issue.id);
+        prUrls.push(outcome.prUrl);
+        // WI-6: a merged or failed-to-merge outcome still counts as fixed (see
+        // QueueSummary.mergeFailures for why a merge failure is not an issue
+        // failure); both get their own loud summary surfaces.
+        if (outcome.merged !== undefined) {
+          // FR-002 opted-in arm: only a MERGE completes a blocker.
+          completed.add(issue.id);
+          mergesThisWave += 1;
+          // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
+          // PRE-COMPOSED teardown suffix, built here at push time so the tuple
+          // stays 4 slots and formatSummary interpolates it unchanged in shape.
+          // Exactly one failed origin renders `teardown: <reason>` byte-identical
+          // to today's single-failure rendering (whichever origin it was); both
+          // failed renders both, origin-labeled.
+          const earlyTeardown = outcome.teardownFailure;
+          const canaryTeardown = outcome.canaryTeardownFailure;
+          const teardownSuffix =
+            earlyTeardown !== undefined && canaryTeardown !== undefined
+              ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
+              : earlyTeardown !== undefined || canaryTeardown !== undefined
+                ? `teardown: ${earlyTeardown ?? canaryTeardown}`
+                : undefined;
+          mergedPrs.push(
+            teardownSuffix !== undefined
+              ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
+              : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
+          );
+        } else if (!autoMerge) {
+          // FR-002 non-opted arm: a lane that settled WITH a PR completes its
+          // blockers' wait (the human merges in order).
+          completed.add(issue.id);
+        }
+        if (outcome.mergeFailure !== undefined) {
+          mergeFailures.push([issue.id, outcome.mergeFailure]);
+        }
+        if (outcome.closeFailure !== undefined) {
+          closeFailures.push([issue.id, outcome.closeFailure]);
+        }
+        if (outcome.reviewSkip !== undefined) {
+          reviewSkipped.push([issue.id, outcome.reviewSkip]);
+        }
+        continue;
+      }
+      // A repo-wide preflight abort (stale baseline) will fail every remaining
+      // issue identically — that is a harness-level failure, not this issue's.
+      // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
+      // line as a suffix — the reason itself stands untouched.
+      failed.push([
+        issue.id,
+        `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
+      ]);
+      // WI-13 T11: the shared harness-level classification — the same
+      // `harnessLevelFailure` predicate the halt-setter uses, so the abort
+      // and the merge halt can never diverge.
+      if (harnessLevelFailure(outcome)) {
+        harnessAbort ??= { id: issue.id, failure: outcome.failure ?? "harness-level failure" };
+      }
     }
-    // WI-7 (FR-002): same pattern — the record is collected before the abort
-    // throw so the aborting summary still carries the ⚠️ UNCANARIED MERGE line.
-    if (outcome.uncanaried !== undefined) {
-      uncanariedMerges.push([outcome.uncanaried.id, uncanariedDetail(outcome.uncanaried)]);
+    if (harnessAbort !== undefined) {
+      throw new QueueAbortedError(
+        `Queue aborted — ${harnessAbort.id}: ${harnessAbort.failure}`,
+        snapshot(),
+      );
     }
-    if (outcome.prUrl) {
-      fixed.push(issue.id);
-      prUrls.push(outcome.prUrl);
-      // WI-6: a merged or failed-to-merge outcome still counts as fixed (see
-      // QueueSummary.mergeFailures for why a merge failure is not an issue
-      // failure); both get their own loud summary surfaces.
-      if (outcome.merged !== undefined) {
-        // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
-        // PRE-COMPOSED teardown suffix, built here at push time so the tuple
-        // stays 4 slots and formatSummary interpolates it unchanged in shape.
-        // Exactly one failed origin renders `teardown: <reason>` byte-identical
-        // to today's single-failure rendering (whichever origin it was); both
-        // failed renders both, origin-labeled.
-        const earlyTeardown = outcome.teardownFailure;
-        const canaryTeardown = outcome.canaryTeardownFailure;
-        const teardownSuffix =
-          earlyTeardown !== undefined && canaryTeardown !== undefined
-            ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
-            : earlyTeardown !== undefined || canaryTeardown !== undefined
-              ? `teardown: ${earlyTeardown ?? canaryTeardown}`
-              : undefined;
-        mergedPrs.push(
-          teardownSuffix !== undefined
-            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
-            : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
-        );
+
+    // WI-13 FR-006: same-run re-plan after a merge wave — opted-in only (a
+    // non-opted run has no merge event to re-plan on), ONE call per merge wave,
+    // never per issue. Skipped when nothing remains to attempt or the budget is
+    // spent: a model call that cannot change the schedule is silent spend.
+    if (autoMerge && mergesThisWave > 0) {
+      const remaining = ranked.filter((issue) => !attemptedIds.has(issue.id));
+      if (remaining.length > 0 && budgetLeft()) {
+        const prompt = buildPlanPrompt(remaining);
+        assertNoSecrets([prompt], deps.env);
+        let rePlanError: string | undefined;
+        let rePlan: PlanValue | undefined;
+        try {
+          const stdout = await deps.runPlan({
+            cwd: input.repoDir,
+            prompt,
+            imageName: input.imageName,
+            agent: input.agent,
+          });
+          // T6b FIX 2 (quality Important — the re-plan validation split):
+          // `priority` is validated against the ASKED set — the re-plan
+          // prompt (`buildPlanPrompt(remaining)`, just above) lists only the
+          // unattempted issues, and a compliant answer covering exactly those
+          // must not fail validation — while blockedBy keys and edge targets
+          // are validated against the FULL eligible set: a re-plan may still
+          // legitimately name a just-merged id in an edge (the old
+          // dependency), and `unblockedAfter` ignores edges to completed ids
+          // anyway.
+          rePlan = parsePlanOutput(
+            stdout,
+            remaining.map((issue) => issue.id),
+            { edgeIds: split.eligible.map((issue) => issue.id) },
+          );
+        } catch (error) {
+          // FR-001 fallback: a failed re-plan degrades the schedule, never the
+          // run — the current ranking and edges simply stand.
+          rePlanError = error instanceof Error ? error.message : String(error);
+        } finally {
+          // Runs on the throw path too, so a failed pass never leaks the branch.
+          await deps.deleteBranch(input.repoDir, PLAN_BRANCH);
+        }
+        if (rePlan !== undefined) {
+          // T6b (quality Minor 3): `inRun` is deliberately NOT refreshed
+          // here — the re-plan permutes the SAME id set (its validation
+          // admits no id the run never held), so re-deriving the set from
+          // the re-ordered `ranked` would be a no-op at best and a stale
+          // mid-run snapshot at worst.
+          ranked = orderFromPlan(ranked, rePlan);
+          edges = rePlan.blockedBy;
+        } else {
+          warnPlanUnusable(rePlanError);
+        }
       }
-      if (outcome.mergeFailure !== undefined) {
-        mergeFailures.push([issue.id, outcome.mergeFailure]);
+    }
+
+    waveIndex += 1;
+    let upcoming = nextWave();
+    if (upcoming.length === 0) {
+      const remaining = ranked.filter((issue) => !attemptedIds.has(issue.id));
+      if (remaining.length === 0 || !budgetLeft()) {
+        break;
       }
-      if (outcome.closeFailure !== undefined) {
-        closeFailures.push([issue.id, outcome.closeFailure]);
+      // INVARIANT GUARD, not a live rule (T6b, quality Important 2 + the T6
+      // spec review's proof): for any plan that passed `parsePlanOutput`, this
+      // arm is UNREACHABLE — the parser's priority-coverage guarantee plus
+      // the edges' acyclicity mean the remaining set can never be all-blocked
+      // (assuming it could yields a cycle among remaining ids, which the
+      // parser rejects — contradiction). The fallback exists solely to catch
+      // a parser regression or a scheduling-rule violation: if it ever fires,
+      // something upstream is broken, and force-attempting the
+      // highest-priority remaining issue beats a silently dead queue. It is
+      // RESERVED for that violation case only: when a lane settled WITHOUT
+      // completing (a failed blocker), the `attemptedIds.size > completed.size`
+      // guard just below routes to FR-002's boundary instead — its dependents
+      // stay not-attempted with the reason named, never force-attempted.
+      // Untestable through the public seam by construction (a validated plan
+      // cannot reach it); pinned only by this comment.
+      if (attemptedIds.size > completed.size) {
+        break;
       }
-      if (outcome.reviewSkip !== undefined) {
-        reviewSkipped.push([issue.id, outcome.reviewSkip]);
-      }
+      upcoming = [remaining[0]!];
+    }
+    current = upcoming;
+  }
+
+  // WI-13 FR-002/FR-005: honest records for every issue the run never
+  // attempted — `blocked by <ids>` when in-run blockers never settled (a
+  // failed blocker leaves its dependents here; the run continued past it),
+  // `cap` when the ceiling cut an otherwise-attemptable issue (FR-005: a
+  // blocked-never-attempted issue consumes no ceiling and costs nothing).
+  for (const issue of ranked) {
+    if (attemptedIds.has(issue.id)) {
       continue;
     }
-    // A repo-wide preflight abort (stale baseline) will fail every remaining
-    // issue identically — that is a harness-level failure, not this issue's.
-    // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
-    // line as a suffix — the reason itself stands untouched.
-    failed.push([
-      issue.id,
-      `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
-    ]);
-    if (outcome.failureKind === "harness") {
-      throw new QueueAbortedError(`Queue aborted — ${issue.id}: ${outcome.failure}`, snapshot());
-    }
+    const blockers = unresolvedInRunBlockers(issue);
+    notAdmitted.push(
+      blockers.length > 0
+        ? [issue.id, `blocked by ${blockers.join(", ")}`]
+        : [issue.id, "cap"],
+    );
   }
 
   return snapshot();
@@ -1431,13 +2094,30 @@ export function formatSummary(summary: QueueSummary): string {
   ].join("\n");
 }
 
-/** `--max-issues` is validated at startup, before any acquisition or spend. */
+/**
+ * `--max-issues` (WI-13 FR-005: an explicit optional ceiling, no default) is
+ * validated at startup when passed, before any acquisition or spend.
+ */
 export function parseCap(raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
     throw new Error(`--max-issues must be an integer >= 1 (got "${raw}")`);
   }
   return n;
+}
+
+/**
+ * WI-13 (FR-009): `--triage` is retired — the dependency-aware planner
+ * replaced it and always runs when more than one issue is eligible. Passing
+ * the dead flag is a startup error naming the replacement, thrown before any
+ * env load, acquisition, clone, or sandbox spend.
+ */
+export function parseRetiredFlags(argv: readonly string[]): void {
+  if (argv.includes("--triage")) {
+    throw new Error(
+      "--triage was removed — the dependency-aware planner now always runs when more than one issue is eligible",
+    );
+  }
 }
 
 /** A source-selection problem (combined flags, missing/unreadable file) — WI-3. */
@@ -1510,7 +2190,7 @@ export type OverrideOutcome =
   | { readonly kind: "run"; readonly outcome: LoopOutcome };
 
 /**
- * `--issue N` single-issue override: no cap, no triage — the user named the
+ * `--issue N` single-issue override: no cap, no planner — the user named the
  * issue — but dedup still applies, open (in flight) and merged (done) alike
  * (decision 6; WI-6 FR-002). Also cleans a stale fix branch for the named
  * issue so the retry starts from clean main.
@@ -1607,7 +2287,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
 // ---------------------------------------------------------------------------
 // CLI entry (WI-2: queue mode is the default; --issue N is the override):
 // npm run loop -- --repo <dir-or-owner/name> [--issue <n>] [--label <label>]
-//                [--max-issues <n>] [--triage]
+//                [--max-issues <n>]
 //                [--spec-doc <path> | --plain-list <path>]  (WI-3: replaces
 //                GitHub issue acquisition with a pre-parsed source)
 //                --provider <name>
@@ -1627,14 +2307,20 @@ async function main(): Promise<void> {
   const optFlag = (name: string): string | undefined =>
     args.includes(`--${name}`) ? flag(name) : undefined;
 
+  // WI-13 (FR-009): retired-flag rejection comes first — pure argv validation,
+  // before any env load, acquisition, clone, worktree, or sandbox spend.
+  parseRetiredFlags(args);
   const repoArg = flag("repo");
   const issueArg = optFlag("issue");
   const providerName = flag("provider");
   const imageName = optFlag("image") ?? "sandcastle-loop";
   const modelOverride = optFlag("model");
-  const cap = parseCap(optFlag("max-issues") ?? "3");
+  // WI-13 (FR-005): the ceiling is optional and has NO default — absent the
+  // flag, every unblocked issue the planner surfaces runs. A passed value is
+  // still validated here, before any acquisition or spend.
+  const maxIssuesArg = optFlag("max-issues");
+  const cap = maxIssuesArg === undefined ? undefined : parseCap(maxIssuesArg);
   const label = optFlag("label");
-  const triage = args.includes("--triage");
   // WI-3 (FR-007): validated and parsed before any env load, clone, worktree,
   // or sandbox — a bad source costs nothing.
   const source = parseSourceArgs(args);
@@ -1765,10 +2451,43 @@ async function main(): Promise<void> {
         stdio: "inherit",
       });
     },
+    // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
+    // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in
+    // the object database: no checkout, no ref mutation, no working-tree
+    // touch. Exit 0 = clean merge (no conflict); exit 1 = conflicts; anything
+    // else is a real git failure and rethrows (the gate records it in the
+    // safe-fallback posture). Not exercised by vitest — its correctness is
+    // code review + the T10 live run's job.
+    async branchConflictsWithMain(dir: string, probeBranch: string) {
+      try {
+        execFileSync("git", ["merge-tree", "--write-tree", probeBranch, "main"], {
+          cwd: dir,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        return false;
+      } catch (error) {
+        if ((error as { status?: number }).status === 1) {
+          return true;
+        }
+        throw error;
+      }
+    },
+    // WI-13 T8 (FR-007/FR-008): the bounded merger run (the only Sandcastle
+    // import stays in the adapter); its output is gated by fresh-sandbox
+    // re-verification in runSingleIssue's verified-merger gate.
+    runMerger,
+    // WI-13 T12 (FR-007/FR-008): publish the merger-resolved branch so
+    // GitHub's PR head carries the verified resolution before `gh pr merge`
+    // reads it — the same push idiom as createPr's initial branch push. Not
+    // exercised by vitest — its correctness is code review + the live runs' job.
+    async pushBranch(repoDir: string, branch: string) {
+      execFileSync("git", ["push", "origin", branch], { cwd: repoDir, stdio: "inherit" });
+    },
   };
 
   // Real QueueDeps wiring: gh + git subprocesses against the target clone.
-  const queueDeps: QueueDeps & { runTriage(input: TriageRunInput): Promise<string> } = {
+  const queueDeps: QueueDeps & { runPlan(input: PlanRunInput): Promise<string> } = {
     ghJson: realGhJson,
     // WI-7 (FR-001): refresh the clone's remote-tracking refs before the dedup
     // reads them — the revert guard and branch listings describe origin's now,
@@ -1807,12 +2526,12 @@ async function main(): Promise<void> {
         // already absent on the remote — nothing to clean up
       }
     },
-    runTriage,
+    runPlan,
   };
   const allDeps = { ...deps, ...queueDeps };
 
   if (issueArg !== undefined) {
-    // Single-issue override (decision 6): no cap, no triage, dedup applies.
+    // Single-issue override (decision 6): no cap, no planner, dedup applies.
     const raw = JSON.parse(
       execFileSync(
         "gh",
@@ -1865,7 +2584,6 @@ async function main(): Promise<void> {
           profile,
           ...(label !== undefined ? { label } : {}),
           cap,
-          triage,
           ...(source !== undefined
             ? { sourceIssues: source.issues, sourceName: source.sourceName }
             : {}),

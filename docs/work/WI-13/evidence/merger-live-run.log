@@ -1,0 +1,79 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: all unblocked
+plan: attempt gh-36
+plan: blocked gh-37 by gh-36
+[gh-36] Started on branch fix/gh-36
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-36-gh-36.log
+remote: 
+remote: Create a pull request for 'fix/gh-36' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-36        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-36 -> fix/gh-36
+branch 'fix/gh-36' set up to track 'origin/fix/gh-36'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-36
+   286dc82..03f6465  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 286dc82..03f6465
+Fast-forward
+ src/loopfix/textops.py           | 2 +-
+ tests/fixed-issues/test_gh_36.py | 8 ++++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_36.py
+✓ Closed issue #36 (titlecase: tabs and newlines are not treated as word separators)
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: attempt gh-37
+[gh-37] Started on branch fix/gh-37
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-37-gh-37.log
+remote: 
+remote: Create a pull request for 'fix/gh-37' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-37        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-37 -> fix/gh-37
+branch 'fix/gh-37' set up to track 'origin/fix/gh-37'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-37
+   03f6465..fc35160  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 03f6465..fc35160
+Fast-forward
+ src/loopfix/textops.py           | 8 +++++++-
+ tests/fixed-issues/test_gh_37.py | 6 ++++++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_37.py
+✓ Closed issue #37 (titlecase: first letter not capitalized when a word starts with punctuation)
+Run summary — attempted: 2 (fixed: 2, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/38
+PR: https://github.com/manjula25/loop-fixtures-py/pull/39
+MERGED gh-36: https://github.com/manjula25/loop-fixtures-py/pull/38 @ 03f64651159d05a1f9213644dc9f781edba6041d (canary: green)
+MERGED gh-37: https://github.com/manjula25/loop-fixtures-py/pull/39 @ fc35160290dc0a6d7f8364e89b96ca4ceb7ab489 (canary: green)
+HARNESS_EXIT=0
+
+--- Controller notes (2026-09-20, appended after the run; no recorded line above altered) ---
+Seed: issues #36/#37 — two independent desired-behavior refinements to the SAME line of
+titlecase (tab/newline separators; first letter past punctuation), designed so the
+second-to-merge lane must hit a merge-tree conflict and exercise the verified-merger gate.
+OUTCOME: the gate did NOT fire — the planner emitted `blocked gh-37 by gh-36` (line 9),
+serializing the pair into separate waves, so gh-37's branch was cut from post-merge main and
+merged cleanly (fast-forward, line 52-53). The run is GREEN end-to-end (exit 0, 2/2 fixed,
+both issues closed, OIDs verified against GitHub) and is positive live evidence for FR-002's
+blocked semantics and the same-run re-plan (second [plan] at line 33 surfacing only gh-37) —
+but A46 (merger conflict path live) REMAINS OPEN. The planner's edge was arguably correct:
+both fixes edit the same line, so "B depends on A" is a true dependency judgment; a fixture
+pair that forces a same-wave conflict must look independent to the planner (different
+symptoms/functions whose fixes happen to touch adjacent lines). Recorded honestly; not
+re-rolled.

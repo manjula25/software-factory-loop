@@ -1,0 +1,125 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+Error: Provider "claude-via-proxy" requires CLI_PROXY_API_URL, CLI_PROXY_API_TOKEN to be set in the environment (see .env.example).
+    at resolveProvider (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-13/src/providers.ts:78:11)
+    at main (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-13/src/loop.ts:2180:17)
+    at <anonymous> (/home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-13/src/loop.ts:2487:11)
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+LOOP EXIT: 0
+
+==== restart: first attempt failed at provider resolution (worktree lacks untracked .env); re-run with main-checkout .env exported into process env. No issues attempted, no spend incurred in attempt 1. ====
+
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: all unblocked
+plan: attempt gh-29
+plan: attempt gh-30
+plan: blocked gh-31 by gh-29
+Run summary — attempted: 2 (fixed: 0, failed: 2) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+FAILED gh-29: Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run (recorded but not failing: none; failing but not recorded: tests/fixed-issues/test_gh_3.py::test_titlecase_preserves_remaining_casing). Re-run onboarding..
+FAILED gh-30: Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run (recorded but not failing: none; failing but not recorded: tests/fixed-issues/test_gh_3.py::test_titlecase_preserves_remaining_casing). Re-run onboarding..
+Queue aborted — gh-29: Aborted before the fix run — project profile is stale — baseline no longer matches a fresh run (recorded but not failing: none; failing but not recorded: tests/fixed-issues/test_gh_3.py::test_titlecase_preserves_remaining_casing). Re-run onboarding..
+LOOP EXIT: 1
+
+==== restart 2: attempt 2 aborted at the preflight baseline gate — correctly. The owner-seeded titlecase bug collided with the existing gh-3 regression test (constraint 4 working as designed). Owner corrected the seed (revert titlecase, re-seed as word_count hyphen split, fixtures 9bb828b; issue #30 closed, #32 opened). No fix-agent spend in attempt 2; the aborted run above is kept verbatim. ====
+
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: all unblocked
+plan: attempt gh-29
+plan: blocked gh-31 by gh-29
+plan: attempt gh-32
+[gh-29] Started on branch fix/gh-29
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-29-gh-29.log
+[gh-32] Started on branch fix/gh-32
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-32-gh-32.log
+remote: 
+remote: Create a pull request for 'fix/gh-29' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-29        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-29 -> fix/gh-29
+branch 'fix/gh-29' set up to track 'origin/fix/gh-29'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+remote: 
+remote: Create a pull request for 'fix/gh-32' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-32        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-32 -> fix/gh-32
+branch 'fix/gh-32' set up to track 'origin/fix/gh-32'.
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-29
+   9bb828b..b34ef7c  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 9bb828b..b34ef7c
+Fast-forward
+ src/loopfix/textops.py           | 2 +-
+ tests/fixed-issues/test_gh_29.py | 7 +++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_29.py
+✓ Closed issue #29 (slugify: digits silently dropped from slugs)
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-32
+   b34ef7c..c773dc4  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating b34ef7c..c773dc4
+Fast-forward
+ src/loopfix/textops.py           |  2 +-
+ tests/fixed-issues/test_gh_32.py | 13 +++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_32.py
+✓ Closed issue #32 (word_count: hyphenated compounds counted as multiple words)
+[plan] Started on branch loop/plan
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-plan-plan.log
+plan: attempt gh-31
+[gh-31] Started on branch fix/gh-31
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-31-gh-31.log
+remote: 
+remote: Create a pull request for 'fix/gh-31' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-31        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-31 -> fix/gh-31
+branch 'fix/gh-31' set up to track 'origin/fix/gh-31'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-31
+   c773dc4..286dc82  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating c773dc4..286dc82
+Fast-forward
+ src/loopfix/textops.py           |  2 +-
+ tests/fixed-issues/test_gh_31.py | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_31.py
+✓ Closed issue #31 (tag_url: multi-word tags collapse to the first word)
+Run summary — attempted: 3 (fixed: 3, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/33
+PR: https://github.com/manjula25/loop-fixtures-py/pull/34
+PR: https://github.com/manjula25/loop-fixtures-py/pull/35
+MERGED gh-29: https://github.com/manjula25/loop-fixtures-py/pull/33 @ b34ef7c753f12ef29ed53468f8656fda8f68283a (canary: green)
+MERGED gh-32: https://github.com/manjula25/loop-fixtures-py/pull/34 @ c773dc423887354e52a88b1e48eb3f895cf1ac06 (canary: green)
+MERGED gh-31: https://github.com/manjula25/loop-fixtures-py/pull/35 @ 286dc82d6c7b98ccc64dec012f9376a09a950969 (canary: green)
+LOOP EXIT: 0
+
+==== errata (post-review): attempt 1's "LOOP EXIT: 0" line is a recording artifact — the wrapper captured tee's exit status ($?), not the harness exit (PIPESTATUS was used from attempt 3 on). The reviewer reproduced the condition: the harness exits 1 on this startup failure (src/loop.ts sets process.exitCode = 1). No line above is altered. ====

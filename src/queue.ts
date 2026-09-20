@@ -1,7 +1,7 @@
 /**
  * Queue ingestion (WI-2): acquiring the target repo's open issues and
  * normalizing them through the WI-1 normalizer. Acquisition is one page at
- * a bounded limit — the page is also the ceiling on downstream triage spend.
+ * a bounded limit — the page is also the ceiling on downstream planner spend.
  */
 
 import { execFileSync } from "node:child_process";
@@ -248,30 +248,74 @@ export async function splitQueue(
 }
 
 // ---------------------------------------------------------------------------
-// Admission: cap with deterministic default, opt-in triage (FR-003).
+// Plan output (WI-13 FR-001): one planning pass over the whole queue —
+// priorities plus a dependency graph the queue runner walks in parallel.
 // ---------------------------------------------------------------------------
 
-/** Zod-validated triage output — Sandcastle's `Output.object` pattern (decision 15). */
-export interface TriageValue {
-  readonly scores: Readonly<Record<string, number>>;
-  readonly files: Readonly<Record<string, readonly string[]>>;
+/** Zod-validated plan output — Sandcastle's `Output.object` pattern (decision 15). */
+export interface PlanValue {
+  readonly priority: Readonly<Record<string, number>>;
+  readonly blockedBy: Readonly<Record<string, readonly string[]>>;
 }
 
-const TriageOutput = z.object({
-  scores: z.record(z.string(), z.number().int().min(1).max(5)),
-  files: z.record(z.string(), z.array(z.string())),
+const PlanOutput = z.object({
+  priority: z.record(z.string(), z.number().int().min(1).max(5)),
+  blockedBy: z.record(z.string(), z.array(z.string())),
 });
 
 /**
- * Extract and validate the `<triage>…</triage>` block. Returns the parsed
- * value only when Zod validation passes AND every queued id appears in
- * `scores`; anything else is unusable (caller takes the degraded path).
+ * Whether the blockedBy edges form any loop (WI-13 FR-001). A cyclic plan can
+ * never be scheduled — some issue waits forever — so it is unusable outright.
+ * Simple DFS walk from every node over edges restricted to known ids.
  */
-export function parseTriageOutput(
+function planHasCycle(blockedBy: Readonly<Record<string, readonly string[]>>): boolean {
+  const VISITING = 1;
+  const DONE = 2;
+  const state = new Map<string, number>();
+
+  function walk(id: string): boolean {
+    const s = state.get(id);
+    if (s === VISITING) {
+      return true; // back-edge: a loop
+    }
+    if (s === DONE) {
+      return false;
+    }
+    state.set(id, VISITING);
+    for (const blocker of blockedBy[id] ?? []) {
+      if (walk(blocker)) {
+        return true;
+      }
+    }
+    state.set(id, DONE);
+    return false;
+  }
+
+  return Object.keys(blockedBy).some(walk);
+}
+
+/**
+ * Extract and validate the `<plan>…</plan>` block (WI-13 FR-001). Returns the
+ * parsed value only when Zod validation passes AND every queued id appears in
+ * `priority`, every blockedBy edge names a queued id (never the issue itself),
+ * and the edges are acyclic; anything else is unusable — the caller takes the
+ * degraded path (deterministic order, loud warning, run continues).
+ *
+ * WI-13 T6b (quality Important — the re-plan validation split): `priority`
+ * coverage is checked against `ids` — the set the caller ASKED about — while
+ * blockedBy keys and edge targets are checked against `options.edgeIds`
+ * (default: `ids`). The re-plan prompt lists only the unattempted issues, but
+ * a compliant answer may still name a just-merged id in an edge (the old
+ * dependency); requiring `priority` to cover merged ids too would fail every
+ * honest re-plan answer, waste the call, and defeat FR-006 in the common
+ * case. Two-arg call sites are unchanged: both checks run against `ids`.
+ */
+export function parsePlanOutput(
   stdout: string,
   ids: readonly string[],
-): TriageValue | undefined {
-  const match = stdout.match(/<triage>([\s\S]*?)<\/triage>/);
+  options: { readonly edgeIds?: readonly string[] } = {},
+): PlanValue | undefined {
+  const match = stdout.match(/<plan>([\s\S]*?)<\/plan>/);
   if (!match) {
     return undefined;
   }
@@ -281,12 +325,104 @@ export function parseTriageOutput(
   } catch {
     return undefined;
   }
-  const parsed = TriageOutput.safeParse(json);
+  const parsed = PlanOutput.safeParse(json);
   if (!parsed.success) {
     return undefined;
   }
-  const covers = ids.every((id) => parsed.data.scores[id] !== undefined);
-  return covers ? parsed.data : undefined;
+  const covers = ids.every((id) => parsed.data.priority[id] !== undefined);
+  if (!covers) {
+    return undefined;
+  }
+  // T6b: edge endpoints check against the FULL id set (`edgeIds`) — see the
+  // doc comment above for why that set is wider than the asked `ids` on a
+  // re-plan.
+  const known = new Set(options.edgeIds ?? ids);
+  for (const [id, blockers] of Object.entries(parsed.data.blockedBy)) {
+    // An edge to an id the queue never held, or to itself, makes the plan
+    // unusable: the runner could never satisfy it.
+    if (!known.has(id) || blockers.some((b) => b === id || !known.has(b))) {
+      return undefined;
+    }
+  }
+  return planHasCycle(parsed.data.blockedBy) ? undefined : parsed.data;
+}
+
+/**
+ * The planning pass's prompt (WI-13 FR-001): ids with first description lines
+ * only, one JSON block as the contract. Defines blocked-by for the planner and
+ * states the all-blocked rule so the plan can never deadlock the whole queue.
+ */
+export function buildPlanPrompt(issues: readonly NormalizedIssue[]): string {
+  const listing = issues
+    .map((i) => `- ${i.id}: ${i.description.split("\n")[0] ?? i.id}`)
+    .join("\n");
+  return [
+    "You are planning a fix queue. For each issue below, give an integer priority",
+    "from 1 (low) to 5 (urgent) and the ids of the issues it is blocked by.",
+    "Issue B is blocked by issue A when B's fix depends on a decision, API",
+    "shape, or code state A's fix will establish, or when both fixes likely",
+    "touch the same files.",
+    "If every issue is blocked, give the single highest-priority candidate the highest priority and NO blockers.",
+    "Answer with exactly one JSON block and nothing else inside it:",
+    '<plan>{"priority":{"<id>":1-5},"blockedBy":{"<id>":["<id>"]}}</plan>',
+    "",
+    listing,
+  ].join("\n");
+}
+
+/**
+ * Order the queue by a validated plan (WI-13 FR-001): priority desc, ties by
+ * ascending issue number. The blockedBy graph is NOT consulted here: it shapes
+ * which issues may run in parallel, which is the queue runner's job, not this
+ * ordering's. Iterates the queue's `issues`, never the plan's keys — the
+ * parser tolerates extra priority keys, so a key-driven walk could surface
+ * phantom issues downstream (controller finding A1). No plan (unusable or
+ * never run): ascending issue-number order on a copy, input never mutated.
+ */
+export function orderFromPlan(
+  issues: readonly NormalizedIssue[],
+  plan: PlanValue | undefined,
+): NormalizedIssue[] {
+  return [...issues].sort((a, b) => {
+    if (plan !== undefined) {
+      const diff = (plan.priority[b.id] ?? 0) - (plan.priority[a.id] ?? 0);
+      if (diff !== 0) {
+        return diff;
+      }
+    }
+    return issueNumber(a.id) - issueNumber(b.id);
+  });
+}
+
+/**
+ * The wave-scheduling primitive (WI-13 FR-002/FR-003): the issues from
+ * `order` — preserving `order`'s ranking, excluding ids already in
+ * `completed` (later waves pass the SAME full order with a grown `completed`
+ * set, so done issues must never come back) — whose blockers, as named by
+ * `edges[id]`, are all in `completed`. Only edges whose blocker is itself IN
+ * the run (`order`) count: an edge naming an id this run never held is
+ * ignored — an unknown/absent blocker cannot gate a run. Issues with no
+ * `edges` entry are unblocked. The runner's initial wave is
+ * `unblockedAfter(order, edges, new Set())`; on opted-in repos `completed`
+ * grows with MERGED issues, on non-opted with lanes that settled with a PR
+ * (FR-002). Acyclicity is the parser's guarantee (`parsePlanOutput` rejects
+ * cycles), so an empty result with issues remaining means the all-blocked ∅
+ * case — the caller's fallback trigger (highest-priority remaining issue,
+ * the planner's all-blocked rule made mechanical — T6).
+ */
+export function unblockedAfter(
+  order: readonly NormalizedIssue[],
+  edges: Readonly<Record<string, readonly string[]>>,
+  completed: ReadonlySet<string>,
+): NormalizedIssue[] {
+  const inRun = new Set(order.map((issue) => issue.id));
+  return order.filter(
+    (issue) =>
+      !completed.has(issue.id) &&
+      (edges[issue.id] ?? []).every(
+        (blocker) => !inRun.has(blocker) || completed.has(blocker),
+      ),
+  );
 }
 
 /**
@@ -307,91 +443,8 @@ export function parseReviewOutput(stdout: string): ReviewVerdict {
   return match === null ? "uncertain" : (match[1] as ReviewVerdict);
 }
 
-/** Short scoring prompt — one block, per-issue score and likely-touched files. */
-export function buildTriagePrompt(issues: readonly NormalizedIssue[]): string {
-  const listing = issues
-    .map((i) => `- ${i.id}: ${i.description.split("\n")[0] ?? i.id}`)
-    .join("\n");
-  return [
-    "You are triaging a fix queue. For each issue below, give an integer priority",
-    "from 1 (low) to 5 (urgent) and the repository files its fix likely touches.",
-    "Answer with exactly one JSON block and nothing else inside it:",
-    '<triage>{"scores":{"<id>":1-5},"files":{"<id>":["path/file.ext"]}}</triage>',
-    "",
-    listing,
-  ].join("\n");
-}
-
-export interface NotAdmitted {
-  readonly issue: NormalizedIssue;
-  /** "cap", or "file overlap with gh-N" (decision 14). */
-  readonly reason: string;
-}
-
-export interface AdmitInput {
-  readonly issues: readonly NormalizedIssue[];
-  /** Validated >= 1 by the CLI at startup (FR-003(f)); documented precondition. */
-  readonly cap: number;
-  readonly triage?: TriageValue;
-  /** True when a triage pass ran but its output failed validation — degrade loudly. */
-  readonly triageUnusable?: boolean;
-}
-
-export interface AdmitResult {
-  readonly admitted: NormalizedIssue[];
-  readonly notAdmitted: NotAdmitted[];
-  readonly degraded: boolean;
-}
-
+/** Trailing number of an issue id (`gh-12` → 12) — `orderFromPlan`'s tie rule. */
 function issueNumber(id: string): number {
   const digits = id.match(/(\d+)$/);
   return digits ? Number(digits[1]) : Number.MAX_SAFE_INTEGER;
-}
-
-/**
- * Admit at most `cap` issues. Default: ascending issue number, no model call.
- * With usable triage: score desc, ties ascending; an issue whose files overlap
- * an already-admitted issue's is deferred with the overlap named (decision 14).
- * With unusable triage: deterministic order, `degraded: true`.
- */
-export function admitIssues(input: AdmitInput): AdmitResult {
-  const useTriage = input.triage !== undefined && input.triageUnusable !== true;
-  const ranked = [...input.issues].sort((a, b) => {
-    if (useTriage) {
-      const diff =
-        (input.triage?.scores[b.id] ?? 0) - (input.triage?.scores[a.id] ?? 0);
-      if (diff !== 0) {
-        return diff;
-      }
-    }
-    return issueNumber(a.id) - issueNumber(b.id);
-  });
-
-  const admitted: NormalizedIssue[] = [];
-  const notAdmitted: NotAdmitted[] = [];
-  const fileOwners = new Map<string, string>();
-
-  for (const issue of ranked) {
-    if (admitted.length >= input.cap) {
-      notAdmitted.push({ issue, reason: "cap" });
-      continue;
-    }
-    const overlapOwner = (input.triage?.files[issue.id] ?? []).find((f) =>
-      fileOwners.has(f),
-    );
-    if (useTriage && overlapOwner !== undefined) {
-      notAdmitted.push({ issue, reason: `file overlap with ${fileOwners.get(overlapOwner)}` });
-      continue;
-    }
-    admitted.push(issue);
-    for (const file of input.triage?.files[issue.id] ?? []) {
-      fileOwners.set(file, issue.id);
-    }
-  }
-
-  return {
-    admitted,
-    notAdmitted,
-    degraded: input.triageUnusable === true,
-  };
 }

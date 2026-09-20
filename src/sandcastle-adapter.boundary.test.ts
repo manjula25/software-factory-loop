@@ -54,19 +54,33 @@ describe("sandcastle adapter boundary (FR-001)", () => {
     expect(text).toContain("@ai-hero/sandcastle");
   });
 
-  it("exposes the four seam exports: runFixRun, createFixSandbox, mergeBack, runTriage", () => {
+  it("exposes the four seam exports: runFixRun, createFixSandbox, mergeBack, runPlan", () => {
     expect(typeof adapter.runFixRun).toBe("function");
     expect(typeof adapter.createFixSandbox).toBe("function");
     expect(typeof adapter.mergeBack).toBe("function");
-    expect(typeof adapter.runTriage).toBe("function");
+    expect(typeof adapter.runPlan).toBe("function");
   });
 
-  it("keeps the triage pass bounded to one iteration, on a branch that is never a fix branch", () => {
-    const options = adapter.triageRunOptions();
+  it("keeps the planning pass bounded to one iteration, on a branch that is never a fix branch", () => {
+    const options = adapter.planRunOptions();
 
-    // constraint 5: a scoring run that could iterate is an unbounded second agent
+    // constraint 5: a planning run that could iterate is an unbounded second agent
     expect(options.maxIterations).toBe(1);
-    expect(options.branchStrategy).toEqual({ type: "branch", branch: adapter.TRIAGE_BRANCH });
-    expect(adapter.TRIAGE_BRANCH.startsWith("fix/")).toBe(false);
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: adapter.PLAN_BRANCH });
+    expect(adapter.PLAN_BRANCH.startsWith("fix/")).toBe(false);
+  });
+
+  it("keeps the merger bounded to one iteration, on the caller's fix branch (FR-007)", () => {
+    // constraint 5: a merger that could iterate is an unbounded second agent
+    expect(adapter.MERGER_MAX_ITERATIONS).toBe(1);
+
+    const options = adapter.mergerRunOptions("fix/gh-1");
+    expect(options.maxIterations).toBe(1);
+    // the merger reuses the caller's existing fix branch, unlike the throwaway
+    // loop/plan and loop/review branches
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: "fix/gh-1" });
+
+    expect(typeof adapter.runMerger).toBe("function");
+    expect(adapter.runMerger.constructor.name).toBe("AsyncFunction");
   });
 });

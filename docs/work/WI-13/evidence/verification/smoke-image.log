@@ -1,0 +1,22 @@
+
+> software-factory-loop@0.0.0 smoke:image
+> bash scripts/smoke-image.sh
+
+Python 3.12.14
+ok: python
+pytest 9.1.1
+ok: pytest
+v22.23.2
+ok: node
+git version 2.47.3
+ok: git
+gh version 2.101.0 (2026-09-15)
+https://github.com/cli/cli/releases/tag/v2.101.0
+ok: gh
+2.1.270 (Claude Code)
+ok: claude
+codex-cli 0.155.1
+ok: codex
+1.18.31
+ok: opencode
+ok: non-root agent user
