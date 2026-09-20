@@ -15,6 +15,7 @@ import {
   prListArgs,
   QueueAcquisitionError,
   splitQueue,
+  unblockedAfter,
   type PlanValue,
   type QueueDeps,
 } from "./queue.js";
@@ -635,5 +636,70 @@ describe("plan-order: buildPlanPrompt / orderFromPlan (WI-13 T2, FR-001)", () =>
     const ordered = orderFromPlan([issue(2), issue(1)], plan);
 
     expect(ordered.map((i) => i.id)).toEqual(["gh-2", "gh-1"]);
+  });
+});
+
+describe("waves: unblockedAfter (WI-13 T5, FR-002/FR-003)", () => {
+  const edges: Record<string, readonly string[]> = { "gh-2": ["gh-1"] };
+
+  it("empty completed yields the initial wave: B waits for A, C runs", () => {
+    const wave = unblockedAfter([issue(1), issue(2), issue(3)], edges, new Set());
+
+    expect(wave.map((i) => i.id)).toEqual(["gh-1", "gh-3"]);
+  });
+
+  it("completed A unblocks B", () => {
+    // With only A completed, B joins the unblocked set (C, no edges, stays
+    // unblocked — the caller marks settled lanes completed, it does not
+    // re-shrink the order).
+    const afterA = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      edges,
+      new Set(["gh-1"]),
+    );
+    expect(afterA.map((i) => i.id)).toEqual(["gh-2", "gh-3"]);
+
+    // The realistic wave-2 call: wave 1 was [A, C], both settled — exactly [B].
+    const wave2 = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      edges,
+      new Set(["gh-1", "gh-3"]),
+    );
+    expect(wave2.map((i) => i.id)).toEqual(["gh-2"]);
+  });
+
+  it("edges pointing outside the run are ignored — an absent blocker cannot gate a run", () => {
+    const wave = unblockedAfter(
+      [issue(1), issue(2), issue(3)],
+      { "gh-3": ["gh-99"] },
+      new Set(),
+    );
+
+    expect(wave.map((i) => i.id)).toEqual(["gh-1", "gh-2", "gh-3"]);
+  });
+
+  it("an all-blocked remaining set yields [] — the fallback is the runner's (T6)", () => {
+    const wave = unblockedAfter(
+      [issue(1), issue(2)],
+      { "gh-1": ["gh-2"], "gh-2": ["gh-1"] },
+      new Set(),
+    );
+
+    expect(wave).toEqual([]);
+  });
+
+  it("two blockers gate until BOTH are completed; duplicate blockers are idempotent", () => {
+    const twoBlockers: Record<string, readonly string[]> = {
+      "gh-3": ["gh-1", "gh-2", "gh-1"],
+    };
+    const order = [issue(1), issue(2), issue(3)];
+
+    // gh-1 completed, gh-2 not: gh-3 stays blocked (gh-2 rides along, free).
+    expect(
+      unblockedAfter(order, twoBlockers, new Set(["gh-1"])).map((i) => i.id),
+    ).toEqual(["gh-2"]);
+    expect(
+      unblockedAfter(order, twoBlockers, new Set(["gh-1", "gh-2"])).map((i) => i.id),
+    ).toEqual(["gh-3"]);
   });
 });

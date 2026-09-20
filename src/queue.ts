@@ -382,6 +382,37 @@ export function orderFromPlan(
 }
 
 /**
+ * The wave-scheduling primitive (WI-13 FR-002/FR-003): the issues from
+ * `order` — preserving `order`'s ranking, excluding ids already in
+ * `completed` (later waves pass the SAME full order with a grown `completed`
+ * set, so done issues must never come back) — whose blockers, as named by
+ * `edges[id]`, are all in `completed`. Only edges whose blocker is itself IN
+ * the run (`order`) count: an edge naming an id this run never held is
+ * ignored — an unknown/absent blocker cannot gate a run. Issues with no
+ * `edges` entry are unblocked. The runner's initial wave is
+ * `unblockedAfter(order, edges, new Set())`; on opted-in repos `completed`
+ * grows with MERGED issues, on non-opted with lanes that settled with a PR
+ * (FR-002). Acyclicity is the parser's guarantee (`parsePlanOutput` rejects
+ * cycles), so an empty result with issues remaining means the all-blocked ∅
+ * case — the caller's fallback trigger (highest-priority remaining issue,
+ * the planner's all-blocked rule made mechanical — T6).
+ */
+export function unblockedAfter(
+  order: readonly NormalizedIssue[],
+  edges: Readonly<Record<string, readonly string[]>>,
+  completed: ReadonlySet<string>,
+): NormalizedIssue[] {
+  const inRun = new Set(order.map((issue) => issue.id));
+  return order.filter(
+    (issue) =>
+      !completed.has(issue.id) &&
+      (edges[issue.id] ?? []).every(
+        (blocker) => !inRun.has(blocker) || completed.has(blocker),
+      ),
+  );
+}
+
+/**
  * WI-6 T6 (FR-009): the pre-merge review pass's three verdicts. `approve` is
  * the only verdict that lets a merge proceed; `wrong` (wrong root cause /
  * wrong test) and `uncertain` (cannot tell) both block it.
