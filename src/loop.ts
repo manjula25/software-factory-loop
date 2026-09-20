@@ -44,6 +44,7 @@ import {
   parseReviewOutput,
   realGhJson,
   splitQueue,
+  unblockedAfter,
   type MergedPr,
   type OpenPr,
   type PlanValue,
@@ -1240,11 +1241,15 @@ export class QueueAbortedError extends Error {
 
 /**
  * Run the queue: acquire → dedup → plan (when >1 eligible, WI-13 FR-001) →
- * rank + optional ceiling (WI-13 FR-005) → run each admitted issue
- * sequentially through runSingleIssue. An issue-level failure is recorded and
- * the queue continues; a harness-level failure (stale baseline, credentials)
- * aborts with a `QueueAbortedError` whose `summary` holds the partial run —
- * the caller prints both that and the abort reason.
+ * rank + optional ceiling (WI-13 FR-005) → run the unblocked set in
+ * CONCURRENT WAVES through runSingleIssue (WI-13 T6, FR-003), re-planning
+ * after each merge wave on opted-in repos (FR-006) and growing the completed
+ * set per FR-002 (opted-in: merged ids; non-opted: PR-settled lanes). An
+ * issue-level failure is recorded and the queue continues; a harness-level
+ * failure (stale baseline, credentials) aborts — raised AFTER the wave's
+ * outcomes are collected (FR-004) — with a `QueueAbortedError` whose
+ * `summary` holds the partial run; the caller prints both that and the abort
+ * reason.
  */
 export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promise<QueueSummary> {
   // FR-007: a preset source (--spec-doc / --plain-list) replaces acquisition —
@@ -1286,46 +1291,29 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     planUnusable = plan === undefined;
   }
 
-  // WI-13 FR-005 (T4): admission is rank + slice inline — `admitIssues` is
-  // dissolved, its interim plan-fed bridge with it. The plan ranks
-  // (`orderFromPlan`), the explicit ceiling slices the ranked order, and the
-  // remainder is recorded not-admitted with reason "cap". Absent a ceiling,
-  // every issue the plan surfaced attempts. File-overlap deferral is gone:
-  // the plan carries no file data, and serialization moves to the dependency
-  // edges (T5/T6).
-  const ranked = orderFromPlan(split.eligible, plan);
-  const admitted =
-    input.cap === undefined ? ranked : ranked.slice(0, input.cap);
-  const notAdmitted: [string, string][] =
-    input.cap === undefined
-      ? []
-      : ranked.slice(input.cap).map((issue) => [issue.id, "cap"] as [string, string]);
-  if (planUnusable) {
+  // WI-13 FR-005 (T4, kept): the plan ranks (`orderFromPlan`) and the explicit
+  // ceiling bounds ATTEMPTED issues — `admitIssues` stays dissolved. WI-13 T6:
+  // the ranked order plus the plan's `blockedBy` edges now drive WAVES — each
+  // wave is the unblocked-and-unattempted set (`unblockedAfter`, T5), sliced to
+  // the remaining budget, executed CONCURRENTLY (FR-003). File-overlap
+  // deferral stays gone: serialization lives entirely in the edges.
+  let ranked = orderFromPlan(split.eligible, plan);
+  let edges: Readonly<Record<string, readonly string[]>> = plan?.blockedBy ?? {};
+  const warnPlanUnusable = (reason: string | undefined) => {
     // The reason can quote a subprocess error, so it passes the guard like any
     // other emitted string before it reaches a terminal or an evidence log.
-    const warning = `[queue] WARNING: plan unusable (${planError ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
+    const warning = `[queue] WARNING: plan unusable (${reason ?? "output failed validation"}) — falling back to deterministic order (ascending issue number).`;
     assertNoSecrets([warning], deps.env);
     console.error(warning);
-  }
-
-  // WI-13 FR-005: the surfaced plan prints BEFORE any fix-agent spend — the
-  // operator sees what the run will attempt (and what the ceiling cut) before
-  // the first lane starts. Per-issue lines are attempt/cap only here; the
-  // blocked-by vocabulary joins with the dependency edges (T5/T6). Every line
-  // passes the secrets guard at this emission seam like all emitted strings.
-  const planLines = [
-    input.cap === undefined ? "plan: all unblocked" : `plan: attempted ≤ ${input.cap}`,
-    ...admitted.map((issue) => `plan: attempt ${issue.id}`),
-    ...notAdmitted.map(([id]) => `plan: cap ${id}`),
-  ];
-  assertNoSecrets(planLines, deps.env);
-  for (const line of planLines) {
-    console.log(line);
+  };
+  if (planUnusable) {
+    warnPlanUnusable(planError);
   }
 
   const attempted: string[] = [];
   const fixed: string[] = [];
   const failed: [string, string][] = [];
+  const notAdmitted: [string, string][] = [];
   const attachmentFailures: [string, string][] = [];
   const prUrls: string[] = [];
   const mergedPrs: [string, string, string, string?][] = [];
@@ -1352,80 +1340,277 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     ...(input.sourceName !== undefined ? { source: input.sourceName } : {}),
   });
 
-  for (const issue of admitted) {
-    const outcome = await runSingleIssue(
-      {
-        issue,
-        repoDir: input.repoDir,
-        imageName: input.imageName,
-        agent: input.agent,
-        profile: input.profile,
-      },
-      deps,
+  // A16 (controller ledger): `unblockedAfter` returns every not-completed
+  // unblocked issue each call, so the runner tracks the attempted set itself —
+  // a settled lane (fixed, failed, merged, reverted — any terminal outcome) is
+  // NEVER re-attempted in a later wave. The FR-002 `completed` set is a
+  // DIFFERENT, smaller set: opted-in profiles grow it with MERGED ids only (a
+  // merge failure or review skip does NOT unblock dependents — "not attempted
+  // until A has MERGED"); non-opted profiles grow it with lanes that settled
+  // WITH a PR (the human-merges-in-order posture).
+  const autoMerge = input.profile.autoMerge === true;
+  const attemptedIds = new Set<string>();
+  const completed = new Set<string>();
+  const inRun = new Set(ranked.map((issue) => issue.id));
+  const budgetLeft = () => input.cap === undefined || attemptedIds.size < input.cap;
+  /** A17: the cap bounds lanes STARTED — each wave is sliced to what remains. */
+  const nextWave = (): NormalizedIssue[] => {
+    const unblocked = unblockedAfter(ranked, edges, completed).filter(
+      (issue) => !attemptedIds.has(issue.id),
     );
-    attempted.push(issue.id);
-    for (const url of outcome.attachmentFailures ?? []) {
-      attachmentFailures.push([issue.id, url]);
+    return input.cap === undefined ? unblocked : unblocked.slice(0, input.cap - attemptedIds.size);
+  };
+  /** In-run blockers of `issue` that never completed — `unblockedAfter`'s gate. */
+  const unresolvedInRunBlockers = (issue: NormalizedIssue): readonly string[] =>
+    (edges[issue.id] ?? []).filter((blocker) => inRun.has(blocker) && !completed.has(blocker));
+
+  // WI-13 FR-005: the surfaced plan prints BEFORE any fix-agent spend — the
+  // operator sees what the run will attempt (and what the ceiling cut) before
+  // the first lane starts. Per-issue vocabulary (T6): `attempt` for wave-1
+  // lanes, `blocked <id> by <ids>` for issues the edges hold back (they may be
+  // re-surfaced as attempts in later waves), `cap` for issues the ceiling cut.
+  // Every line passes the secrets guard at this emission seam like all emitted
+  // strings.
+  const firstWave = nextWave();
+  const firstWaveIds = new Set(firstWave.map((issue) => issue.id));
+  const planLines = [
+    input.cap === undefined ? "plan: all unblocked" : `plan: attempted ≤ ${input.cap}`,
+    ...ranked.map((issue) => {
+      if (firstWaveIds.has(issue.id)) {
+        return `plan: attempt ${issue.id}`;
+      }
+      const blockers = unresolvedInRunBlockers(issue);
+      return blockers.length > 0
+        ? `plan: blocked ${issue.id} by ${blockers.join(", ")}`
+        : `plan: cap ${issue.id}`;
+    }),
+  ];
+  assertNoSecrets(planLines, deps.env);
+  for (const line of planLines) {
+    console.log(line);
+  }
+
+  // WI-13 T6 (FR-003): the wave loop. Each wave's lanes run concurrently via
+  // Promise.allSettled — outcomes are collected in wave order (deterministic;
+  // `attempted`, `fixed`, `prUrls`, `failed` keep their ranked-order shape).
+  // A lane promise never rejects (the catch wraps it defensively), so
+  // allSettled lets every sibling settle before the wave is judged.
+  let current = firstWave;
+  let waveIndex = 0;
+  while (current.length > 0) {
+    if (waveIndex > 0) {
+      // The later wave's lanes were `blocked` on the initial surface; each is
+      // re-surfaced as an attempt line before its spend (FR-005's print-first
+      // rule, extended to waves).
+      const reSurfaced = current.map((issue) => `plan: attempt ${issue.id}`);
+      assertNoSecrets(reSurfaced, deps.env);
+      for (const line of reSurfaced) {
+        console.log(line);
+      }
     }
-    // WI-6 T4: collected before the abort below — the aborting snapshot still
-    // carries the ⚠️ REVERTED record for the summary.
-    if (outcome.reverted !== undefined) {
-      reverted.push(outcome.reverted);
+    const lanes = current.map(async (issue) => {
+      try {
+        return {
+          issue,
+          outcome: await runSingleIssue(
+            {
+              issue,
+              repoDir: input.repoDir,
+              imageName: input.imageName,
+              agent: input.agent,
+              profile: input.profile,
+            },
+            deps,
+          ),
+        };
+      } catch (error) {
+        // Defensive only — runSingleIssue returns outcomes rather than
+        // throwing. A throw would abort every remaining issue identically:
+        // the harness-level class.
+        return { issue, laneError: error };
+      }
+    });
+    const settled = await Promise.allSettled(lanes);
+    // FR-004 (WI-13): the abort is raised AFTER the wave's outcomes are
+    // collected, never mid-flight — sibling lanes' open PRs stand as
+    // deliverables in the aborting snapshot. First harness-level outcome (in
+    // wave order) carries the abort, exactly as the sequential runner did.
+    let harnessAbort: { id: string; failure: string } | undefined;
+    let mergesThisWave = 0;
+    for (const result of settled) {
+      if (result.status === "rejected") {
+        // Unreachable — each lane's catch turns a throw into a laneError —
+        // but allSettled's type demands the arm, and skipping a phantom
+        // rejection is the honest no-op (there is no issue to record).
+        continue;
+      }
+      const { issue, outcome, laneError } = result.value as {
+        issue: NormalizedIssue;
+        outcome?: LoopOutcome;
+        laneError?: unknown;
+      };
+      attemptedIds.add(issue.id);
+      attempted.push(issue.id);
+      if (outcome === undefined) {
+        const reason = laneError instanceof Error ? laneError.message : String(laneError);
+        failed.push([issue.id, reason]);
+        harnessAbort ??= { id: issue.id, failure: reason };
+        continue;
+      }
+      for (const url of outcome.attachmentFailures ?? []) {
+        attachmentFailures.push([issue.id, url]);
+      }
+      // WI-6 T4: collected before the abort below — the aborting snapshot still
+      // carries the ⚠️ REVERTED record for the summary.
+      if (outcome.reverted !== undefined) {
+        reverted.push(outcome.reverted);
+      }
+      // WI-7 (FR-002): same pattern — the record is collected before the abort
+      // throw so the aborting summary still carries the ⚠️ UNCANARIED MERGE line.
+      if (outcome.uncanaried !== undefined) {
+        uncanariedMerges.push([outcome.uncanaried.id, uncanariedDetail(outcome.uncanaried)]);
+      }
+      if (outcome.prUrl) {
+        fixed.push(issue.id);
+        prUrls.push(outcome.prUrl);
+        // WI-6: a merged or failed-to-merge outcome still counts as fixed (see
+        // QueueSummary.mergeFailures for why a merge failure is not an issue
+        // failure); both get their own loud summary surfaces.
+        if (outcome.merged !== undefined) {
+          // FR-002 opted-in arm: only a MERGE completes a blocker.
+          completed.add(issue.id);
+          mergesThisWave += 1;
+          // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
+          // PRE-COMPOSED teardown suffix, built here at push time so the tuple
+          // stays 4 slots and formatSummary interpolates it unchanged in shape.
+          // Exactly one failed origin renders `teardown: <reason>` byte-identical
+          // to today's single-failure rendering (whichever origin it was); both
+          // failed renders both, origin-labeled.
+          const earlyTeardown = outcome.teardownFailure;
+          const canaryTeardown = outcome.canaryTeardownFailure;
+          const teardownSuffix =
+            earlyTeardown !== undefined && canaryTeardown !== undefined
+              ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
+              : earlyTeardown !== undefined || canaryTeardown !== undefined
+                ? `teardown: ${earlyTeardown ?? canaryTeardown}`
+                : undefined;
+          mergedPrs.push(
+            teardownSuffix !== undefined
+              ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
+              : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
+          );
+        } else if (!autoMerge) {
+          // FR-002 non-opted arm: a lane that settled WITH a PR completes its
+          // blockers' wait (the human merges in order).
+          completed.add(issue.id);
+        }
+        if (outcome.mergeFailure !== undefined) {
+          mergeFailures.push([issue.id, outcome.mergeFailure]);
+        }
+        if (outcome.closeFailure !== undefined) {
+          closeFailures.push([issue.id, outcome.closeFailure]);
+        }
+        if (outcome.reviewSkip !== undefined) {
+          reviewSkipped.push([issue.id, outcome.reviewSkip]);
+        }
+        continue;
+      }
+      // A repo-wide preflight abort (stale baseline) will fail every remaining
+      // issue identically — that is a harness-level failure, not this issue's.
+      // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
+      // line as a suffix — the reason itself stands untouched.
+      failed.push([
+        issue.id,
+        `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
+      ]);
+      if (outcome.failureKind === "harness") {
+        harnessAbort ??= { id: issue.id, failure: outcome.failure ?? "harness-level failure" };
+      }
     }
-    // WI-7 (FR-002): same pattern — the record is collected before the abort
-    // throw so the aborting summary still carries the ⚠️ UNCANARIED MERGE line.
-    if (outcome.uncanaried !== undefined) {
-      uncanariedMerges.push([outcome.uncanaried.id, uncanariedDetail(outcome.uncanaried)]);
+    if (harnessAbort !== undefined) {
+      throw new QueueAbortedError(
+        `Queue aborted — ${harnessAbort.id}: ${harnessAbort.failure}`,
+        snapshot(),
+      );
     }
-    if (outcome.prUrl) {
-      fixed.push(issue.id);
-      prUrls.push(outcome.prUrl);
-      // WI-6: a merged or failed-to-merge outcome still counts as fixed (see
-      // QueueSummary.mergeFailures for why a merge failure is not an issue
-      // failure); both get their own loud summary surfaces.
-      if (outcome.merged !== undefined) {
-        // WI-11 (FR-001, ponytail 2026-09-19): the 4th element is the
-        // PRE-COMPOSED teardown suffix, built here at push time so the tuple
-        // stays 4 slots and formatSummary interpolates it unchanged in shape.
-        // Exactly one failed origin renders `teardown: <reason>` byte-identical
-        // to today's single-failure rendering (whichever origin it was); both
-        // failed renders both, origin-labeled.
-        const earlyTeardown = outcome.teardownFailure;
-        const canaryTeardown = outcome.canaryTeardownFailure;
-        const teardownSuffix =
-          earlyTeardown !== undefined && canaryTeardown !== undefined
-            ? `teardown: ${earlyTeardown}; canary teardown: ${canaryTeardown}`
-            : earlyTeardown !== undefined || canaryTeardown !== undefined
-              ? `teardown: ${earlyTeardown ?? canaryTeardown}`
-              : undefined;
-        mergedPrs.push(
-          teardownSuffix !== undefined
-            ? [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit, teardownSuffix]
-            : [issue.id, outcome.merged.prUrl, outcome.merged.mergeCommit],
-        );
+
+    // WI-13 FR-006: same-run re-plan after a merge wave — opted-in only (a
+    // non-opted run has no merge event to re-plan on), ONE call per merge wave,
+    // never per issue. Skipped when nothing remains to attempt or the budget is
+    // spent: a model call that cannot change the schedule is silent spend.
+    if (autoMerge && mergesThisWave > 0) {
+      const remaining = ranked.filter((issue) => !attemptedIds.has(issue.id));
+      if (remaining.length > 0 && budgetLeft()) {
+        const prompt = buildPlanPrompt(remaining);
+        assertNoSecrets([prompt], deps.env);
+        let rePlanError: string | undefined;
+        let rePlan: PlanValue | undefined;
+        try {
+          const stdout = await deps.runPlan({
+            cwd: input.repoDir,
+            prompt,
+            imageName: input.imageName,
+            agent: input.agent,
+          });
+          // Validated against the FULL eligible id set, not just the remaining
+          // ones: a re-plan asked only about the remaining issues may still
+          // name a just-merged id in an edge (the old dependency), and that
+          // must not invalidate the plan — `unblockedAfter` ignores edges to
+          // completed ids anyway.
+          rePlan = parsePlanOutput(stdout, split.eligible.map((issue) => issue.id));
+        } catch (error) {
+          // FR-001 fallback: a failed re-plan degrades the schedule, never the
+          // run — the current ranking and edges simply stand.
+          rePlanError = error instanceof Error ? error.message : String(error);
+        } finally {
+          // Runs on the throw path too, so a failed pass never leaks the branch.
+          await deps.deleteBranch(input.repoDir, PLAN_BRANCH);
+        }
+        if (rePlan !== undefined) {
+          ranked = orderFromPlan(ranked, rePlan);
+          edges = rePlan.blockedBy;
+        } else {
+          warnPlanUnusable(rePlanError);
+        }
       }
-      if (outcome.mergeFailure !== undefined) {
-        mergeFailures.push([issue.id, outcome.mergeFailure]);
+    }
+
+    waveIndex += 1;
+    let upcoming = nextWave();
+    if (upcoming.length === 0) {
+      const remaining = ranked.filter((issue) => !attemptedIds.has(issue.id));
+      if (remaining.length === 0 || !budgetLeft()) {
+        break;
       }
-      if (outcome.closeFailure !== undefined) {
-        closeFailures.push([issue.id, outcome.closeFailure]);
+      // The planner's all-blocked rule, made mechanical: an empty unblocked set
+      // with issues remaining falls back to the highest-priority remaining
+      // issue — never a dead queue. RESERVED, though, for the rule-violation
+      // deadlock: when a lane settled WITHOUT completing (a failed blocker),
+      // FR-002's boundary text governs instead — its dependents stay
+      // not-attempted with the reason named, never force-attempted.
+      if (attemptedIds.size > completed.size) {
+        break;
       }
-      if (outcome.reviewSkip !== undefined) {
-        reviewSkipped.push([issue.id, outcome.reviewSkip]);
-      }
+      upcoming = [remaining[0]!];
+    }
+    current = upcoming;
+  }
+
+  // WI-13 FR-002/FR-005: honest records for every issue the run never
+  // attempted — `blocked by <ids>` when in-run blockers never settled (a
+  // failed blocker leaves its dependents here; the run continued past it),
+  // `cap` when the ceiling cut an otherwise-attemptable issue (FR-005: a
+  // blocked-never-attempted issue consumes no ceiling and costs nothing).
+  for (const issue of ranked) {
+    if (attemptedIds.has(issue.id)) {
       continue;
     }
-    // A repo-wide preflight abort (stale baseline) will fail every remaining
-    // issue identically — that is a harness-level failure, not this issue's.
-    // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
-    // line as a suffix — the reason itself stands untouched.
-    failed.push([
-      issue.id,
-      `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
-    ]);
-    if (outcome.failureKind === "harness") {
-      throw new QueueAbortedError(`Queue aborted — ${issue.id}: ${outcome.failure}`, snapshot());
-    }
+    const blockers = unresolvedInRunBlockers(issue);
+    notAdmitted.push(
+      blockers.length > 0
+        ? [issue.id, `blocked by ${blockers.join(", ")}`]
+        : [issue.id, "cap"],
+    );
   }
 
   return snapshot();

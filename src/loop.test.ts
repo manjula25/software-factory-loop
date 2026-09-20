@@ -543,7 +543,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     });
   });
 
-  it("(c) canary red halts the queue: runQueue throws QueueAbortedError and no further admitted issue is attempted", async () => {
+  it("(c) canary red halts the queue: runQueue throws QueueAbortedError once the wave has settled — no further WAVE starts (WI-13 T6)", async () => {
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
       canaryNewFailureFor: "gh-1",
@@ -556,9 +556,13 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toMatch(/REVERTED.*gh-1/);
-    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
-    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+    // WI-13 T6 (FR-004): gh-1 and gh-2 shared the wave, so both lanes settled
+    // before the abort was raised; the halt means no LATER wave would start —
+    // pinned by the wave-runner (c) test with a would-be third lane's posture.
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(aborted.summary.reverted[0]!.id).toBe("gh-1");
+    expect(deps.createPr).toHaveBeenCalledTimes(2);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(2);
   });
 
   it("(d) canary red: exactly one comment on the merged PR, its body carrying @<notifyHandle> and REVERTED", async () => {
@@ -677,7 +681,8 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     expect(error).toBeInstanceOf(QueueAbortedError); // halt is unconditional on red
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toContain("revert conflict on main");
-    expect(aborted.summary.attempted).toEqual(["gh-1"]);
+    // WI-13 T6: both lanes settled in the shared wave before the abort (FR-004).
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
     expect(deps.commentOnPr).toHaveBeenCalledTimes(1); // notification is best-effort, still attempted
     expect(aborted.summary.reverted[0]!.revertCommit).toBeUndefined();
     expect(formatSummary(aborted.summary)).toContain("notify handle not configured");
@@ -761,6 +766,10 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2)],
       syncMainThrowsFor: "gh-1",
+      // WI-13 T6: gh-2's merge fails so ONLY gh-1's lane reaches syncMain —
+      // its throw is lane-attributable under concurrent lanes (and gh-2's PR
+      // stands open, exactly the deliverable FR-004 protects).
+      mergeThrowsFor: "fix/gh-2",
     });
 
     const error = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps).catch(
@@ -769,7 +778,7 @@ describe("post-merge canary, auto-revert, halt, notify (WI-6 T4, FR-005/006/007)
 
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
-    expect(aborted.summary.attempted).toEqual(["gh-1"]); // gh-2 never ran
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]); // both lanes settled in the wave (WI-13 T6)
     expect(aborted.summary.uncanariedMerges).toEqual([
       [
         "gh-1",
@@ -1638,6 +1647,11 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
   let active: NormalizedIssue = issues[0]!;
   let openNow = 0;
   let maxOpen = 0;
+  // WI-13 T6: lanes run concurrently, so shared mutable `active` cannot
+  // identify a `syncMain` caller (syncMain takes no branch). The merge record
+  // can: only a lane whose mergePr succeeded ever reaches syncMain, and
+  // mergePr knows its PR url.
+  const mergedIds = new Set<string>();
   const track = (handle: FixSandboxHandle): FixSandboxHandle => ({
     ...handle,
     async close() {
@@ -1705,11 +1719,16 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (config.mergeThrowsFor !== undefined && input.prUrl.includes(config.mergeThrowsFor)) {
         throw new Error("gh: merge conflict — base branch moved");
       }
+      const merged = issues.find((i) => input.prUrl.includes(fixBranch(i)));
+      if (merged !== undefined) {
+        mergedIds.add(merged.id);
+      }
       return { mergeCommit: "mdef456" };
     }),
     // WI-6 T4 seams
     syncMain: vi.fn(async (_repoDir: string) => {
-      if (config.syncMainThrowsFor !== undefined && active.id === config.syncMainThrowsFor) {
+      if (config.syncMainThrowsFor !== undefined && mergedIds.has(config.syncMainThrowsFor)) {
+        mergedIds.delete(config.syncMainThrowsFor);
         throw new Error("divergent main");
       }
     }),
@@ -1777,7 +1796,7 @@ const queueRunInput = (over: Partial<Parameters<typeof runQueue>[0]> = {}) => ({
 });
 
 describe("runQueue (WI-2 T4)", () => {
-  it("runs issues sequentially; an issue-level failure continues the queue; summary is honest", async () => {
+  it("runs a wave's lanes concurrently (WI-13 T6); an issue-level failure continues the queue; summary is honest", async () => {
     const { deps, maxOpen } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
       failReproFor: "gh-2",
@@ -1799,8 +1818,9 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.createPr).toHaveBeenCalledTimes(2);
     // the failed issue's branch was cleaned up
     expect(deps.deleteBranch).toHaveBeenCalledWith("/tmp/repo", "fix/gh-2");
-    // strictly one sandbox at a time
-    expect(maxOpen()).toBe(1);
+    // WI-13 T6 (FR-003): one wave, three concurrent lanes — each lane holds one
+    // sandbox at a time (the preflight closes before verification opens).
+    expect(maxOpen()).toBe(3);
   });
 
   it("skips a merged-covered issue as done and carries it into the summary counts line (WI-6 T2)", async () => {
@@ -1863,9 +1883,11 @@ describe("runQueue (WI-2 T4)", () => {
     expect(deps.createPr).not.toHaveBeenCalled();
   });
 
-  it("an abort mid-queue still carries the PR the run already earned", async () => {
-    // gh-1 fixes and opens a PR; gh-2 trips the stale-baseline preflight. That
-    // PR is real, human-reviewable work — the abort must not swallow it.
+  it("an abort mid-run still carries the PRs the wave already earned (WI-13 T6)", async () => {
+    // gh-1 and gh-3 fix and open PRs; gh-2 trips the stale-baseline preflight.
+    // All three lanes share the wave: the harness-level abort is raised AFTER
+    // the wave's outcomes are collected (FR-004), so those PRs — real,
+    // human-reviewable work — are never swallowed by the halt.
     const { deps } = makeQueueDeps({
       issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
       staleBaselineFor: "gh-2",
@@ -1876,13 +1898,15 @@ describe("runQueue (WI-2 T4)", () => {
     expect(error).toBeInstanceOf(QueueAbortedError);
     const aborted = error as QueueAbortedError;
     expect(aborted.message).toMatch(/gh-2/);
-    expect(aborted.summary.prUrls).toEqual(["https://example/pr/fix/gh-1"]);
-    expect(aborted.summary.fixed).toEqual(["gh-1"]);
+    expect(aborted.summary.prUrls).toEqual([
+      "https://example/pr/fix/gh-1",
+      "https://example/pr/fix/gh-3",
+    ]);
+    expect(aborted.summary.fixed).toEqual(["gh-1", "gh-3"]);
     // attempted stays the honest total, and every attempt is accounted for
-    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2", "gh-3"]);
     expect(aborted.summary.failed.map(([id]) => id)).toEqual(["gh-2"]);
-    // gh-3 was admitted but never reached — no third sandbox was opened
-    expect(deps.createPr).toHaveBeenCalledTimes(1);
+    expect(deps.createPr).toHaveBeenCalledTimes(2);
     // and that partial summary is printable, PR line included
     expect(formatSummary(aborted.summary)).toContain("PR: https://example/pr/fix/gh-1");
   });
@@ -2086,6 +2110,168 @@ describe("admission (WI-13 T4, FR-005)", () => {
       ["gh-2", "cap"],
       ["gh-3", "cap"],
     ]);
+  });
+});
+
+describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
+  /** A free A and a B blocked by A — FR-002's canonical shape, plan-fed. */
+  const BLOCKED_PLAN =
+    '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-1"]}}</plan>';
+  const optedIn: ProjectProfile = { ...profile, autoMerge: true };
+
+  it("(a) two independent issues run concurrently — lane B's agent run starts before lane A's finishes", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+    const events: string[] = [];
+    let releaseB!: () => void;
+    const bStarted = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    deps.runFixRun.mockImplementation(async (input: { branch: string }) => {
+      events.push(`start:${input.branch}`);
+      if (input.branch === "fix/gh-2") {
+        releaseB();
+      }
+      if (input.branch === "fix/gh-1") {
+        // Lane A's agent run parks until B's has started (the 100ms escape
+        // keeps a sequential runner failing on the assertion, not hanging).
+        await Promise.race([bStarted, new Promise((resolve) => setTimeout(resolve, 100))]);
+      }
+      events.push(`end:${input.branch}`);
+      return { stdout: agentStdout(), commits: [{ sha: "abc" }], branch: input.branch };
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    // The overlap proof: B's lane was in flight while A's agent run still ran.
+    expect(events.indexOf("start:fix/gh-2")).toBeLessThan(events.indexOf("end:fix/gh-1"));
+    expect(events.indexOf("start:fix/gh-2")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("(b) lane independence: one lane's issue-level failure never aborts the sibling — both outcomes in the summary", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    expect(summary.failed.map(([id]) => id)).toEqual(["gh-1"]);
+    expect(summary.fixed).toEqual(["gh-2"]);
+  });
+
+  it("(c) stop-the-line preserved: a reverted lane aborts via QueueAbortedError whose snapshot carries the sibling lane's open PR", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      canaryNewFailureFor: "gh-1",
+      mergeThrowsFor: "fix/gh-2", // the sibling's PR stays OPEN — the deliverable FR-004 protects
+    });
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    expect(aborted.summary.reverted[0]!.id).toBe("gh-1");
+    // The sibling lane settled inside the aborting wave: its PR is real,
+    // human-reviewable work and stands in the partial summary.
+    expect(aborted.summary.prUrls).toContain("https://example/pr/fix/gh-2");
+    expect(aborted.summary.mergeFailures[0]![0]).toBe("gh-2");
+  });
+
+  it("(d) opted-in re-plan unblocks: B is attempted only after A MERGES, with exactly two planner calls and two fix attempts", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+      const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+      // FR-006: the initial plan + exactly one re-plan after the merge wave.
+      expect(deps.runPlan).toHaveBeenCalledTimes(2);
+      expect(deps.runFixRun).toHaveBeenCalledTimes(2); // two fix-agent attempts total
+      expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+      expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-2"]);
+      // B's lane started only after A's merge (FR-002 opted-in arm).
+      const bFix = deps.runFixRun.mock.calls.findIndex(
+        (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+      );
+      expect(deps.mergePr.mock.invocationCallOrder[0]!).toBeLessThan(
+        deps.runFixRun.mock.invocationCallOrder[bFix]!,
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("(e) non-opted PR-settled unblocks: B starts only after A's lane settles WITH a PR; exactly one planner call", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+    const summary = await runQueue(queueRunInput(), deps); // NOT autoMerge
+
+    expect(deps.runPlan).toHaveBeenCalledTimes(1); // no merge event → no re-plan (FR-006)
+    expect(deps.runFixRun).toHaveBeenCalledTimes(2);
+    expect(summary.attempted).toEqual(["gh-1", "gh-2"]);
+    // B's lane started only after A's PR existed (FR-002 non-opted arm).
+    const bFix = deps.runFixRun.mock.calls.findIndex(
+      (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+    );
+    const aPr = deps.createPr.mock.calls.findIndex(
+      (c) => (c[0] as { head: string }).head === "fix/gh-1",
+    );
+    expect(deps.createPr.mock.invocationCallOrder[aPr]!).toBeLessThan(
+      deps.runFixRun.mock.invocationCallOrder[bFix]!,
+    );
+  });
+
+  it("(f) --max-issues 1 bounds attempts: one lane runs, the other carries cap and costs nothing", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+
+    const summary = await runQueue(queueRunInput({ cap: 1 }), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([["gh-2", "cap"]]);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("(g) plan lines precede spend: the initial surface lands before wave 1, later-wave attempt lines before their lane", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)], planStdout: BLOCKED_PLAN });
+
+      await runQueue(queueRunInput(), deps);
+
+      const lines = log.mock.calls.map((c) => c[0]);
+      expect(lines).toEqual([
+        "plan: all unblocked",
+        "plan: attempt gh-1",
+        "plan: blocked gh-2 by gh-1",
+        "plan: attempt gh-2", // re-surfaced before wave 2's lane starts
+      ]);
+      // The whole initial surface precedes the first lane's agent call...
+      const lastInitialLine = log.mock.invocationCallOrder[2]!;
+      expect(lastInitialLine).toBeLessThan(deps.runFixRun.mock.invocationCallOrder[0]!);
+      // ...and the wave-2 attempt line precedes that wave's first agent call.
+      const bFix = deps.runFixRun.mock.calls.findIndex(
+        (c) => (c[0] as { branch: string }).branch === "fix/gh-2",
+      );
+      const wave2Line = log.mock.invocationCallOrder[lines.indexOf("plan: attempt gh-2")]!;
+      expect(wave2Line).toBeLessThan(deps.runFixRun.mock.invocationCallOrder[bFix]!);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("(h) a failed blocker leaves its dependent not-attempted with the reason named — never force-attempted (FR-002 boundary)", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      planStdout: BLOCKED_PLAN,
+      failReproFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(summary.attempted).toEqual(["gh-1"]); // gh-2 never attempted
+    expect(summary.failed.map(([id]) => id)).toEqual(["gh-1"]);
+    expect(summary.notAdmitted).toEqual([["gh-2", "blocked by gh-1"]]);
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1); // A's own attempt only
   });
 });
 
@@ -2550,7 +2736,7 @@ describe("attachments in the loop (WI-3 T2)", () => {
     }
   });
 
-  it("a committed .loop-harness on main aborts the queue (harness-level) — attempted stays honest, nothing further runs", async () => {
+  it("a committed .loop-harness on main aborts the queue (harness-level) — attempted stays honest, the sibling lane's PR stands (WI-13 T6)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(ATTACHMENT_BODY)));
     try {
       const { deps } = makeQueueDeps({
@@ -2565,10 +2751,12 @@ describe("attachments in the loop (WI-3 T2)", () => {
       expect(error).toBeInstanceOf(QueueAbortedError);
       const aborted = error as QueueAbortedError;
       expect(aborted.message).toMatch(/committed/);
-      expect(aborted.summary.attempted).toEqual(["gh-1"]); // honest: gh-1 was reached
-      expect(aborted.summary.fixed).toEqual([]);
-      expect(deps.runFixRun).not.toHaveBeenCalled();
-      expect(deps.createPr).not.toHaveBeenCalled();
+      // WI-13 T6: both lanes settled in the shared wave before the abort —
+      // gh-1 hit the repo-wide guard, attachment-free gh-2 earned its PR.
+      expect(aborted.summary.attempted).toEqual(["gh-1", "gh-2"]);
+      expect(aborted.summary.fixed).toEqual(["gh-2"]);
+      expect(deps.runFixRun).toHaveBeenCalledTimes(1); // gh-2's lane only — the guard refused gh-1 pre-spend
+      expect(deps.createPr).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
     }
