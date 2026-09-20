@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness POC Closeout</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --ink: #1a2332;
+    --ink-soft: #4a5568;
+    --ink-faint: #7a8699;
+    --line: #dfe3ea;
+    --accent: #0f6b5f;
+    --accent-soft: #e3f2ef;
+    --green: #1a7f37;
+    --green-soft: #e6f4ea;
+    --amber: #9a6700;
+    --amber-soft: #fff3d6;
+    --red: #b42318;
+    --red-soft: #fdebe9;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161f;
+      --surface: #1a2332;
+      --ink: #e8edf4;
+      --ink-soft: #b6c2d2;
+      --ink-faint: #7e8ca0;
+      --line: #2c3949;
+      --accent: #4fd1b5;
+      --accent-soft: #12332d;
+      --green: #57c075;
+      --green-soft: #12281a;
+      --amber: #e0a930;
+      --amber-soft: #33290f;
+      --red: #f28072;
+      --red-soft: #3a1a16;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161f;
+    --surface: #1a2332;
+    --ink: #e8edf4;
+    --ink-soft: #b6c2d2;
+    --ink-faint: #7e8ca0;
+    --line: #2c3949;
+    --accent: #4fd1b5;
+    --accent-soft: #12332d;
+    --green: #57c075;
+    --green-soft: #12281a;
+    --amber: #e0a930;
+    --amber-soft: #33290f;
+    --red: #f28072;
+    --red-soft: #3a1a16;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 0 16px 80px; }
+  section { margin-top: 56px; }
+  h1 { font-size: 40px; line-height: 1.15; letter-spacing: -0.5px; margin: 40px 0 8px; }
+  h2 { font-size: 28px; line-height: 1.2; letter-spacing: -0.3px; margin: 0 0 16px; }
+  h3 { font-size: 19px; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  p strong, li strong { color: var(--ink); }
+  .kicker {
+    display: inline-block; margin-top: 48px; padding: 4px 12px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 13px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
+  }
+  .lede { font-size: 19px; color: var(--ink-soft); max-width: 46em; }
+  .lede strong { color: var(--ink); }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px 22px; margin: 16px 0;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .tag {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 600; margin-right: 6px; white-space: nowrap;
+  }
+  .tag.green { background: var(--green-soft); color: var(--green); }
+  .tag.amber { background: var(--amber-soft); color: var(--amber); }
+  .tag.red { background: var(--red-soft); color: var(--red); }
+  .tag.neutral { background: var(--accent-soft); color: var(--accent); }
+  ol.steps { margin: 0; padding-left: 22px; color: var(--ink-soft); }
+  ol.steps li { margin-bottom: 10px; }
+  ol.steps li::marker { color: var(--accent); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-faint); }
+  td { color: var(--ink-soft); }
+  td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0; }
+  .flow .node {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 12px; font-size: 13.5px; font-weight: 600; color: var(--ink);
+  }
+  .flow .node small { display: block; font-weight: 400; color: var(--ink-faint); font-size: 11.5px; }
+  .flow .arrow { color: var(--ink-faint); font-size: 15px; }
+  .lanes { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .lane { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .lane .who {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 6px; padding: 5px 9px; white-space: nowrap;
+  }
+  .lane .step {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; color: var(--ink-soft); white-space: nowrap;
+  }
+  .lane .step.hot { border-color: var(--accent); color: var(--ink); font-weight: 600; }
+  .decision-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px;
+  }
+  .decision-head h3 { margin: 0; }
+  .meta { font-size: 13px; color: var(--ink-faint); }
+  blockquote {
+    margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--accent);
+    background: var(--surface); border-radius: 0 8px 8px 0; color: var(--ink-soft); font-size: 15px;
+  }
+  footer {
+    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--ink-faint);
+  }
+</style>
+</head>
+<body>
+<main>
+
+<span class="kicker">POC closeout · for team-lead review</span>
+<h1>The issue-driven test &amp; fix harness is ready for its next stage</h1>
+<p class="lede">
+  Fourteen work items in, the proof of concept does the whole job it was scoped to do: take a queue of
+  already-reported issues, write a failing regression test for each, fix it in an isolated sandbox,
+  <strong>independently re-verify the fix</strong>, and land it as a pull request — or, on repos that
+  explicitly opted in, squash-merge it under a canary-and-revert safety net, including resolving
+  conflicts between parallel fixes. <strong>Two decisions from you decide what happens next.</strong>
+</p>
+
+<section id="capability">
+  <h2>What the harness does</h2>
+  <p>
+    The harness is TypeScript on Sandcastle, with every agent action running inside a disposable local
+    Docker sandbox. It never discovers issues — humans report them; the harness works the queue. Its
+    governing rule, enforced at every seam: <strong>an agent's own "done" is never evidence.</strong>
+    Every fix is proven by re-running the reproduction test <em>and</em> the full suite in a fresh
+    sandbox that the fixing agent cannot touch.
+  </p>
+  <div class="card">
+    <div class="flow">
+      <div class="node">Issue queue<small>human-reported, deduped</small></div>
+      <span class="arrow">→</span>
+      <div class="node">Regression test<small>written first, must fail</small></div>
+      <span class="arrow">→</span>
+      <div class="node">Fix<small>isolated Docker sandbox</small></div>
+      <span class="arrow">→</span>
+      <div class="node">Independent re-verification<small>fresh sandbox, full suite</small></div>
+      <span class="arrow">→</span>
+      <div class="node">Pull request<small>human merges — default</small></div>
+      <span class="arrow">→</span>
+      <div class="node">Opt-in: machine merge<small>review → merge → canary → revert net</small></div>
+    </div>
+    <p style="margin:8px 0 0;">
+      Two standing guarantees: no repo gets machine merging without an explicit onboarding opt-in
+      (and the harness's own repository never opts in), and every regression test written for a fixed
+      issue stays in the suite permanently — fixes can't silently regress later.
+    </p>
+  </div>
+</section>
+
+<section id="problem">
+  <h2>The problem this work item solved</h2>
+  <p>
+    Until September, the queue ran <strong>one issue at a time</strong> — safe, but slow: three
+    unrelated fixes took three full sandbox cycles. The obvious fix, running fixes in parallel, has a
+    known failure mode the PRD explicitly flagged as an open risk: <strong>two fixes that touch
+    overlapping code will conflict when the second one merges</strong>, and a naive machine merge of
+    that conflict is exactly the kind of unverified agent output the harness exists to distrust.
+  </p>
+  <p>
+    WI-13 brought that risk in scope and closed it, in three moves:
+  </p>
+  <ol class="steps">
+    <li><strong>A planning pass before each run.</strong> One model call ranks the issues and declares
+      dependencies between them. Independent issues run concurrently; dependent ones wait. A bad or
+      missing plan degrades loudly to a safe deterministic order — never a silent wrong answer.</li>
+    <li><strong>Concurrent waves with a shared-git lock.</strong> Fix work runs in parallel; the
+      merge chain (review → merge → canary) serializes on one lock, so merges can't corrupt each other.
+      If anything harness-level goes wrong mid-wave, every later merge is halted — no sibling merges
+      onto a broken main.</li>
+    <li><strong>A verified merger for conflicts — the hard part.</strong> When two parallel fixes do
+      collide, a bounded merger agent proposes a resolution, and that resolution is treated like any
+      agent output: it counts for nothing until the full suite passes on it in a fresh sandbox. Only
+      then is it published, reviewed, merged, and canaried. Red resolution → PR stays open, a human
+      looks at it.</li>
+  </ol>
+</section>
+
+<section id="evidence">
+  <h2>The evidence, including the run where it caught its own bug</h2>
+  <p>
+    Everything below ran against a seeded fixtures repository on local Docker with a real model —
+    full logs are committed alongside the code, verbatim.
+  </p>
+  <div class="card">
+    <table>
+      <tr><th>Proof</th><th>Result</th></tr>
+      <tr><td>Automated suite</td><td><span class="tag green">261 / 261</span> tests green across 10 files; type-clean; sandbox image build verified</td></tr>
+      <tr><td>Parallel queue, live</td><td><span class="tag green">green</span> 3-issue run: planner graph as seeded, two concurrent lanes, serialized merges, green canaries, exit 0</td></tr>
+      <tr><td>Revert net, live</td><td><span class="tag green">green</span> a deliberately broken merge triggered auto-revert, run halt, and @-notification — the compensating controls work under fire</td></tr>
+      <tr><td>Conflict + merger, live</td><td><span class="tag green">green</span> two fixes on adjacent lines ran concurrently, conflicted, were resolved by the merger, re-verified, published, merged, canaried — 2/2 fixed, exit 0</td></tr>
+    </table>
+  </div>
+  <h3>The story worth telling your lead</h3>
+  <p>
+    The conflict path's first live firing <strong>found a real defect in the harness itself</strong>:
+    the gate verified and reviewed the conflict resolution, but never published it to GitHub before
+    asking GitHub to merge — so GitHub refused. What happened next is the strongest evidence the
+    design works:
+  </p>
+  <blockquote>
+    No unverified code was merged. The failure was loud — an open PR and a FAILED line, not a silent
+    skip. The run completed safely. The defect was fixed with new regression tests and re-reviewed,
+    and the very next live run drove the same conflict through to a green end-to-end merge.
+  </blockquote>
+  <p>
+    That is the harness's core promise, demonstrated on itself: machine output is never trusted, and
+    failures surface instead of compounding.
+  </p>
+  <h3>How it was built</h3>
+  <p>
+    Fourteen work items, each through the same discipline: a grilled PRD carve-out → measurable spec →
+    tickets → plan → test-first implementation with independent spec and quality reviews at every
+    checkpoint → fresh verification → delivery record. Along the way the process itself caught two
+    blocking defects in review and one live (the one above) — each fixed and re-verified before
+    delivery. The paper trail lives in <code>docs/work/</code>, one directory per work item.
+  </p>
+</section>
+
+<section id="decisions">
+  <h2>Two decisions requested</h2>
+  <p>
+    Both are gates the project's constraints deliberately reserve for you. Nothing below proceeds
+    without your sign-off.
+  </p>
+
+  <div class="card">
+    <div class="decision-head">
+      <h3>1. Cloud sandbox spend — approve or keep local-only</h3>
+      <span class="tag amber">your call</span>
+    </div>
+    <p class="meta">Constraint 6 · blocks: scaling the POC beyond one local machine</p>
+    <p>
+      The POC is proven on local Docker. The next meaningful validation — real client-shaped
+      repositories, more parallel lanes, heavier suites — needs sandbox capacity and isolation the
+      local machine can't give. <strong>Recommendation: approve a bounded cloud sandbox budget for a
+      pilot on non-client repositories first</strong>, keeping the same verification gates. If you'd
+      rather stay local, the harness continues to work — the ceiling is throughput, not correctness.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="decision-head">
+      <h3>2. Client-data confidentiality policy — confirm what may flow to the model API</h3>
+      <span class="tag amber">your call</span>
+    </div>
+    <p class="meta">Constraint 3 · blocks: pointing the harness at any client repository, issue list, or log</p>
+    <p>
+      Issue bodies and attached logs routinely contain internal paths and data values, so every
+      client artifact is treated as sensitive by default. Until Bitcot's policy on sending a given
+      client's data to a third-party AI API is explicitly confirmed per client, the harness runs only
+      on our own fixtures. <strong>What's needed from you: the policy line — which clients (if any)
+      are cleared, and what redaction, if any, must precede ingestion.</strong> The technical gate
+      already exists and enforces whatever you decide.
+    </p>
+  </div>
+</section>
+
+<section id="path">
+  <h2>What naturally follows, once you decide</h2>
+  <p>
+    These are the product's known next stages, in the order that unlocks the most value — none is
+    blocked by a technical unknown:
+  </p>
+  <div class="card">
+    <table>
+      <tr><th>Stage</th><th>What it adds</th><th>Status</th></tr>
+      <tr><td>Pilot on real (non-client) repos</td><td>First evidence beyond fixtures; exercises scale and queue depth</td><td><span class="tag neutral">ready after decision 1</span></td></tr>
+      <tr><td>First client repo</td><td>The actual product job, under the confidentiality policy</td><td><span class="tag neutral">ready after decision 2</span></td></tr>
+      <tr><td>Escalation on exhausted fixes</td><td>Notify an owner when an issue fails all attempts (today: recorded in the run summary)</td><td><span class="tag neutral">designed seam, small build</span></td></tr>
+      <tr><td>Scheduled runs</td><td>Unattended operation — needs locking and budget rules first</td><td><span class="tag neutral">later</span></td></tr>
+    </table>
+  </div>
+  <p>
+    Deliberately not on this path, by design: issue <em>discovery</em> (monitoring integration) — the
+    harness's contract is that humans decide what's worth fixing — and machine merging without an
+    explicit per-repo opt-in, which stays behind its gate permanently.
+  </p>
+</section>
+
+<section id="boundary">
+  <h2>What this evidence does and doesn't prove</h2>
+  <p>
+    Proven: the full loop end-to-end on local Docker with a real model — parallel scheduling,
+    conflict resolution, machine merge under the revert net, and honest failure behavior, all with
+    committed verbatim logs. Not yet proven: other repositories, other model providers, heavier
+    parallelism than three concurrent lanes, or any client workload. The closeout is a POC boundary,
+    not a production claim — which is exactly why the two decisions above are yours rather than ours.
+  </p>
+</section>
+
+<footer>
+  Internal engineering report · evidence and per-work-item records in <code>docs/work/</code> of the
+  harness repository · live-run logs verbatim, controller notes appended after each run
+</footer>
+
+</main>
+</body>
+</html>
