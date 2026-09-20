@@ -14,6 +14,7 @@ Controller ledger (one row per task):
 | T4 | small/low | 240afcd | 01bc242 | `admission` | ACCEPTED — gates green (5/5 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 01bc242) |
 | T5 | small/low | 11a078f | f70f4d7 | `waves` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at f70f4d7) |
 | T6+T6b | medium/high | 6ec50c5 | aee6c78 | `wave-runner` | ACCEPTED — T6 a7b99c6: spec PASS, quality NEEDS_FIXES (2 critical, 2 important); T6b fix aee6c78: gates green (11/11 focused, 251/251 full +7, typecheck 0, loop 131/131 double-run stable); spec PASS; quality APPROVED (both at aee6c78) |
+| T7 | small/low | 7148955 | 9aada27 | boundary file | ACCEPTED — gates green (5/5 boundary focused, 252/252 full +1, typecheck 0); spec PASS; quality APPROVED (both at 9aada27) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -232,3 +233,43 @@ Controller ledger (one row per task):
   - A28 (T6b spec): `runSingleIssue` now a two-mode seam (optional
     serializeGitChain param) — consider an options object if a third mode
     appears.
+
+## T7 — Adapter: bounded merger run
+
+- **Seam:** adapter public exports (`MERGER_MAX_ITERATIONS`,
+  `mergerRunOptions`, `runMerger`) in `src/sandcastle-adapter.ts`; export
+  assertions in `src/sandcastle-adapter.boundary.test.ts` (import-scan
+  enforcement byte-identical to base). **Budgets:** one leaf session.
+  **Evidence boundary:** harness-source, structural (no model call; the
+  behavioral exercise of `runMerger` is T8's via injected deps).
+- **Candidate 9aada27** (base 7148955). Controller gates re-run fresh:
+  boundary 5/5; full 252/252 (+1); typecheck 0.
+- **Spec review: PASS** (zero blocking). **Quality review: APPROVED** (zero
+  critical/important).
+- **Design decisions accepted:** (1) `boundedRunOptions` widened with
+  defaulted `maxIterations = 1` so `MERGER_MAX_ITERATIONS` is the named,
+  seam-assertable source of the merger bound — existing call sites
+  behavior-identical (spec review adjudicated spec-faithful, not scope
+  creep); (2) `mainRef` rides the seam unused by `run()` per the
+  `runReview`-`diff` idiom (caller bakes it into the prompt — T8's
+  authorship); (3) `branchStrategy` reuses the caller's fix branch (never
+  creates), mirroring `runFixRun`.
+- **Plan correction applied:** plan text said `TriageRunInput`; current type
+  is `PlanRunInput` (T3 rename) — brief directed the current name.
+- **Adjacent findings ledger:**
+  - A29 (T7 spec+quality, cosmetic): `boundedRunOptions` JSDoc says "Both
+    the planning pass and the pre-merge review pass" (now three) and quotes
+    `maxIterations: 1` as a literal (now a defaulted param). Candidate for
+    T9's honesty pass (file-set expansion: `src/sandcastle-adapter.ts`
+    comment-only).
+  - A30 (T7 quality, pre-existing but deepened): module header JSDoc still
+    says "the three exports (`runFixRun`, `createFixSandbox`, `mergeBack`)"
+    — stale since `runPlan`; now six exports. Same T9 candidate as A29.
+  - A31 (T7 quality, minor): boundary test skips the cheap
+    `options.name === "merger"` assertion — consistent with the plan-pass
+    test's same gap; fold in if that file is touched again.
+  - A32 (T7 quality, minor): `runMerger`'s anonymous inline return type vs
+    house `*Outcome` naming — consider a named `MergerOutcome` when T8
+    consumes it.
+  - Quality watch: `mainRef` is the file's first seam-field with zero
+    downstream read until T8 lands — one eye on T8's diff.
