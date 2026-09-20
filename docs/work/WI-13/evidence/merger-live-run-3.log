@@ -1,0 +1,84 @@
+
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy
+
+[queue] WARNING: plan unusable (planner bypassed (LOOP_BYPASS_PLAN=1, scratch live test)) — falling back to deterministic order (ascending issue number).
+plan: all unblocked
+plan: attempt gh-44
+plan: attempt gh-45
+[gh-44] Started on branch fix/gh-44
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-44-gh-44.log
+[gh-45] Started on branch fix/gh-45
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-45-gh-45.log
+remote: 
+remote: Create a pull request for 'fix/gh-45' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-45        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-45 -> fix/gh-45
+branch 'fix/gh-45' set up to track 'origin/fix/gh-45'.
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+remote: 
+remote: Create a pull request for 'fix/gh-44' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-44        
+remote: 
+To github.com:manjula25/loop-fixtures-py.git
+ * [new branch]      fix/gh-44 -> fix/gh-44
+branch 'fix/gh-44' set up to track 'origin/fix/gh-44'.
+From github.com:manjula25/loop-fixtures-py
+ - [deleted]         (none)     -> origin/fix/gh-45
+   4b2af0e..15c9844  main       -> origin/main
+From github.com:manjula25/loop-fixtures-py
+ * branch            main       -> FETCH_HEAD
+Updating 4b2af0e..15c9844
+Fast-forward
+ src/loopfix/numops.py            | 4 +++-
+ tests/fixed-issues/test_gh_45.py | 6 ++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_45.py
+✓ Closed issue #45 (percentfmt: values over 100% miss the leading plus)
+[merger] Started on branch fix/gh-44
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/fix-gh-44-merger.log
+[review] Started on branch loop/review
+  tail -f /home/bitcot/Documents/projects/loop-fixtures-py/.sandcastle/logs/loop-review-review.log
+GraphQL: Pull Request has merge conflicts (mergePullRequest)
+Run summary — attempted: 2 (fixed: 2, failed: 0) | skipped-duplicate: 0 | skipped-merged: 0 | not-admitted: 0
+PR: https://github.com/manjula25/loop-fixtures-py/pull/47
+PR: https://github.com/manjula25/loop-fixtures-py/pull/46
+MERGED gh-45: https://github.com/manjula25/loop-fixtures-py/pull/46 @ 15c9844ea1f3818e1709d1c89dc8dcd8a374af1d (canary: green)
+MERGE FAILED gh-44: merge failed for https://github.com/manjula25/loop-fixtures-py/pull/47: Command failed: gh pr merge https://github.com/manjula25/loop-fixtures-py/pull/47 --squash --delete-branch
+HARNESS_EXIT=0
+
+--- Controller notes (2026-09-20, appended after the run; no recorded line above altered) ---
+Setup: planner deliberately bypassed via scratch branch scratch/wi-13-gate-live @ 617df8d
+(9-line env-gated LOOP_BYPASS_PLAN=1 — the run takes the PRODUCTION degraded-fallback path:
+loud warning line 5, no edges, both issues concurrent in wave 1, lines 7-12). Everything
+else under test is byte-identical PR-#17 code. Seed 4b2af0e (percentfmt, adjacent-line
+defects), issues #44/#45.
+
+OUTCOME — the gate FIRED live for the first time, and found a real defect:
+1. Wave 1: both lanes concurrent (interleaved starts, lines 9-12).
+2. gh-45 merged first: PR #46 @ 15c9844, canary green, issue closed.
+3. gh-44's chain: merge-tree probe detected the conflict → [merger] ran (line 41) →
+   resolved correctly (merge commit 3972f87 on LOCAL fix/gh-44: both behaviors combined,
+   full suite 38 tests green in its sandbox — per the merger log). Note: the merger hit
+   its bounded iteration (1) without emitting a completion signal — and the harness
+   correctly ignored the missing signal and judged only the verified output (constraint 2,
+   demonstrated live).
+4. Fresh-sandbox re-verification of the resolved branch: green (run proceeded to review).
+5. Pre-merge review: approved (run proceeded to merge).
+6. mergePr FAILED: GraphQL "Pull Request has merge conflicts" (line 45, 50).
+
+ROOT CAUSE (verified against branch tips): the gate resolves, verifies, and reviews the
+LOCAL branch but never PUSHES the resolution — origin/fix/gh-44 still pointed at d1e4a1b,
+and `gh pr merge --squash` merges GitHub's PR head. The gate's happy path can never
+complete on GitHub as implemented. DEFECT: the verified-merger gate must publish the
+resolved branch (or merge from the local resolution) before mergePr.
+
+SAFETY POSTURES ALL HELD: no unverified merge occurred; the failure was loud (MERGE FAILED
+line, PR #47 left open mergeable=CONFLICTING); the run continued and exited 0 (WI-6
+merge-failure posture: issue counted fixed via open PR); gh-44 not closed (close is
+post-merge). A46 status: the gate's conflict path IS now exercised live (probe, merger,
+re-verification, review, failure posture) — closed as evidence; the publish defect it
+exposed is a new blocking finding routed to a fix pass. Recorded honestly; not re-rolled.
