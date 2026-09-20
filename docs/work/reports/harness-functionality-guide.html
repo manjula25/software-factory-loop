@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Harness Functionality Guide</title>
+<title>How the Fix-It Harness Works</title>
 <style>
   :root {
     --bg: #f7f8fa; --surface: #ffffff; --ink: #1a2332; --ink-soft: #4a5568;
@@ -34,8 +34,8 @@
   }
   main { max-width: 920px; margin: 0 auto; padding: 0 16px 80px; }
   section { margin-top: 56px; }
-  h1 { font-size: 40px; line-height: 1.15; letter-spacing: -0.5px; margin: 40px 0 8px; }
-  h2 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; }
+  h1 { font-size: 38px; line-height: 1.15; letter-spacing: -0.5px; margin: 40px 0 8px; }
+  h2 { font-size: 27px; line-height: 1.2; margin: 0 0 14px; }
   h3 { font-size: 18px; margin: 22px 0 6px; }
   p { margin: 0 0 12px; color: var(--ink-soft); }
   p strong, li strong { color: var(--ink); }
@@ -45,37 +45,47 @@
     font-size: 13px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
   }
   .lede { font-size: 19px; color: var(--ink-soft); max-width: 46em; }
+  .lede strong { color: var(--ink); }
   .card {
     background: var(--surface); border: 1px solid var(--line);
     border-radius: 10px; padding: 20px 22px; margin: 14px 0;
   }
-  .feature { border-left: 3px solid var(--accent); margin: 16px 0; padding-left: 18px; }
+  .rule-one {
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 20px 22px; margin: 16px 0 10px;
+  }
+  .rule-one h3 { margin: 0 0 6px; font-size: 19px; color: var(--accent); }
+  .rule-one p { margin: 0; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .grid3 { grid-template-columns: 1fr; } }
+  .principle { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .principle h3 { margin: 0 0 4px; font-size: 15.5px; }
+  .principle p { font-size: 14px; margin: 0; }
+  .feature { border-left: 3px solid var(--line); margin: 18px 0; padding-left: 18px; }
+  .feature.key { border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0; padding: 14px 18px 6px 18px; }
   .feature h3 { margin-top: 0; }
   .feature .why { font-size: 14.5px; color: var(--ink-faint); margin-top: 6px; }
   .feature .why b { color: var(--ink-soft); }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-  @media (max-width: 700px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
-  .principle { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
-  .principle .n {
-    display: inline-flex; width: 26px; height: 26px; border-radius: 50%;
-    background: var(--accent); color: var(--bg); font-weight: 700; font-size: 14px;
-    align-items: center; justify-content: center; margin-bottom: 8px;
+  .signal {
+    margin: 10px 0 0; padding: 10px 14px; border-radius: 8px;
+    background: var(--green-soft); font-size: 14px; color: var(--ink-soft);
   }
-  .principle h3 { margin: 0 0 4px; font-size: 16px; }
-  .principle p { font-size: 14.5px; margin: 0; }
-  figure { margin: 18px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 16px 8px; }
+  .signal b { color: var(--green); }
+  .signal.red { background: var(--red-soft); }
+  .signal.red b { color: var(--red); }
+  figure { margin: 18px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 16px 6px; }
   figure svg { width: 100%; height: auto; display: block; }
-  figcaption { font-size: 13px; color: var(--ink-faint); text-align: center; padding: 8px 0 10px; }
+  figcaption { font-size: 13px; color: var(--ink-faint); text-align: center; padding: 8px 6px 12px; }
   .box { fill: var(--surface); stroke: var(--line); }
   .box-accent { fill: var(--accent-soft); stroke: var(--accent); }
   .box-green { fill: var(--green-soft); stroke: var(--green); }
   .box-red { fill: var(--red-soft); stroke: var(--red); }
   .box-amber { fill: var(--amber-soft); stroke: var(--amber); }
   .box-blue { fill: var(--blue-soft); stroke: var(--blue); }
-  .edge { stroke: var(--ink-faint); stroke-width: 1.6; fill: none; marker-end: url(#arrowhead); }
-  .edge-red { stroke: var(--red); stroke-width: 1.8; fill: none; marker-end: url(#arrowred); }
-  .edge-green { stroke: var(--green); stroke-width: 1.8; fill: none; marker-end: url(#arrowgreen); }
+  .box-faint { fill: var(--surface); stroke: var(--line); stroke-dasharray: 4 3; }
+  .edge { stroke: var(--ink-faint); stroke-width: 1.6; fill: none; }
+  .edge-red { stroke: var(--red); stroke-width: 1.8; fill: none; stroke-dasharray: 5 3; }
+  .edge-green { stroke: var(--green); stroke-width: 1.8; fill: none; }
   .t { fill: var(--ink); font: 600 13px -apple-system, "Segoe UI", sans-serif; }
   .ts { fill: var(--ink-faint); font: 400 10.5px -apple-system, "Segoe UI", sans-serif; }
   .tl { fill: var(--ink-soft); font: 600 11.5px -apple-system, "Segoe UI", sans-serif; }
@@ -84,6 +94,14 @@
   th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-faint); }
   td { color: var(--ink-soft); }
   td:first-child { color: var(--ink); font-weight: 600; }
+  td.changed { color: var(--ink); }
+  td.changed .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; }
+  .choices { list-style: none; margin: 0; padding: 0; }
+  .choices li { padding: 12px 0; border-bottom: 1px dashed var(--line); }
+  .choices li:last-child { border-bottom: none; }
+  .choices .pick { font-weight: 700; color: var(--ink); }
+  .choices .rejected { color: var(--ink-faint); }
+  .choices .rejected s { color: var(--red); }
   footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-faint); }
 </style>
 </head>
@@ -91,64 +109,93 @@
 <main>
 
 <span class="kicker">Plain-language functionality guide</span>
-<h1>What the fix-it harness does, feature by feature</h1>
+<h1>How the fix-it harness works</h1>
 <p class="lede">
-  The harness is a software assistant that takes a list of problems people have already reported,
-  writes a test that proves each problem is real, fixes it, <strong>double-checks its own work with a
-  fresh copy it cannot influence</strong>, and hands the result to a human — or, where a team has
-  explicitly allowed it, lands the fix itself under an undo-and-alert safety net. This guide explains
-  every feature without jargon.
+  The harness is a software assistant that fixes problems people have already reported — and does it
+  under one non-negotiable rule that shapes everything in this guide:
 </p>
 
-<!-- ============ THE BIG PICTURE ============ -->
-<section id="big-picture">
-  <h2>The whole idea in one picture</h2>
-  <p>Here is the journey of a single reported problem, from complaint to finished fix:</p>
+<div class="rule-one">
+  <h3>The one rule everything serves: machines never grade their own homework</h3>
+  <p>No fix — not from the fixing assistant, not from the conflict resolver, not from anything
+  automated — counts as done until it passes checks run in a <strong>brand-new copy of the project
+  that the machine cannot influence</strong>. This single rule is why every feature below looks the
+  way it does.</p>
+</div>
+<div class="grid3">
+  <div class="principle"><h3>Every fix leaves a permanent tripwire</h3><p>The test that proves the bug is real stays in the suite forever — the same bug can never quietly return.</p></div>
+  <div class="principle"><h3>Humans stay in charge</h3><p>A person approves every fix by default; automatic landing exists only where a team explicitly asked for it.</p></div>
+  <div class="principle"><h3>When unsure, stop and ask</h3><p>Anything ambiguous is left open for a person with a clear note. Nothing is forced through.</p></div>
+</div>
+
+<!-- ============ PROBLEM ============ -->
+<section id="problem">
+  <h2>The problem it was built for</h2>
+  <p>
+    Reported bugs pile up faster than teams can fix them. AI assistants can draft fixes quickly —
+    but nobody can safely trust a fix just because the AI says it works. So the expensive part was
+    never writing the fix; it was <strong>checking it</strong>: re-testing it, reviewing it, and
+    living with the fear that something subtle broke. And doing it one bug at a time made the pile
+    grow faster than it shrank.
+  </p>
 
   <figure>
-    <svg viewBox="0 0 860 150" role="img" aria-label="Journey of one issue">
-      <defs>
-        <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a8699"/></marker>
-      </defs>
-      <g>
-        <rect class="box-blue" x="4" y="34" width="108" height="58" rx="9"/>
-        <text class="t" x="58" y="58" text-anchor="middle">1 · Reported</text>
-        <text class="ts" x="58" y="74" text-anchor="middle">a person files it</text>
-        <line class="edge" x1="114" y1="63" x2="140" y2="63"/>
-        <rect class="box" x="142" y="34" width="108" height="58" rx="9"/>
-        <text class="t" x="196" y="58" text-anchor="middle">2 · Queued</text>
-        <text class="ts" x="196" y="74" text-anchor="middle">sorted, deduplicated</text>
-        <line class="edge" x1="252" y1="63" x2="278" y2="63"/>
-        <rect class="box-accent" x="280" y="34" width="108" height="58" rx="9"/>
-        <text class="t" x="334" y="58" text-anchor="middle">3 · Proven</text>
-        <text class="ts" x="334" y="74" text-anchor="middle">a test fails first</text>
-        <line class="edge" x1="390" y1="63" x2="416" y2="63"/>
-        <rect class="box-accent" x="418" y="34" width="108" height="58" rx="9"/>
-        <text class="t" x="472" y="58" text-anchor="middle">4 · Fixed</text>
-        <text class="ts" x="472" y="74" text-anchor="middle">in an isolated copy</text>
-        <line class="edge" x1="528" y1="63" x2="554" y2="63"/>
-        <rect class="box-green" x="556" y="34" width="118" height="58" rx="9"/>
-        <text class="t" x="615" y="58" text-anchor="middle">5 · Double-checked</text>
-        <text class="ts" x="615" y="74" text-anchor="middle">by a fresh copy</text>
-        <line class="edge" x1="676" y1="63" x2="702" y2="63"/>
-        <rect class="box-green" x="704" y="34" width="150" height="58" rx="9"/>
-        <text class="t" x="779" y="58" text-anchor="middle">6 · Delivered</text>
-        <text class="ts" x="779" y="74" text-anchor="middle">pull request → human review</text>
-      </g>
+    <svg viewBox="0 0 860 340" role="img" aria-label="Before and after comparison">
+      <!-- BEFORE row -->
+      <text class="tl" x="10" y="24">HOW FIXING WORKED BEFORE</text>
+      <rect class="box" x="10" y="36" width="120" height="54" rx="8"/>
+      <text class="t" x="70" y="58" text-anchor="middle">Reported</text><text class="ts" x="70" y="73" text-anchor="middle">bug filed</text>
+      <line class="edge" x1="132" y1="63" x2="158" y2="63"/>
+      <rect class="box" x="160" y="36" width="120" height="54" rx="8"/>
+      <text class="t" x="220" y="58" text-anchor="middle">Assigned</text><text class="ts" x="220" y="73" text-anchor="middle">one person</text>
+      <line class="edge" x1="282" y1="63" x2="308" y2="63"/>
+      <rect class="box" x="310" y="36" width="120" height="54" rx="8"/>
+      <text class="t" x="370" y="58" text-anchor="middle">Fixed</text><text class="ts" x="370" y="73" text-anchor="middle">by hand</text>
+      <line class="edge" x1="432" y1="63" x2="458" y2="63"/>
+      <rect class="box-red" x="460" y="36" width="150" height="54" rx="8"/>
+      <text class="t" x="535" y="58" text-anchor="middle">Self-checked</text><text class="ts" x="535" y="73" text-anchor="middle">by its own author</text>
+      <line class="edge" x1="612" y1="63" x2="638" y2="63"/>
+      <rect class="box" x="640" y="36" width="120" height="54" rx="8"/>
+      <text class="t" x="700" y="58" text-anchor="middle">Shipped</text><text class="ts" x="700" y="73" text-anchor="middle">if review agrees</text>
+      <line class="edge-red" x1="760" y1="50" x2="800" y2="20"/>
+      <rect class="box-red" x="640" y="4" width="216" height="26" rx="7"/>
+      <text class="ts" x="748" y="21" text-anchor="middle" fill="#b42318">regressions surface weeks later</text>
+      <text class="ts" x="10" y="112">One bug at a time · checking is the bottleneck · verification depends on discipline</text>
+
+      <!-- AFTER row -->
+      <text class="tl" x="10" y="164">HOW THE HARNESS DOES IT NOW</text>
+      <rect class="box" x="10" y="176" width="120" height="54" rx="8"/>
+      <text class="t" x="70" y="198" text-anchor="middle">Reported</text><text class="ts" x="70" y="213" text-anchor="middle">bug filed</text>
+      <line class="edge" x1="132" y1="203" x2="158" y2="203"/>
+      <rect class="box-accent" x="160" y="176" width="120" height="54" rx="8"/>
+      <text class="t" x="220" y="198" text-anchor="middle">Proven</text><text class="ts" x="220" y="213" text-anchor="middle">failing test first</text>
+      <line class="edge" x1="282" y1="203" x2="308" y2="203"/>
+      <rect class="box-accent" x="310" y="176" width="120" height="54" rx="8"/>
+      <text class="t" x="370" y="198" text-anchor="middle">Fixed</text><text class="ts" x="370" y="213" text-anchor="middle">in isolation</text>
+      <line class="edge" x1="432" y1="203" x2="458" y2="203"/>
+      <rect class="box-green" x="460" y="176" width="150" height="54" rx="8"/>
+      <text class="t" x="535" y="198" text-anchor="middle">Independently</text><text class="ts" x="535" y="213" text-anchor="middle">re-tested, fresh copy</text>
+      <line class="edge" x1="612" y1="203" x2="638" y2="203"/>
+      <rect class="box-green" x="640" y="176" width="120" height="54" rx="8"/>
+      <text class="t" x="700" y="198" text-anchor="middle">Delivered</text><text class="ts" x="700" y="213" text-anchor="middle">tripwire stays</text>
+      <line class="edge-green" x1="760" y1="230" x2="800" y2="260"/>
+      <rect class="box-green" x="640" y="252" width="216" height="30" rx="7"/>
+      <text class="ts" x="748" y="271" text-anchor="middle" fill="#1a7f37">same bug returning is caught instantly</text>
+      <text class="ts" x="10" y="252">Many bugs in parallel · checking is automated and independent · the proof is permanent</text>
     </svg>
-    <figcaption>The default journey. Step 6 changes only when a team has explicitly switched on auto-landing (see “Delivering safely”).</figcaption>
+    <figcaption>Same journey, stage for stage. What changed is who checks the work, how many fixes move at once, and what evidence survives afterwards.</figcaption>
   </figure>
 
-  <h3>Four rules the harness never breaks</h3>
-  <div class="grid2">
-    <div class="principle"><span class="n">1</span><h3>Machines never grade their own homework</h3>
-      <p>No fix counts until it passes checks run in a brand-new, untouched copy of the code. The fixing assistant's word “done” is never accepted as proof.</p></div>
-    <div class="principle"><span class="n">2</span><h3>Every fix leaves a permanent alarm</h3>
-      <p>The test written to prove the problem was real stays in the test suite forever. If the same bug ever sneaks back, it is caught immediately.</p></div>
-    <div class="principle"><span class="n">3</span><h3>Humans stay in charge</h3>
-      <p>By default a person reviews and approves every fix. Automatic landing exists only where a team explicitly turned it on — and can never be switched on for them.</p></div>
-    <div class="principle"><span class="n">4</span><h3>When unsure, stop and ask</h3>
-      <p>Anything ambiguous — a fix it can't verify, a conflict it can't resolve, a check it can't run — is left open for a human with a clear note. Nothing is forced through.</p></div>
+  <h3>What changed, dimension by dimension</h3>
+  <div class="card">
+    <table>
+      <tr><th>Dimension</th><th>Before</th><th>Now</th></tr>
+      <tr><td>Trust in a fix</td><td>Rests on the author's care</td><td class="changed"><span class="tag">changed</span> Rests on an independent re-test the author can't influence</td></tr>
+      <tr><td>Speed</td><td>One bug at a time</td><td class="changed"><span class="tag">changed</span> Independent bugs fixed simultaneously; conflicts resolved by a verified referee</td></tr>
+      <tr><td>Regressions</td><td>Found by customers, weeks later</td><td class="changed"><span class="tag">changed</span> Prevented by a permanent tripwire test per fix</td></tr>
+      <tr><td>Approval</td><td>Human review of raw changes</td><td class="changed"><span class="tag">changed</span> Human review of changes already proven by tests — the human decides, the machine carries the proof</td></tr>
+      <tr><td>Accountability</td><td>Diffuse after the fact</td><td class="changed"><span class="tag">changed</span> Every run ends with an honest, checkable tally</td></tr>
+    </table>
   </div>
 </section>
 
@@ -160,31 +207,31 @@
     <h3>Works from a list people already wrote</h3>
     <p>The harness never goes hunting for bugs on its own. It reads problems humans have already
     reported — GitHub issues, a requirements document, or a simple list — often with an attached
-    error log or screenshot, and treats that list as its work queue.</p>
-    <p class="why"><b>Why it matters:</b> people decide what's worth fixing; the machine only does the fixing.</p>
+    error log, and treats that list as its work queue.</p>
+    <p class="why"><b>What it replaces:</b> a shared backlog where AI assistance was unusable because nobody could trust the output. <b>Deliberate limit:</b> people decide what's worth fixing — the machine never does.</p>
   </div>
 
   <div class="feature">
     <h3>Duplicate detection</h3>
-    <p>Before starting work, it checks each problem against work already in flight or already
-    finished — open requests, recently landed fixes, leftover work branches — and skips anything
-    already being handled, saying so in the summary. If a fix was ever undone, the original problem
-    is automatically put back in the queue.</p>
-    <p class="why"><b>Why it matters:</b> no wasted effort, and no two people (or machines) fixing the same thing twice.</p>
+    <p>Before starting, it checks each problem against work already in flight or already finished —
+    open requests, recently landed fixes, leftover branches — and skips anything already handled,
+    saying so in the summary. If a fix was ever undone, the original problem goes back in the queue
+    automatically.</p>
+    <p class="why"><b>What it replaces:</b> two people fixing the same thing twice. <b>Visible signal:</b> every skip is named in the run summary — “skipped: already being handled.”</p>
   </div>
 
   <div class="feature">
     <h3>Spending cap</h3>
-    <p>Each run fixes at most the number of problems it announced at the start. The team can lower
-    that number for any run; nothing is ever spent beyond the plan that was shown up front.</p>
-    <p class="why"><b>Why it matters:</b> AI usage costs money — the bill is always predictable and agreed in advance.</p>
+    <p>Each run fixes at most the number of problems it announced at the start, and the team can
+    lower that number for any run.</p>
+    <p class="why"><b>What it prevents:</b> runaway AI cost. <b>Visible signal:</b> the plan — including how many problems will be attempted — is printed before any spend happens.</p>
   </div>
 
   <div class="feature">
     <h3>Attachments and logs travel with the problem</h3>
     <p>Error logs, screenshots, and files attached to a report are carried into the working copy so
-    the fixing assistant can study them — as raw material, with no assumption about their format.</p>
-    <p class="why"><b>Why it matters:</b> the fix is based on the same evidence the person who reported the problem saw.</p>
+    the fix is based on the same evidence the reporter saw — with no assumption about format.</p>
+    <p class="why"><b>What it replaces:</b> fixers guessing at symptoms from a one-line title.</p>
   </div>
 </section>
 
@@ -194,40 +241,35 @@
 
   <div class="feature">
     <h3>Prove it first, then fix it</h3>
-    <p>For every problem, the harness first writes a small test that fails — demonstrating the bug
-    is real and understood. Only then does it attempt the fix. The fix counts only if that same
-    test then passes.</p>
-    <p class="why"><b>Why it matters:</b> this is what stops the machine from “fixing” something by accident, or by breaking something else.</p>
+    <p>For every problem, the harness first writes a small test that <em>fails</em> — demonstrating
+    the bug is real and understood. Only then does it attempt the fix, and the fix counts only if
+    that same test then passes.</p>
+    <p class="why"><b>What it prevents:</b> “fixing” the wrong thing, or breaking something else and calling it done.</p>
   </div>
 
   <div class="feature">
     <h3>All work happens in an isolated copy</h3>
-    <p>The fixing assistant works inside a disposable, containerised copy of the project — a
-    private workshop with no access to the real shared code. When the work is done, the workshop
-    is thrown away.</p>
-    <p class="why"><b>Why it matters:</b> experiments can never damage the real project, and half-finished attempts never leak out.</p>
+    <p>The fixing assistant works inside a disposable, containerised copy of the project — a private
+    workshop with no access to the real shared code. When the work is done, the workshop is thrown
+    away.</p>
+    <p class="why"><b>What it prevents:</b> experiments damaging the real project; half-finished attempts leaking out.</p>
   </div>
 
   <div class="feature">
     <h3>Many fixes at once, when safe</h3>
-    <p>A short planning step looks at all queued problems and works out which are independent and
-    which depend on each other. Independent ones are fixed simultaneously; ones that build on each
-    other wait their turn. If the plan can't be trusted, the harness says so and falls back to a
-    safe, orderly one-at-a-time approach — never a guess.</p>
-    <p class="why"><b>Why it matters:</b> three unrelated fixes used to take three full work cycles; now they share one.</p>
+    <p>A short planning step works out which queued problems are independent and which depend on
+    each other. Independent ones are fixed simultaneously; dependent ones wait their turn. If the
+    plan can't be trusted, the harness says so out loud and falls back to a safe one-at-a-time
+    order — never a guess.</p>
+    <p class="why"><b>What it replaces:</b> three unrelated fixes taking three full work cycles. <b>Deliberate limit:</b> when the plan is uncertain, speed is sacrificed first — never safety.</p>
   </div>
 
   <figure>
     <svg viewBox="0 0 860 260" role="img" aria-label="Parallel waves">
-      <defs>
-        <marker id="arrowhead2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#7a8699"/></marker>
-      </defs>
-      <!-- planner -->
       <rect class="box-blue" x="4" y="20" width="150" height="64" rx="9"/>
       <text class="t" x="79" y="46" text-anchor="middle">Planning step</text>
       <text class="ts" x="79" y="62" text-anchor="middle">groups the problems:</text>
       <text class="ts" x="79" y="74" text-anchor="middle">together or apart?</text>
-      <!-- wave box -->
       <rect x="200" y="8" width="330" height="150" rx="12" fill="none" stroke="var(--line)" stroke-dasharray="5 4"/>
       <text class="tl" x="365" y="26" text-anchor="middle">fixed at the same time</text>
       <rect class="box-accent" x="222" y="40" width="128" height="44" rx="8"/>
@@ -236,7 +278,6 @@
       <text class="t" x="286" y="114" text-anchor="middle">Problem B</text><text class="ts" x="286" y="128" text-anchor="middle">being fixed</text>
       <rect class="box-amber" x="380" y="68" width="128" height="44" rx="8"/>
       <text class="t" x="444" y="86" text-anchor="middle">Problem C</text><text class="ts" x="444" y="100" text-anchor="middle">waits for B</text>
-      <!-- merge gate -->
       <rect class="box" x="580" y="56" width="120" height="70" rx="9"/>
       <text class="t" x="640" y="80" text-anchor="middle">Delivery line</text>
       <text class="ts" x="640" y="96" text-anchor="middle">one fix lands at</text>
@@ -245,14 +286,12 @@
       <text class="t" x="797" y="80" text-anchor="middle">Safety check</text>
       <text class="ts" x="797" y="96" text-anchor="middle">after each one</text>
       <text class="ts" x="797" y="108" text-anchor="middle">lands</text>
-      <!-- edges -->
-      <line class="edge" x1="156" y1="52" x2="216" y2="52" marker-end="url(#arrowhead2)"/>
+      <line class="edge" x1="156" y1="52" x2="216" y2="52"/>
       <line class="edge" x1="156" y1="90" x2="216" y2="118"/>
       <line class="edge" x1="352" y1="62" x2="574" y2="76"/>
       <line class="edge" x1="352" y1="118" x2="574" y2="96"/>
       <line class="edge" x1="512" y1="90" x2="574" y2="90"/>
       <line class="edge" x1="702" y1="91" x2="736" y2="91"/>
-      <!-- wave 2 note -->
       <text class="ts" x="444" y="150" text-anchor="middle">C starts in the next round, after B has landed</text>
       <line class="edge" x1="510" y1="118" x2="574" y2="106"/>
       <text class="tl" x="430" y="196" text-anchor="middle">Fixing happens side by side — but landing fixes is strictly one at a time, so nothing steps on anything else.</text>
@@ -263,23 +302,25 @@
 
 <!-- ============ CHECKING ============ -->
 <section id="checking">
-  <h2>Checking the work</h2>
+  <h2>Checking the work — the load-bearing feature</h2>
 
-  <div class="feature">
+  <div class="feature key">
     <h3>The independent double-check</h3>
     <p>Once a fix looks ready, the harness builds a <em>brand-new</em> copy of the project, applies
-    just the fix, and runs the problem's test plus the <em>entire</em> existing test suite there.
-    The assistant that wrote the fix has no way to influence this — it's a different room, a
-    different examiner, the same exam.</p>
-    <p class="why"><b>Why it matters:</b> this single rule is what makes machine fixes trustworthy. A fix is a fact, not an opinion.</p>
+    just the fix, and runs the problem's test plus the <em>entire</em> existing suite there. The
+    assistant that wrote the fix has no way to influence this — a different room, a different
+    examiner, the same exam.</p>
+    <p class="why"><b>What it prevents:</b> plausible-looking fixes that are actually wrong — the single biggest risk of AI-assisted fixing. <b>This is the feature the rest of the design exists to protect.</b></p>
+    <div class="signal"><b>What you can observe:</b> every run's summary states, per fix, that the independent re-test ran and passed — and nothing is ever reported fixed without it.</div>
+    <div class="signal red" style="margin-top:8px;"><b>If it fails:</b> the fix is reported FAILED with the reason, the problem stays open, and the next fix proceeds. No retry-without-a-record, ever.</div>
   </div>
 
   <div class="feature">
     <h3>The “fresh set of eyes” check after landing</h3>
-    <p>On teams that allow auto-landing, after a fix goes into the shared code the harness runs the
-    whole test suite once more against the updated project — the <em>canary</em> check, like the
-    canary in the coal mine.</p>
-    <p class="why"><b>Why it matters:</b> a fix that was correct alone can still clash with something else — this catches it within seconds, not weeks.</p>
+    <p>On teams that allow auto-landing, after a fix enters the shared code the harness runs the
+    whole suite once more against the updated project — the <em>canary</em> check.</p>
+    <p class="why"><b>What it prevents:</b> a fix that was correct alone but clashes with something else — caught in seconds, not weeks.</p>
+    <div class="signal"><b>What you can observe:</b> a green (or red) canary line per landed fix in the run summary.</div>
   </div>
 </section>
 
@@ -291,25 +332,21 @@
     <h3>Default: every fix becomes a review request</h3>
     <p>The normal delivery is a <em>pull request</em> — a proposal a human reviews and approves with
     one click. Nothing enters the shared code without a person saying yes.</p>
-    <p class="why"><b>Why it matters:</b> automation prepares the work; people own the decision.</p>
+    <p class="why"><b>Deliberate choice:</b> automation prepares the work; people own the decision. This is the default even though auto-landing is faster.</p>
   </div>
 
   <div class="feature">
     <h3>Optional: auto-landing with an undo-and-alert net</h3>
     <p>A team can explicitly opt in (during setup, never later by accident) to let verified fixes
-    land on their own. Even then, three safety layers wrap every landing: an automated review of the
-    change first (unsure → back to a human), the canary check after, and — if anything is red — an
+    land on their own. Even then, three layers wrap every landing: an automated review of the change
+    first (unsure → back to a human), the canary check after, and — if anything is red — an
     automatic undo of the fix, an immediate stop to all further landings, and an alert naming the
     person to look.</p>
-    <p class="why"><b>Why it matters:</b> speed without a safety net is reckless; this is speed with a net.</p>
+    <p class="why"><b>Deliberate choice:</b> speed without a net is reckless. The net costs a few seconds per fix and has already proven itself live on a deliberately broken merge.</p>
   </div>
 
   <figure>
     <svg viewBox="0 0 860 300" role="img" aria-label="Safety net flow">
-      <defs>
-        <marker id="arrowgreen" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1a7f37"/></marker>
-        <marker id="arrowred" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b42318"/></marker>
-      </defs>
       <rect class="box-accent" x="10" y="30" width="170" height="56" rx="9"/>
       <text class="t" x="95" y="54" text-anchor="middle">Fix passed all checks</text>
       <text class="ts" x="95" y="70" text-anchor="middle">and the automated review</text>
@@ -321,16 +358,12 @@
       <rect class="box" x="434" y="30" width="170" height="56" rx="9"/>
       <text class="t" x="519" y="54" text-anchor="middle">Canary check</text>
       <text class="ts" x="519" y="70" text-anchor="middle">full test suite, fresh copy</text>
-
-      <!-- green path -->
-      <path class="edge-green" d="M604 58 C 660 58, 680 58, 716 58" marker-end="url(#arrowgreen)"/>
+      <path class="edge-green" d="M604 58 C 660 58, 680 58, 716 58"/>
       <text class="ts" x="660" y="48" text-anchor="middle" fill="#1a7f37">all green ✓</text>
       <rect class="box-green" x="718" y="30" width="134" height="56" rx="9"/>
       <text class="t" x="785" y="54" text-anchor="middle">Done</text>
       <text class="ts" x="785" y="70" text-anchor="middle">problem closed</text>
-
-      <!-- red path -->
-      <path class="edge-red" d="M519 88 L519 140" marker-end="url(#arrowred)"/>
+      <path class="edge-red" d="M519 88 L519 140"/>
       <text class="ts" x="600" y="120" fill="#b42318">anything red ✗</text>
       <rect class="box-red" x="10" y="146" width="240" height="60" rx="9"/>
       <text class="t" x="130" y="170" text-anchor="middle">1 · Undo the fix</text>
@@ -341,8 +374,8 @@
       <rect class="box-red" x="610" y="146" width="240" height="60" rx="9"/>
       <text class="t" x="730" y="170" text-anchor="middle">3 · Alert the team</text>
       <text class="ts" x="730" y="186" text-anchor="middle">the right person is notified by name</text>
-      <line class="edge-red" x1="500" y1="170" x2="540" y2="170" marker-end="url(#arrowred)"/>
-      <line class="edge-red" x1="250" y1="176" x2="306" y2="176" marker-end="url(#arrowred)"/>
+      <line class="edge-red" x1="500" y1="170" x2="540" y2="170"/>
+      <line class="edge-red" x1="250" y1="176" x2="306" y2="176"/>
     </svg>
     <figcaption>The undo-and-alert net on auto-landing teams: green finishes the job; red undoes, halts, and calls a human — automatically.</figcaption>
   </figure>
@@ -352,16 +385,15 @@
 <section id="collisions">
   <h2>When two fixes collide</h2>
 
-  <div class="feature">
+  <div class="feature key">
     <h3>A referee for overlapping fixes — that also gets graded</h3>
-    <p>When two fixes being prepared in parallel touch the same lines of code, landing the second
-    would normally end in a merge conflict that only a human can untangle. The harness instead asks
-    a dedicated assistant to <em>propose</em> a combined version of both fixes. That proposal gets
-    no special trust: it must pass the full test suite in a fresh copy, exactly like any other fix.
-    If it passes, it is published, reviewed, and landed with the usual net. If it fails — or the
-    referee is unsure — the proposal is dropped and a human is handed a clean, documented
-    conflict.</p>
-    <p class="why"><b>Why it matters:</b> parallel speed without creating a new trust problem — the referee's work is graded like everyone else's.</p>
+    <p>When two fixes prepared in parallel touch the same lines of code, a dedicated assistant
+    proposes a combined version. That proposal gets <strong>no special trust</strong>: it must pass
+    the full suite in a fresh copy, exactly like any other fix. Pass → it is published, reviewed,
+    and landed with the usual net. Fail or unsure → the proposal is dropped and a human gets a
+    clean, documented conflict.</p>
+    <p class="why"><b>Deliberate choice:</b> the obvious shortcut — trusting the machine's merge — is exactly what the one rule forbids. The referee's work is graded like everyone else's.</p>
+    <div class="signal"><b>What you can observe:</b> the run log shows the collision, the referee's attempt, the independent re-test, and the outcome — whichever way it goes.</div>
   </div>
 
   <figure>
@@ -383,9 +415,9 @@
       <rect class="box" x="618" y="60" width="160" height="56" rx="9"/>
       <text class="t" x="698" y="82" text-anchor="middle">Full re-check</text>
       <text class="ts" x="698" y="98" text-anchor="middle">fresh copy, whole suite</text>
-      <path class="edge-green" d="M698 118 L698 168" marker-end="url(#arrowgreen)"/>
+      <path class="edge-green" d="M698 118 L698 168"/>
       <text class="ts" x="752" y="150" fill="#1a7f37">passes ✓</text>
-      <path class="edge-red" d="M618 88 C 590 88, 560 180, 500 188" marker-end="url(#arrowred)"/>
+      <path class="edge-red" d="M618 88 C 590 88, 560 180, 500 188"/>
       <text class="ts" x="560" y="215" fill="#b42318">fails or unsure ✗</text>
       <rect class="box-green" x="560" y="172" width="280" height="50" rx="9"/>
       <text class="t" x="700" y="192" text-anchor="middle">Combined fix lands</text>
@@ -405,18 +437,17 @@
   <div class="feature">
     <h3>Failures are loud, recorded, and never quietly retried away</h3>
     <p>If any step fails — a fix can't be verified, a landing is refused, even the cleanup after a
-    check hiccups — the harness writes down exactly what happened, in its own words, and keeps
-    going or stops as appropriate. It never silently re-rolls the dice and never papers over a
-    failure.</p>
-    <p class="why"><b>Why it matters:</b> you can audit every run. “It worked” always means it worked; anything else is on the record.</p>
+    check hiccups — the harness writes down exactly what happened and keeps going or stops as
+    appropriate. It never silently re-rolls the dice and never papers over a failure.</p>
+    <p class="why"><b>What it prevents:</b> the silent-failure pattern where automation “succeeds” by hiding what broke. <b>Visible signal:</b> every run is a checkable record — “it worked” always means it worked.</p>
   </div>
 
   <div class="feature">
     <h3>An honest summary after every run</h3>
-    <p>Each run ends with a plain tally: how many problems were attempted, fixed, failed, skipped
-    as duplicates, or not started — each with a link to the actual work (the pull request, the undo,
+    <p>Each run ends with a plain tally: how many problems were attempted, fixed, failed, skipped as
+    duplicates, or not started — each with a link to the actual work (the pull request, the undo,
     the alert).</p>
-    <p class="why"><b>Why it matters:</b> the bottom line is always checkable, never marketing.</p>
+    <p class="why"><b>What it replaces:</b> progress reports that need believing. <b>Visible signal:</b> the bottom line is auditable, never marketing.</p>
   </div>
 </section>
 
@@ -428,31 +459,44 @@
     <h3>Nothing leaves without a secrets check</h3>
     <p>Every piece of text the harness sends out — to the AI service, to GitHub, into a report —
     passes a screen that blocks credentials, keys, and tokens.</p>
-    <p class="why"><b>Why it matters:</b> automation can't leak access it was never supposed to share.</p>
+    <p class="why"><b>What it prevents:</b> automation leaking access it was never supposed to share. <b>Boundary:</b> this is a screen on what the harness emits, not a general security audit of the surrounding systems.</p>
   </div>
 
   <div class="feature">
     <h3>Client material stays off limits until cleared</h3>
     <p>Error logs often contain internal paths and real data. No client repository, issue list, or
-    log may be connected to the harness until the company has explicitly confirmed, for that
-    client, that sending their material to the AI service is allowed. The block is technical, not
-    just policy on paper.</p>
-    <p class="why"><b>Why it matters:</b> confidentiality mistakes are prevented by the tool, not left to memory.</p>
+    log may be connected to the harness until the company has explicitly confirmed, for that client,
+    that sending their material to the AI service is allowed. The block is technical, not just
+    policy on paper.</p>
+    <p class="why"><b>What it prevents:</b> confidentiality mistakes. <b>Who decides:</b> company leadership, per client — the harness enforces, it never grants.</p>
+  </div>
+</section>
+
+<!-- ============ CHOICES ============ -->
+<section id="choices">
+  <h2>Choices we made on purpose</h2>
+  <p>Each of these had a faster or easier alternative. We rejected it deliberately:</p>
+  <div class="card">
+    <ul class="choices">
+      <li><span class="pick">Human approval by default.</span> <span class="rejected">Rejected: <s>auto-merge everywhere for speed</s></span> — a wrong fix landing unreviewed costs more than review clicks. Auto-landing exists only behind an explicit per-team opt-in.</li>
+      <li><span class="pick">Re-test everything, including machine merges.</span> <span class="rejected">Rejected: <s>trusting the conflict resolver's combined fix</s></span> — machine conflict resolution is exactly the kind of output the one rule exists for.</li>
+      <li><span class="pick">Stop and ask when unsure.</span> <span class="rejected">Rejected: <s>best-effort guesses with silent retries</s></span> — a visible failure is recoverable; a hidden one compounds.</li>
+      <li><span class="pick">Fall back to slow-and-safe when the plan is uncertain.</span> <span class="rejected">Rejected: <s>running everything in parallel regardless</s></span> — speed is sacrificed first, never safety.</li>
+    </ul>
   </div>
 </section>
 
 <!-- ============ RULES ============ -->
 <section id="rules">
-  <h2>The rules that never bend</h2>
+  <h2>Who owns what</h2>
   <div class="card">
     <table>
-      <tr><th>Rule</th><th>In plain words</th></tr>
-      <tr><td>Opt-in only</td><td>Automatic landing only where a team explicitly switched it on at setup — and never on our own repository.</td></tr>
-      <tr><td>Trust nothing unverified</td><td>Any machine-produced work — fix, merge proposal, anything — counts only after independent re-checking.</td></tr>
-      <tr><td>Client data gated</td><td>No client material enters the system without a confirmed policy decision for that client.</td></tr>
-      <tr><td>Tests are permanent</td><td>Every fix's proof-of-bug test stays in the suite forever.</td></tr>
-      <tr><td>Fixed budget</td><td>No AI spend beyond what the run announced up front.</td></tr>
-      <tr><td>Contained experiments</td><td>All machine work happens in isolated, throwaway copies — today on local infrastructure, no cloud spend.</td></tr>
+      <tr><th>Decision</th><th>Owned by</th></tr>
+      <tr><td>What gets fixed</td><td>People — the harness only works the list humans report</td></tr>
+      <tr><td>Whether a fix lands</td><td>A person, by default; the machine only where a team opted in — under the undo net</td></tr>
+      <tr><td>Whether auto-landing is allowed</td><td>Each team, at setup — never switched on for them, never later by accident</td></tr>
+      <tr><td>Whether client material may be processed</td><td>Company leadership, per client — the harness enforces the answer</td></tr>
+      <tr><td>Whether a fix is actually correct</td><td>The independent re-test — nobody's opinion, machine or human, overrides it</td></tr>
     </table>
   </div>
 </section>
@@ -472,6 +516,19 @@
       <tr><td>Run</td><td>One session of the harness working through its queue, ending with an honest summary.</td></tr>
     </table>
   </div>
+</section>
+
+<!-- ============ BOUNDARY ============ -->
+<section id="boundary">
+  <h2>How far the proof goes today</h2>
+  <p>
+    Established by live runs with a real AI: the complete flow described here, on our practice
+    repository — parallel fixes, collisions resolved through the graded referee, auto-landing under
+    the undo net, and honest failures. The next validation stage is the same flow on real (non-client)
+    repositories, and then a first client project once the confidentiality decision is made. Not yet
+    tested: other repositories, other AI providers, and heavier workloads than three parallel fixes.
+    This guide describes designed and proven behaviour, not a production rollout claim.
+  </p>
 </section>
 
 <footer>
