@@ -88,15 +88,19 @@ auto-merges itself (constraint 1).
 
 ## Requested external actions
 
-(To be confirmed with the owner — preparing is not authority to execute.)
+Owner authorized (2026-09-20, via AskUserQuestion): push branch + open PR.
 
 ## Executed external actions and observed results
 
-None yet.
+- **Push** `worktree-wi-13` → origin: executed 2026-09-20; observed `* [new branch]
+  worktree-wi-13 -> worktree-wi-13`, upstream set. (Commit range delivered as
+  `61b90e2..263a072` — 26 commits, including this delivery record's parent; delivery.md's
+  own commit `263a072` is included.)
+- **PR** `worktree-wi-13` → `main` on `manjula25/software-factory-loop`: executed
+  2026-09-20; observed **https://github.com/manjula25/software-factory-loop/pull/17**.
 
 ## Pending actions
 
-- Push branch `worktree-wi-13` to origin (needs explicit authorization).
-- Open PR `worktree-wi-13` → `main` (needs explicit authorization).
+- Human review + merge of PR #17 (owner; this repo never auto-merges itself).
 - Worktree/branch cleanup after merge (needs explicit authorization; exact commands will be
   provided at that point).
