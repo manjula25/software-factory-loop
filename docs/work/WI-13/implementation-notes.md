@@ -13,6 +13,7 @@ Controller ledger (one row per task):
 | T3 | small/low | 39eba70 | cca5e53 | `planner-wiring` | ACCEPTED — gates green (4/4 focused, 230/230 full, typecheck 0); spec PASS; quality APPROVED (both at cca5e53) |
 | T4 | small/low | 240afcd | 01bc242 | `admission` | ACCEPTED — gates green (5/5 focused, 231/231 full, typecheck 0); spec PASS; quality APPROVED (both at 01bc242) |
 | T5 | small/low | 11a078f | f70f4d7 | `waves` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at f70f4d7) |
+| T6+T6b | medium/high | 6ec50c5 | aee6c78 | `wave-runner` | ACCEPTED — T6 a7b99c6: spec PASS, quality NEEDS_FIXES (2 critical, 2 important); T6b fix aee6c78: gates green (11/11 focused, 251/251 full +7, typecheck 0, loop 131/131 double-run stable); spec PASS; quality APPROVED (both at aee6c78) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -160,3 +161,74 @@ Controller ledger (one row per task):
     an optional comment line could say so.
   - Spec adjacents: ∅-case doc phrasing loose (acyclic plans can never yield ∅
     with issues remaining); pretest-hook git-fetch noise is environmental.
+
+## T6 + T6b — Wave runner: concurrent lanes, re-plan, stop-the-line; defect-fix pass
+
+- **Seam:** queue-runner seam (`runQueue` wave loop) + `runSingleIssue`
+  concurrency contract; `parsePlanOutput` re-plan validation. Tests in
+  `src/loop.test.ts` (`wave-runner`, `planner-wiring`, `admission` rewrites).
+  **Budgets:** one leaf session per pass. **Evidence boundary:**
+  harness-source (dep-injected mocks; real git contention is T10's).
+- **T6 candidate a7b99c6** (base 6ec50c5). Gates: 244/244, typecheck 0.
+  **Spec review: PASS** (zero blocking; two rulings proven — see adjacents).
+  **Quality review: NEEDS_FIXES** — the work item's first blocking verdict:
+  - Critical 1: shared `REVIEW_BRANCH` across concurrent opted-in lanes —
+    lane A's deleteBranch lands under lane B's in-flight review → spurious
+    `uncertain` → merge skipped.
+  - Critical 2: `mergePr`/`syncMainToOrigin`/`revertMerge` unserialized on
+    the shared clone → index.lock contention → false "divergent main"
+    uncanaried-merge HALT.
+  - Important 1: re-plan validated against FULL eligible set rejected every
+    compliant re-plan (prompt asks only about remaining).
+  - Important 2: ∅-wave fallback unreachable-by-construction for validated
+    plans — needs honest framing.
+  - Minors: `result.value as` cast; `ranked.filter(!attempted)` computed
+    twice; `inRun`-not-refreshed invariant; vestigial mock write.
+- **Controller adjudication:** fix NOW (T6b), not folded into Slice 3 — T10's
+  live run exercises exactly this window; deferring known criticals into
+  future tasks is scope-gaming. Reviewer's one-seam suggestion adopted.
+- **T6b candidate aee6c78** (base a7b99c6): `createGitChainLock()` per-run
+  promise-chain mutex over the whole opted-in arm (review → merge → canary/
+  revert/close), identity default in single-issue mode; `parsePlanOutput`
+  optional `edgeIds` (priority vs asked set, edges vs full set, two-arg call
+  sites unchanged); ∅-fallback rewritten as invariant guard (proof cited);
+  discriminant narrowing replaces the cast; dead mock write deleted; +3 pins
+  (mutual exclusion order-agnostic depth probe, compliant-re-plan
+  acceptance, abort-prevents-wave-2) + 4 plan-parse split-contract cases.
+  Gates fresh: `wave-runner` 11/11, `plan-parse` 12/12, full 251/251 (+7),
+  typecheck 0, `src/loop.test.ts` double-run 131/131 stable.
+- **T6b spec review: PASS** (zero blocking) — mutex boundary adjudicated
+  correct (FR-003 fix-work concurrency intact; canary inside the lock is the
+  right reading, FR-011 "sequential verified merges"); re-plan split admits
+  nothing unsatisfiable; FR-002 routing byte-unchanged; unreachability proof
+  independently re-derived. **T6b quality review: APPROVED** (zero
+  critical/important) — lock call-graph verified deadlock-free and
+  wedge-free; PLAN_BRANCH cleanup cannot race lanes (post-allSettled);
+  discriminant verified cast-free; test (i) verified non-vacuous.
+  Sequencing note: the mutex boundary survives T8's gate insertion.
+- **Adjacent findings ledger (T6 spec + T6b):**
+  - A20 (T6 spec): no direct test pins abort-prevents-wave-2 — CLOSED by
+    T6b test (k).
+  - A21 (T6 spec): aborted runs still run the final notAdmitted loop —
+    outcome arguably fine (blocked lines are informative post-halt); leave.
+  - A22 (T6 spec): re-plan skip when nothing remains/budget spent is
+    asserted only via runPlan call-count, not a distinct reading test — fine
+    at this seam.
+  - A23 (T6 spec): substring test-matching on `gh-1` vs `gh-11` (endsWith
+    prefix collision) in makeQueueDeps canary dispatch — also raised by the
+    T6b implementer; pre-existing, benign for current fixtures; ledger it if
+    lane-count grows or fixtures gain gh-1x ids.
+  - A24 (T6b quality, carry-over minor): `ranked.filter(!attemptedIds.has)`
+    recomputed per wave iteration (loop.ts re-plan gate + ∅-fallback) —
+    hoistable to one `remaining` per iteration.
+  - A25 (T6b quality, minor): test (i)'s depth probe does not wrap
+    `deps.fixDiff` — a future narrowing of the locked section around
+    `runReview` alone would evade the probe; wrap fixDiff when that region
+    is next touched (T8 is the likely toucher).
+  - A26 (T6b quality, minor): test (i)'s 100 ms escape makes the pre-fix
+    half timing-dependent (post-fix assertion is timing-free) — cosmetic.
+  - A27 (T6b spec): re-plan cycle-through-merged-id is rejected loudly
+    (conservative, FR-001-compliant) — evidence boundary, not a defect.
+  - A28 (T6b spec): `runSingleIssue` now a two-mode seam (optional
+    serializeGitChain param) — consider an options object if a third mode
+    appears.
