@@ -185,10 +185,14 @@ export interface BoundedRunOptions {
  * unbounded second agent. Both the planning pass and the pre-merge review pass
  * build their options here, so the budget bound lives (and is asserted) once.
  */
-export function boundedRunOptions(name: string, branch: string): BoundedRunOptions {
+export function boundedRunOptions(
+  name: string,
+  branch: string,
+  maxIterations = 1,
+): BoundedRunOptions {
   return {
     name,
-    maxIterations: 1,
+    maxIterations,
     branchStrategy: { type: "branch", branch },
   };
 }
@@ -234,4 +238,41 @@ export async function runReview(input: PlanRunInput & { readonly diff: string })
     ...boundedRunOptions("review", REVIEW_BRANCH),
   });
   return result.stdout;
+}
+
+/**
+ * The merger pass's iteration bound (WI-13, FR-007): one bounded pass, same
+ * philosophy as every other bounded run — a merger that could iterate would be
+ * an unbounded second agent (constraint 5).
+ */
+export const MERGER_MAX_ITERATIONS = 1;
+
+/**
+ * The merger pass's cost controls, on the caller's fix branch — unlike
+ * `planRunOptions`/`runReview`, the merger works on an existing branch rather
+ * than a throwaway one.
+ */
+export function mergerRunOptions(branch: string): BoundedRunOptions {
+  return boundedRunOptions("merger", branch, MERGER_MAX_ITERATIONS);
+}
+
+/**
+ * One bounded merger pass (WI-13 T7, FR-007): merges `mainRef` into `branch`
+ * and resolves conflicts; never trusted (constraint 2) — the caller
+ * re-verifies the merged result in a fresh sandbox before any merge is counted
+ * (FR-007/FR-008). The prompt is prebuilt by the caller (T8); `mainRef` rides
+ * the seam per the `runReview` idiom so the merger input is complete at the
+ * adapter boundary.
+ */
+export async function runMerger(
+  input: PlanRunInput & { readonly branch: string; readonly mainRef: string },
+): Promise<{ stdout: string; commits: readonly { readonly sha: string }[] }> {
+  const result = await run({
+    cwd: input.cwd,
+    prompt: input.prompt,
+    agent: agentProvider(input.agent),
+    sandbox: sandboxProvider(input.imageName, input.env),
+    ...mergerRunOptions(input.branch),
+  });
+  return { stdout: result.stdout, commits: result.commits };
 }

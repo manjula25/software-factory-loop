@@ -69,4 +69,18 @@ describe("sandcastle adapter boundary (FR-001)", () => {
     expect(options.branchStrategy).toEqual({ type: "branch", branch: adapter.PLAN_BRANCH });
     expect(adapter.PLAN_BRANCH.startsWith("fix/")).toBe(false);
   });
+
+  it("keeps the merger bounded to one iteration, on the caller's fix branch (FR-007)", () => {
+    // constraint 5: a merger that could iterate is an unbounded second agent
+    expect(adapter.MERGER_MAX_ITERATIONS).toBe(1);
+
+    const options = adapter.mergerRunOptions("fix/gh-1");
+    expect(options.maxIterations).toBe(1);
+    // the merger reuses the caller's existing fix branch, unlike the throwaway
+    // loop/plan and loop/review branches
+    expect(options.branchStrategy).toEqual({ type: "branch", branch: "fix/gh-1" });
+
+    expect(typeof adapter.runMerger).toBe("function");
+    expect(adapter.runMerger.constructor.name).toBe("AsyncFunction");
+  });
 });
