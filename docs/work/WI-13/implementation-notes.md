@@ -461,6 +461,13 @@ Controller ledger (one row per task):
     file and merged cleanly). Live merger evidence remains a non-claim;
     the T8 vitest pins are its only behavioral coverage. Candidate: a
     future live run with deliberately overlapping fixes.
+    - **2026-09-20 follow-up run** (`evidence/merger-live-run.log`): a deliberately
+      overlapping pair was seeded (issues #36/#37, two refinements to the same titlecase
+      line), user-authorized — but the PLANNER serialized them (`blocked gh-37 by gh-36`),
+      so no same-wave conflict ever arose and the gate still did not fire. The run was green
+      end-to-end and is live evidence for FR-002 blocked semantics + same-run re-plan.
+      A46 REMAINS OPEN: a forcing seed must look independent to the planner (different
+      symptoms/functions whose fixes touch adjacent lines).
   - A47 (T10): worktrees don't inherit the untracked `.env` — every live
     run from a worktree needs the main-checkout `.env` exported (or a
     symlink). Candidate for workflow.md when it next changes (A40's
