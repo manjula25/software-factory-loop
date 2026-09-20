@@ -15,6 +15,7 @@ Controller ledger (one row per task):
 | T5 | small/low | 11a078f | f70f4d7 | `waves` | ACCEPTED — gates green (5/5 focused, 236/236 full, typecheck 0); spec PASS; quality APPROVED (both at f70f4d7) |
 | T6+T6b | medium/high | 6ec50c5 | aee6c78 | `wave-runner` | ACCEPTED — T6 a7b99c6: spec PASS, quality NEEDS_FIXES (2 critical, 2 important); T6b fix aee6c78: gates green (11/11 focused, 251/251 full +7, typecheck 0, loop 131/131 double-run stable); spec PASS; quality APPROVED (both at aee6c78) |
 | T7 | small/low | 7148955 | 9aada27 | boundary file | ACCEPTED — gates green (5/5 boundary focused, 252/252 full +1, typecheck 0); spec PASS; quality APPROVED (both at 9aada27) |
+| T8 | medium/high | 9a8132a | 7ebfa5c | `verified-merger` | ACCEPTED — gates green (6/6 + 11/11 focused, 258/258 full +6, typecheck 0, loop 137/137 double-run); spec PASS; quality APPROVED (both at 7ebfa5c) |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -273,3 +274,60 @@ Controller ledger (one row per task):
     consumes it.
   - Quality watch: `mainRef` is the file's first seam-field with zero
     downstream read until T8 lands — one eye on T8's diff.
+
+## T8 — Verified-merger gate in the loop
+
+- **Seam:** `LoopDeps` new members (`branchConflictsWithMain`,
+  `runMerger`) + `runSingleIssue`'s opted-in chain via vitest
+  (`verified-merger` describe, 6 tests). Module-private:
+  `verifyInFreshSandbox`, `runVerifiedMergerGate`, `buildMergerPrompt`.
+  **Budgets:** one leaf session. **Evidence boundary:** harness-source
+  (mocked deps; real `git merge-tree` wiring and adapter `runMerger` are
+  T10's live exercise).
+- **Candidate 7ebfa5c** (base 9a8132a). Controller gates re-run fresh:
+  `verified-merger` 6/6, `wave-runner` 11/11 (mutex pins + A25 hardening),
+  full 258/258 (+6), typecheck 0, loop double-run 137/137.
+- **Spec review: PASS** (zero blocking; all five implementer judgment calls
+  adjudicated acceptable). **Quality review: APPROVED** (zero critical; one
+  important, explicitly non-blocking — see A33). Extraction verified
+  verbatim against the deleted inline block; the one intended reorder
+  (sandbox close before createPr/deleteBranch) matches the preflight's
+  established close-then-delete ordering. Probe's exit-code discrimination
+  fails SAFE in the dangerous direction (non-0/non-1 rethrows → loud
+  mergeFailure; git exits 0 only on clean merge-tree).
+- **Judgment calls accepted (spec-adjudicated):** (1) probe throw →
+  mergeFailure safe-fallback posture, not harness abort (probe is a git
+  read, not verification infrastructure); (2) gate-sandbox teardown failure
+  folds first-origin-wins on green, dropped on red; (3) sandbox close
+  reordered before createPr/fail() deleteBranch (byte-equivalent outcomes,
+  full suite the pin); (4) `mainRef = "main"` mirrors createPr's base
+  hardcode; (5) green-arm `{passed: true, newFailures: []}` reconstruction
+  provably faithful (`diffVerification` passes only with empty set).
+- **Adjacent findings ledger:**
+  - A33 (T8 quality, important-non-blocking): probe-throw posture has NO
+    test — no throw knob on `branchConflictsWithMain` in makeDeps/
+    makeQueueDeps. Code-read confirms it mirrors the tested merger-throw
+    posture. Cheap zero-risk follow-up test; deferred to avoid churning
+    the accepted candidate (test-only change would invalidate both fresh
+    reviews). Fold into any later loop.test.ts touch or the backlog.
+  - A34 (T8 spec): on the gate's RED path the re-verification sandbox's own
+    teardownFailure is dropped (evidence loss only; verdict stands —
+    never-decides-or-erases holds). One guarded spread would fix; same
+    deferral rationale as A33.
+  - A35 (T8 spec): gate mergeFailure strings embed raw error reasons
+    un-guarded at construction — identical pre-existing class as the
+    mergePr failure path (loop.ts:892); fixing consistently would touch
+    that path too. Ledger, don't fix in isolation.
+  - A36 (T8 spec): repo-wide git breakage → probe throws on every opted-in
+    lane, each landing mergeFailure posture without FR-003-style
+    every-lane→harness-level escalation. Theoretical (createPr fails
+    earlier). Ledger.
+  - A37 (T8 quality, minor): merge-tree --write-tree needs git ≥ 2.38 —
+    older git makes every opted-in PR take the loud safe fallback. T10 must
+    confirm host git version. BINDING for T10.
+  - A38 (T8 quality, minor): runMerger's {stdout, commits} return unused
+    by the gate — contract symmetry, noting only.
+  - A39 (T8 quality, minor): makeDeps' mergerResolutionFails applies red
+    to ANY fix-branch sandbox after mergerRan flips — correct today, mildly
+    brittle if a second gate invocation is ever added (per-id queue variant
+    is precise).
