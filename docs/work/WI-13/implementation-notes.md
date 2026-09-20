@@ -18,6 +18,7 @@ Controller ledger (one row per task):
 | T8 | medium/high | 9a8132a | 7ebfa5c | `verified-merger` | ACCEPTED — gates green (6/6 + 11/11 focused, 258/258 full +6, typecheck 0, loop 137/137 double-run); spec PASS; quality APPROVED (both at 7ebfa5c) |
 | T9 | small/low | 0afa98c | 51a27f7 | (docs inspection) | ACCEPTED — gates green (258/258, typecheck 0, staleness grep clean, source diffs comment-only); spec PASS (11/11 criterion items code-traced); quality APPROVED (both at 51a27f7) |
 | T10 | medium/high | 8e6d9a9 | 3e1b6bf | live run | ACCEPTED — attempt 3 green end-to-end (planner graph, 2 concurrent lanes, PRs #33/#34, merges + green canaries, re-plan → gh-31 → PR #35, merge + green canary, summary 3/3, exit 0); attempts 1–2 failures recorded verbatim (env; baseline gate correctly aborting a bad seed); spec PASS at d035ead, re-confirmed PASS at 3e1b6bf after appending the review-recommended errata (attempt-1 exit-code mislabel; diff verified 2-line append, nothing altered); quality N/A — zero source changes, evidence file has no code-quality axis (controller ruling, recorded) |
+| T11 | medium/high | bc0400b | 3828c21 | `wave-runner` (l) | ACCEPTED — fix pass for the code-review BLOCKING finding (FR-004 wave-granularity stop-the-line); gates green (12/12 focused incl. corrected (c) and (k), 259/259 full +1, typecheck 0, both re-verified independently by each reviewer); spec PASS; quality APPROVED (both at 3828c21); CLAUDE.md loop.ts row updated in the same commit |
 
 ## T1 — Plan output contract: schema + parser
 
@@ -370,6 +371,46 @@ Controller ledger (one row per task):
     is stale; the 2026-09-19 amendment below it states current semantics.
     Numbered constraint text is grilling territory — owner may reword in a
     future grilling-amended edit.
+
+## T11 — Fix pass: FR-004 merge-granularity stop-the-line (code-review blocking)
+
+- **Origin:** `docs/work/WI-13/review.md` Spec axis, finding (c)1 (BLOCKING). The wave runner
+  raised `QueueAbortedError` only after wave settlement and the mutex-wrapped merge chain
+  consulted no run-level state — after lane A's red canary + revert released the lock, sibling
+  lane B merged on reverted main deterministically. Test (c) had pinned the weaker behavior as
+  correct, which is why the T6/T6b dual reviews passed it.
+- **Seam:** queue-runner seam (`runQueue`) in `src/loop.test.ts`; module-private
+  `RunHaltSignal` / `createRunHaltSignal` / `neverHaltedSignal` / `harnessLevelFailure` and the
+  `runSingleIssue` → `runSingleIssueLane` wrapper split in `src/loop.ts`. **Budgets:** one
+  leaf session. **Evidence boundary:** harness-source.
+- **Candidate 3828c21** (base bc0400b). RED observed verbatim (mergePr "called 1 times, but
+  got 2 times") plus a mutation re-check (pre-fix source restored → (l) and corrected (c) both
+  fail). Controller gates re-run fresh: `wave-runner` 12/12, full 259/259 (+1), typecheck 0.
+- **Spec review: PASS** (zero blocking; all five fix claims verified in code; the
+  early-harness-outcome bound adjudicated within FR-004's letter — the spec's absolute
+  no-merge sentence is scoped to red canaries, and a sibling already in-flight merging on
+  VALID main matches the abort-after-settle posture). **Quality review: APPROVED** (zero
+  critical/important; lock ordering adjudged airtight for the red-canary arm; wrapper split
+  verified verbatim-move; tests adjudged deterministic and non-vacuous; "smallest correct
+  shape, nothing to ponytail").
+- **Adjacent findings ledger:**
+  - A48 (T11 quality, minor): the `RunHaltSignal` doc's "no sibling merge is attempted after
+    the first harness-level outcome" slightly overclaims the early-failure arm (halt set at
+    lane resolution, outside the mutex — a sibling chain already entered can still merge, on
+    valid main). One honest comment sentence owed when the file is next touched.
+  - A49 (T11 quality, cosmetic): halt first-wins is in completion order; `harnessAbort ??=`
+    iterates in wave order — with two harness failures in one wave, a sibling's skip reason
+    could cite a different lane id than the abort. Never blocks.
+  - A50 (T11 quality, minor): tests (c) and (l) overlap in summary assertions; each pins a
+    distinct surface (abort snapshot vs no-merge/no-spend counts); a future editor could
+    collapse them.
+  - A51 (T11 implementer): test (j)'s `mergeThrowsFor: "fix/gh-2"` knob is now inert (gh-2
+    never reaches mergePr post-fix); the test still pins the uncanaried surface but its
+    config comment is stale. Same possible staleness in canary-red tests at ~569/(g).
+  - A52 (T11 spec, cosmetic): the halt skip reuses `reviewSkip`, so the summary reads
+    "REVIEW SKIP gh-2" for a skip that never reached review — message text is unambiguous.
+  - A53 (T11 spec, minor): a halted opted-in sibling is not added to `completed` — harmless;
+    the abort discards re-plan/blockedBy resolution anyway.
 
 ## T10 — Live integration run (user-authorized)
 

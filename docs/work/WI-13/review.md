@@ -139,3 +139,17 @@ Blocking finding 1 → **back to stage 3** (controller fix pass through `impleme
 after a red canary; then fresh verification and a fresh review of the changed candidate).
 Standards adjacents 1–6 and Spec findings 2–4 → adjacent ledger (implementation-notes.md),
 candidates for the fix pass or a later taste slice.
+
+## Resolution addendum (2026-09-20, candidate 3828c21)
+
+Blocking finding 1 is **resolved**. Fix pass T11 (base `bc0400b` → `3828c21`, diff limited to
+`src/loop.ts`, `src/loop.test.ts`, CLAUDE.md row): run-level `RunHaltSignal` set inside the
+mutex before release by any harness-level outcome (shared `harnessLevelFailure` predicate now
+also drives the wave loop's abort classification), checked at the serialized chain top before
+the merger gate — a halted sibling returns its PR open with a recorded skip reason, the spec's
+stated end-state. Test (l) pins no-sibling-merge (mutation re-check attached); test (c), which
+had pinned the defect, corrected. Dual fresh reviews at `3828c21`: spec **PASS** (zero
+blocking), quality **APPROVED** (zero critical/important). New adjacents A48–A53 ledgered.
+Verification re-run fresh at `3828c21` (typecheck 0, 259/259, smoke 9/9); live-run applicability
+boundary restated in `verification.md`. Findings 2–4 remain adjacents pending owner
+adjudication of the FR-008 spec-internal tension; Standards adjacents 1–6 unchanged.
