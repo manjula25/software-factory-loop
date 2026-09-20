@@ -113,5 +113,10 @@ fresh reviews PASS/APPROVED at `1da7936`; proving commands re-run fresh at the n
 typecheck exit 0, `npm test` **261/261** (259 + 2 T12 tests), focused `verified-merger` 8/8
 and `wave-runner` 12/12. A46 (live exercise of the conflict path) is CLOSED on runs 1–3's
 evidence: probe, merger, fresh-sandbox re-verification, review, and failure posture all fired
-live; what failed was the publish step, now fixed — a fresh bypassed live run at the T12-fixed
-source is pending and will be recorded under `evidence/merger-live-run-4.log` when run.
+live; what failed was the publish step, now fixed — and **run 4**
+(`evidence/merger-live-run-4.log`, same bypass, T12-fixed source `937f24f` = `7733c1f` +
+scratch bypass) proved the gate's complete happy path green end-to-end: conflict probed,
+merger resolved, re-verified green, **the resolved branch published to origin** (the T12
+step, observed live), review approved, mergePr succeeded (PR #51 @ `12758a1`), canary green,
+issue closed, 2/2 fixed, exit 0; combined behavior + both permanent regression tests verified
+on fixtures main post-pull.
