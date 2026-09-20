@@ -575,6 +575,56 @@ describe("plan-parse: parsePlanOutput (WI-13 T1, FR-001)", () => {
       ),
     ).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // WI-13 T6b FIX 2 (quality Important): the re-plan split — priority is
+  // validated against the ASKED set (`ids`); blockedBy keys and edge targets
+  // against the FULL set (`edgeIds`, defaulting to `ids`).
+  // -------------------------------------------------------------------------
+
+  it("T6b: with edgeIds, priority covering the asked set + an edge naming a full-set-but-not-asked id → ACCEPTED", () => {
+    const parsed = parsePlanOutput(
+      '<plan>{"priority":{"gh-2":5},"blockedBy":{"gh-2":["gh-1"]}}</plan>',
+      ["gh-2"], // the re-plan was asked about the remaining issue only
+      { edgeIds: ["gh-1", "gh-2"] }, // gh-1 merged this run — still edgeable
+    );
+
+    expect(parsed).toEqual({ priority: { "gh-2": 5 }, blockedBy: { "gh-2": ["gh-1"] } });
+  });
+
+  it("T6b: with edgeIds, a priority gap in the ASKED set still rejects", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-2":5},"blockedBy":{}}</plan>',
+        ["gh-2", "gh-3"], // gh-3 was asked and must be prioritized
+        { edgeIds: ["gh-1", "gh-2", "gh-3"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("T6b: with edgeIds, an edge naming an id outside even the full set still rejects", () => {
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-2":5},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ["gh-2"],
+        { edgeIds: ["gh-1", "gh-2"] },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("T6b: edgeIds omitted — both checks run against `ids`, byte-identical to the two-arg contract (T1 pins hold)", () => {
+    // A full-set priority answer to a full-set ask still parses...
+    expect(
+      parsePlanOutput('<plan>{"priority":{"gh-1":5,"gh-2":3},"blockedBy":{}}</plan>', ids),
+    ).toEqual({ priority: { "gh-1": 5, "gh-2": 3 }, blockedBy: {} });
+    // ...and an edge naming an id outside `ids` still rejects.
+    expect(
+      parsePlanOutput(
+        '<plan>{"priority":{"gh-1":3,"gh-2":3},"blockedBy":{"gh-2":["gh-9"]}}</plan>',
+        ids,
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("plan-order: buildPlanPrompt / orderFromPlan (WI-13 T2, FR-001)", () => {

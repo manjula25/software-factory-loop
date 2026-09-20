@@ -1604,6 +1604,12 @@ interface QueueDepsConfig {
   staleBaselineFor?: string;
   /** WI-13 T3: the planner run's stdout; defaults to a valid equal-priority plan. */
   planStdout?: string;
+  /**
+   * WI-13 T6b: stdout for the SECOND and later planner calls (the re-plan) —
+   * when set, `planStdout` covers only the initial plan, so a test can pin
+   * the re-plan's own contract.
+   */
+  rePlanStdout?: string;
   /** WI-13 T3: the planner run itself throws (sandbox/credentials failure). */
   planThrows?: string;
   /** `.loop-harness` is committed on main — attachment delivery must abort (harness-level). */
@@ -1660,10 +1666,15 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     },
   });
 
+  // T6b: the planner-call counter distinguishes the initial plan (call 1)
+  // from the post-merge re-plan (call 2+) when `rePlanStdout` is set.
+  let planCalls = 0;
   const deps = {
     env: {} as Record<string, string>,
     runFixRun: vi.fn(async (input: { branch: string; name?: string }) => {
-      active = issues.find((i) => fixBranch(i) === input.branch) ?? issues[0]!;
+      // T6b (quality Minor 4): no `active` write here — every read of the
+      // shared `active` sits inside createFixSandbox, which overwrites it at
+      // entry before reading, so a mid-lane write was vestigial.
       return { stdout: agentStdout(), commits: [{ sha: "abc" }], branch: input.branch };
     }),
     createFixSandbox: vi.fn(async (input: { branch: string; baseBranch?: string }) => {
@@ -1770,8 +1781,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (config.planThrows !== undefined) {
         throw new Error(config.planThrows);
       }
-      if (config.planStdout !== undefined) {
-        return config.planStdout;
+      planCalls += 1;
+      const stdout =
+        planCalls > 1 && config.rePlanStdout !== undefined
+          ? config.rePlanStdout
+          : config.planStdout;
+      if (stdout !== undefined) {
+        return stdout;
       }
       // Equal priorities for every configured issue: a usable plan whose
       // ordering is the deterministic ascending-number tie rule.
@@ -2272,6 +2288,143 @@ describe("wave-runner (WI-13 T6, FR-002/FR-003/FR-004/FR-006)", () => {
     expect(summary.failed.map(([id]) => id)).toEqual(["gh-1"]);
     expect(summary.notAdmitted).toEqual([["gh-2", "blocked by gh-1"]]);
     expect(deps.runFixRun).toHaveBeenCalledTimes(1); // A's own attempt only
+  });
+
+  // -------------------------------------------------------------------------
+  // WI-13 T6b: fixes for T6's blocking code-quality review findings.
+  // -------------------------------------------------------------------------
+
+  it("(i) T6b FIX 1: the shared-git merge chain is serialized per run — two opted-in lanes never overlap review/merge/canary/revert, and both merges land", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1), queueIssue(2)] });
+    // Chain-depth probe: every dep that touches SHARED git state (the single
+    // REVIEW_BRANCH, main, the clone's checkout) increments a depth counter
+    // for the duration of its call. Within one lane these calls are strictly
+    // sequential, so depth > 1 at any instant means two lanes' chains
+    // overlapped — exactly the mutual-exclusion property, order-agnostic.
+    let depth = 0;
+    let maxDepth = 0;
+    const track = <A extends unknown[], R>(original: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        depth += 1;
+        maxDepth = Math.max(maxDepth, depth);
+        try {
+          return await original(...args);
+        } finally {
+          depth -= 1;
+        }
+      };
+    // Parking: the FIRST review call waits until a second review starts (or
+    // 100ms escape). Pre-fix, lane B's review starts while lane A's is parked
+    // (depth 2 → the shared-REVIEW_BRANCH/git-index contention the review
+    // found); post-fix lane B's chain cannot enter until A's completes.
+    let reviews = 0;
+    let secondReview!: () => void;
+    const secondReviewStarted = new Promise<void>((resolve) => {
+      secondReview = resolve;
+    });
+    deps.runReview.mockImplementation(
+      track(async () => {
+        reviews += 1;
+        if (reviews === 2) {
+          secondReview();
+        }
+        if (reviews === 1) {
+          await Promise.race([secondReviewStarted, new Promise((resolve) => setTimeout(resolve, 100))]);
+        }
+        return "<review>approve</review>";
+      }),
+    );
+    deps.mergePr.mockImplementation(track(deps.mergePr.getMockImplementation()!));
+    deps.syncMain.mockImplementation(track(deps.syncMain.getMockImplementation()!));
+    deps.revertMerge.mockImplementation(track(deps.revertMerge.getMockImplementation()!));
+    deps.commentOnPr.mockImplementation(track(deps.commentOnPr.getMockImplementation()!));
+    deps.closeIssue.mockImplementation(track(deps.closeIssue.getMockImplementation()!));
+    // Branch-scoped probes: only the SHARED review branch and the canary
+    // branches count — per-lane preflight/fix branches never contend.
+    const origDelete = deps.deleteBranch.getMockImplementation()!;
+    const trackedDelete = track(origDelete);
+    deps.deleteBranch.mockImplementation(async (repoDir: string, branch: string) => {
+      if (branch === REVIEW_BRANCH || branch.startsWith("loop/canary-")) {
+        return trackedDelete(repoDir, branch);
+      }
+      return origDelete(repoDir, branch);
+    });
+    const origCreate = deps.createFixSandbox.getMockImplementation()!;
+    const trackedCreate = track(origCreate);
+    deps.createFixSandbox.mockImplementation(async (input: { branch: string; baseBranch?: string }) => {
+      if (input.branch.startsWith("loop/canary-")) {
+        return trackedCreate(input);
+      }
+      return origCreate(input);
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    // MUTUAL EXCLUSION: at no instant did two lanes' chains overlap.
+    expect(maxDepth).toBe(1);
+    // And serialization cost nothing: both lanes merged (no spurious
+    // `uncertain` from a clobbered REVIEW_BRANCH, no uncanaried merge from
+    // git index.lock contention surfacing as a failed main sync).
+    expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-2"]);
+    expect(summary.reviewSkipped).toEqual([]);
+    expect(summary.mergeFailures).toEqual([]);
+    expect(summary.uncanariedMerges).toEqual([]);
+    expect(summary.reverted).toEqual([]);
+    expect(reviews).toBe(2); // both lanes' review passes ran
+    expect(deps.closeIssue).toHaveBeenCalledTimes(2); // both chains reached issue-close
+  });
+
+  it("(j) T6b FIX 2: a compliant re-plan (priority over the asked set, an edge naming the merged id) is ACCEPTED — no `plan unusable` warning, its ordering applies", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // Chain gh-2 ← gh-1 ← nothing, gh-3 ← gh-2: wave 1 is exactly [gh-1]
+      // under cap 2, so one merge leaves budget for a second wave.
+      const { deps } = makeQueueDeps({
+        issues: [queueIssue(1), queueIssue(2), queueIssue(3)],
+        planStdout:
+          '<plan>{"priority":{"gh-1":3,"gh-2":3,"gh-3":3},"blockedBy":{"gh-2":["gh-1"],"gh-3":["gh-2"]}}</plan>',
+        // The re-plan was asked only about the REMAINING {gh-2, gh-3}: its
+        // priority covers exactly those, and its edges name merged gh-1 —
+        // compliant under the asked-set contract, rejected by the old
+        // full-set priority coverage (the defect).
+        rePlanStdout:
+          '<plan>{"priority":{"gh-2":1,"gh-3":5},"blockedBy":{"gh-3":["gh-1"]}}</plan>',
+      });
+
+      const summary = await runQueue(queueRunInput({ profile: optedIn, cap: 2 }), deps);
+
+      expect(deps.runPlan).toHaveBeenCalledTimes(2); // initial + one re-plan
+      // The re-plan's verdict applied: no degradation warning fired...
+      expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/plan unusable/));
+      // ...and its ordering drove wave 2: gh-3 (priority 5) is attempted,
+      // not the pre-re-plan chain order's gh-2.
+      expect(summary.attempted).toEqual(["gh-1", "gh-3"]);
+      expect(summary.notAdmitted).toEqual([["gh-2", "cap"]]);
+      expect(summary.mergedPrs.map(([id]) => id)).toEqual(["gh-1", "gh-3"]);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("(k) T6b pin: a wave-1 canary-red abort prevents ANY wave 2 — the blocked dependent's agent run never starts", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [queueIssue(1), queueIssue(2)],
+      planStdout: BLOCKED_PLAN,
+      canaryNewFailureFor: "gh-1",
+    });
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(aborted.message).toMatch(/REVERTED.*gh-1/);
+    // The abort fired after wave 1 settled and BEFORE wave 2 started: gh-2's
+    // fix agent was never spent, even though A's merge had completed it.
+    expect(deps.runFixRun).toHaveBeenCalledTimes(1);
+    expect((deps.runFixRun.mock.calls[0]![0] as { branch: string }).branch).toBe("fix/gh-1");
+    expect(aborted.summary.attempted).toEqual(["gh-1"]);
   });
 });
 

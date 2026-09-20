@@ -556,7 +556,52 @@ the onboarding baseline shows no new failures${verification.newFailures.length >
 ${closing}`;
 }
 
-export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): Promise<LoopOutcome> {
+/**
+ * WI-13 T6b (code-quality review, BOTH criticals): a per-run async mutex over
+ * each lane's shared-git merge chain — `runPreMergeReview → mergePr → canary
+ * (sync/revert/close)`. With independent opted-in lanes running concurrently
+ * in one wave, that chain is the only region that mutates git state SHARED
+ * across lanes: the pre-merge review's single `REVIEW_BRANCH` (one lane's
+ * `deleteBranch` lands under another's in-flight review and errors it to
+ * `uncertain`, skipping a merge that had approved), and main plus the clone's
+ * checkout (`mergePr` / `syncMainToOrigin` / `revertMerge` contend on
+ * git's index.lock, surfacing as a failed main sync — recorded as an
+ * uncanaried merge and a SPURIOUS queue halt). Promise-chain implementation,
+ * no new dependencies; the chain advances on settle, success or failure, so
+ * one lane's rejected section can never wedge the lock for every later lane.
+ * Everything per-lane — attachment fetch, preflight and verification
+ * sandboxes, the fix agent itself — stays OUTSIDE the lock and concurrent
+ * (the wave runner's lane concurrency, FR-003, is unchanged; only the
+ * shared-git chain serializes). The canary suite run stays INSIDE by design: its branch forks
+ * from main inside the clone and main only ever moves inside this chain, so
+ * a canary must judge a main that is not moving beneath it.
+ */
+type SerializeGitChain = <T>(section: () => Promise<T>) => Promise<T>;
+
+function createGitChainLock(): SerializeGitChain {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(section: () => Promise<T>): Promise<T> => {
+    const run = tail.then(section);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
+
+export async function runSingleIssue(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  /**
+   * WI-13 T6b: the per-run shared-git mutex, passed by `runQueue`'s wave
+   * runner so concurrent lanes serialize their merge chains (see
+   * `createGitChainLock`). The identity default leaves single-issue mode —
+   * `runOverrideIssue`, the CLI `--issue` path — exactly as it was: one lane
+   * owns the clone, nothing to serialize against.
+   */
+  serializeGitChain: SerializeGitChain = (section) => section(),
+): Promise<LoopOutcome> {
   const branch = fixBranch(input.issue);
 
   // FR-002: the gate refuses BEFORE the preflight sandbox — an uncleared repo
@@ -813,28 +858,36 @@ export async function runSingleIssue(input: SingleIssueInput, deps: LoopDeps): P
     ...(earlyTeardown !== undefined ? { teardownFailure: earlyTeardown } : {}),
   };
   if (prUrl !== undefined && input.profile.autoMerge === true) {
-    // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
-    // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
-    // other outcome returns a PR'd result carrying the skip reason.
-    const review = await runPreMergeReview(input, deps, prUrl);
-    if (!review.approved) {
-      return { ...prOutcome, reviewSkip: review.reviewSkip };
-    }
-    let mergeCommit: string;
-    try {
-      mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
-    } catch (error) {
-      // FR-004 safe fallback: no auto-merge, the PR stays open, the run
-      // continues — but never silently. A merge failure is not an issue
-      // failure: the fix IS verified and PR'd (the queue counts it fixed).
-      const reason = error instanceof Error ? error.message : String(error);
-      return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
-    }
+    // WI-13 T6b (both criticals): the whole opted-in chain — review pass
+    // (shared REVIEW_BRANCH), merge, canary, revert, issue-close (main + the
+    // clone's checkout) — runs under the per-run mutex in queue mode, so
+    // concurrent lanes cannot clobber each other's review branch or contend
+    // on git's index lock. `serializeGitChain` is the identity in
+    // single-issue mode; see `createGitChainLock` for the region's boundary.
+    return serializeGitChain(async () => {
+      // WI-6 T6 (FR-009, D7): the BLOCKING pre-merge review pass (see
+      // `runPreMergeReview`) — only an explicit approve reaches mergePr; any
+      // other outcome returns a PR'd result carrying the skip reason.
+      const review = await runPreMergeReview(input, deps, prUrl);
+      if (!review.approved) {
+        return { ...prOutcome, reviewSkip: review.reviewSkip };
+      }
+      let mergeCommit: string;
+      try {
+        mergeCommit = (await deps.mergePr({ repoDir: input.repoDir, prUrl })).mergeCommit;
+      } catch (error) {
+        // FR-004 safe fallback: no auto-merge, the PR stays open, the run
+        // continues — but never silently. A merge failure is not an issue
+        // failure: the fix IS verified and PR'd (the queue counts it fixed).
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
+      }
 
-    // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
-    // base, run the canary suite on it, then close or revert per its verdict
-    // (`runCanary`).
-    return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+      // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
+      // base, run the canary suite on it, then close or revert per its verdict
+      // (`runCanary`).
+      return runCanary(input, deps, prOutcome, prUrl, mergeCommit, attachmentFailures);
+    });
   }
   return prOutcome;
 }
@@ -1397,6 +1450,10 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   // allSettled lets every sibling settle before the wave is judged.
   let current = firstWave;
   let waveIndex = 0;
+  // WI-13 T6b: ONE lock per run, shared by every lane of every wave — the
+  // merge chain it guards mutates git state shared across the whole run
+  // (REVIEW_BRANCH, main, the clone's checkout), not just one wave.
+  const gitChainLock = createGitChainLock();
   while (current.length > 0) {
     if (waveIndex > 0) {
       // The later wave's lanes were `blocked` on the initial surface; each is
@@ -1421,13 +1478,16 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
               profile: input.profile,
             },
             deps,
+            gitChainLock,
           ),
         };
       } catch (error) {
         // Defensive only — runSingleIssue returns outcomes rather than
         // throwing. A throw would abort every remaining issue identically:
         // the harness-level class.
-        return { issue, laneError: error };
+        // `outcome: undefined` is the explicit discriminant that lets the
+        // settle loop below narrow without a cast (T6b, quality Minor 1).
+        return { issue, outcome: undefined, laneError: error };
       }
     });
     const settled = await Promise.allSettled(lanes);
@@ -1444,19 +1504,22 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         // rejection is the honest no-op (there is no issue to record).
         continue;
       }
-      const { issue, outcome, laneError } = result.value as {
-        issue: NormalizedIssue;
-        outcome?: LoopOutcome;
-        laneError?: unknown;
-      };
-      attemptedIds.add(issue.id);
-      attempted.push(issue.id);
-      if (outcome === undefined) {
+      // T6b (quality Minor 1): narrowed by the `outcome` discriminant instead
+      // of a cast — the try arm always carries a defined outcome, the catch
+      // arm always carries `undefined` plus the laneError.
+      const { issue } = result.value;
+      if (result.value.outcome === undefined) {
+        const laneError = result.value.laneError;
         const reason = laneError instanceof Error ? laneError.message : String(laneError);
+        attemptedIds.add(issue.id);
+        attempted.push(issue.id);
         failed.push([issue.id, reason]);
         harnessAbort ??= { id: issue.id, failure: reason };
         continue;
       }
+      const outcome: LoopOutcome = result.value.outcome;
+      attemptedIds.add(issue.id);
+      attempted.push(issue.id);
       for (const url of outcome.attachmentFailures ?? []) {
         attachmentFailures.push([issue.id, url]);
       }
@@ -1552,12 +1615,20 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
             imageName: input.imageName,
             agent: input.agent,
           });
-          // Validated against the FULL eligible id set, not just the remaining
-          // ones: a re-plan asked only about the remaining issues may still
-          // name a just-merged id in an edge (the old dependency), and that
-          // must not invalidate the plan — `unblockedAfter` ignores edges to
-          // completed ids anyway.
-          rePlan = parsePlanOutput(stdout, split.eligible.map((issue) => issue.id));
+          // T6b FIX 2 (quality Important — the re-plan validation split):
+          // `priority` is validated against the ASKED set — the re-plan
+          // prompt (`buildPlanPrompt(remaining)`, just above) lists only the
+          // unattempted issues, and a compliant answer covering exactly those
+          // must not fail validation — while blockedBy keys and edge targets
+          // are validated against the FULL eligible set: a re-plan may still
+          // legitimately name a just-merged id in an edge (the old
+          // dependency), and `unblockedAfter` ignores edges to completed ids
+          // anyway.
+          rePlan = parsePlanOutput(
+            stdout,
+            remaining.map((issue) => issue.id),
+            { edgeIds: split.eligible.map((issue) => issue.id) },
+          );
         } catch (error) {
           // FR-001 fallback: a failed re-plan degrades the schedule, never the
           // run — the current ranking and edges simply stand.
@@ -1567,6 +1638,11 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
           await deps.deleteBranch(input.repoDir, PLAN_BRANCH);
         }
         if (rePlan !== undefined) {
+          // T6b (quality Minor 3): `inRun` is deliberately NOT refreshed
+          // here — the re-plan permutes the SAME id set (its validation
+          // admits no id the run never held), so re-deriving the set from
+          // the re-ordered `ranked` would be a no-op at best and a stale
+          // mid-run snapshot at worst.
           ranked = orderFromPlan(ranked, rePlan);
           edges = rePlan.blockedBy;
         } else {
@@ -1582,12 +1658,21 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       if (remaining.length === 0 || !budgetLeft()) {
         break;
       }
-      // The planner's all-blocked rule, made mechanical: an empty unblocked set
-      // with issues remaining falls back to the highest-priority remaining
-      // issue — never a dead queue. RESERVED, though, for the rule-violation
-      // deadlock: when a lane settled WITHOUT completing (a failed blocker),
-      // FR-002's boundary text governs instead — its dependents stay
-      // not-attempted with the reason named, never force-attempted.
+      // INVARIANT GUARD, not a live rule (T6b, quality Important 2 + the T6
+      // spec review's proof): for any plan that passed `parsePlanOutput`, this
+      // arm is UNREACHABLE — the parser's priority-coverage guarantee plus
+      // the edges' acyclicity mean the remaining set can never be all-blocked
+      // (assuming it could yields a cycle among remaining ids, which the
+      // parser rejects — contradiction). The fallback exists solely to catch
+      // a parser regression or a scheduling-rule violation: if it ever fires,
+      // something upstream is broken, and force-attempting the
+      // highest-priority remaining issue beats a silently dead queue. It is
+      // RESERVED for that violation case only: when a lane settled WITHOUT
+      // completing (a failed blocker), the `attemptedIds.size > completed.size`
+      // guard just below routes to FR-002's boundary instead — its dependents
+      // stay not-attempted with the reason named, never force-attempted.
+      // Untestable through the public seam by construction (a validated plan
+      // cannot reach it); pinned only by this comment.
       if (attemptedIds.size > completed.size) {
         break;
       }

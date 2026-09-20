@@ -300,10 +300,20 @@ function planHasCycle(blockedBy: Readonly<Record<string, readonly string[]>>): b
  * `priority`, every blockedBy edge names a queued id (never the issue itself),
  * and the edges are acyclic; anything else is unusable — the caller takes the
  * degraded path (deterministic order, loud warning, run continues).
+ *
+ * WI-13 T6b (quality Important — the re-plan validation split): `priority`
+ * coverage is checked against `ids` — the set the caller ASKED about — while
+ * blockedBy keys and edge targets are checked against `options.edgeIds`
+ * (default: `ids`). The re-plan prompt lists only the unattempted issues, but
+ * a compliant answer may still name a just-merged id in an edge (the old
+ * dependency); requiring `priority` to cover merged ids too would fail every
+ * honest re-plan answer, waste the call, and defeat FR-006 in the common
+ * case. Two-arg call sites are unchanged: both checks run against `ids`.
  */
 export function parsePlanOutput(
   stdout: string,
   ids: readonly string[],
+  options: { readonly edgeIds?: readonly string[] } = {},
 ): PlanValue | undefined {
   const match = stdout.match(/<plan>([\s\S]*?)<\/plan>/);
   if (!match) {
@@ -323,7 +333,10 @@ export function parsePlanOutput(
   if (!covers) {
     return undefined;
   }
-  const known = new Set(ids);
+  // T6b: edge endpoints check against the FULL id set (`edgeIds`) — see the
+  // doc comment above for why that set is wider than the asked `ids` on a
+  // re-plan.
+  const known = new Set(options.edgeIds ?? ids);
   for (const [id, blockers] of Object.entries(parsed.data.blockedBy)) {
     // An edge to an id the queue never held, or to itself, makes the plan
     // unusable: the runner could never satisfy it.
