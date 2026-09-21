@@ -2836,6 +2836,9 @@ function issueNumberFromUrl(url: string | undefined): string {
  * caught and logged — never fatal; any other create failure is a real gh
  * problem and rethrows loudly at startup, before any spend. The logged line is
  * a static literal (no gh output echoed), so it needs no secrets guard.
+ * fd 2 is PIPED (not inherited): gh prints "already exists" to stderr, and
+ * only a piped fd puts it in the thrown error — the same classifier shape as
+ * `setIssueLabel` above, without which this catch arm could never fire.
  * Wiring-only, not exercised by vitest — correctness is code review + the
  * live runs' job.
  */
@@ -2844,11 +2847,12 @@ function ensureHarnessFailedLabel(repoDir: string): void {
     execFileSync(
       "gh",
       ["label", "create", "harness-failed", "--color", "B60205", "--description", "automated fix attempt failed"],
-      { cwd: repoDir, stdio: "inherit" },
+      { cwd: repoDir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/already exists/i.test(message)) {
+    const errText =
+      `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
+    if (!/already exists/i.test(errText)) {
       throw error;
     }
     console.log('label "harness-failed" already exists — nothing to create');
