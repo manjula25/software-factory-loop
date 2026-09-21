@@ -150,6 +150,8 @@ interface DepOverrides {
   commentThrows?: string;
   /** Simulated issue-close failure (gh error) on canary-green merged runs (WI-6 T5). */
   closeThrows?: string;
+  /** Simulated escalation-comment failure (gh error) on the failure arms (WI-14 T1, FR-003). */
+  commentOnIssueThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
   /** Preflight reports a stale baseline — shorthand for a SUITE_AFTER_FIX preflight (WI-8 FR-001). */
@@ -260,6 +262,13 @@ function makeDeps(overrides: DepOverrides = {}) {
     closeIssue: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _comment: string) => {
       if (overrides.closeThrows !== undefined) {
         throw new Error(overrides.closeThrows);
+      }
+    }),
+    // WI-14 T1 seam (FR-002): the escalation comment on the failed gh-sourced
+    // issue. Defaults to success; `commentOnIssueThrows` simulates a gh error.
+    commentOnIssue: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _body: string) => {
+      if (overrides.commentOnIssueThrows !== undefined) {
+        throw new Error(overrides.commentOnIssueThrows);
       }
     }),
     // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
@@ -1662,6 +1671,8 @@ interface QueueDepsConfig {
   commentThrowsFor?: string;
   /** Issue close throws (gh error) for this id — bookkeeping failure on a merged outcome (WI-6 T5). */
   closeThrowsFor?: string;
+  /** Escalation comment throws (gh error) for this id — posting failure on a failure arm (WI-14 T1, FR-003). */
+  commentOnIssueThrowsFor?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
   /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
@@ -1806,6 +1817,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         throw new Error("gh: issue close failed — network");
       }
     }),
+    // WI-14 T1 seam (FR-002): the escalation comment on the failed gh-sourced
+    // issue — can be made to refuse per id. Defaults to success.
+    commentOnIssue: vi.fn(async (_repoDir: string, target: NormalizedIssue, _body: string) => {
+      if (config.commentOnIssueThrowsFor !== undefined && target.id === config.commentOnIssueThrowsFor) {
+        throw new Error("gh: issue comment failed — network");
+      }
+    }),
     // WI-6 T6 seams (FR-009)
     fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
     runReview: vi.fn(async (_input: { cwd: string; prompt: string; diff: string }) => {
@@ -1815,8 +1833,15 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       return config.reviewStdout ?? `<review>${config.reviewVerdict ?? "approve"}</review>`;
     }),
     // QueueDeps
+    // WI-14 T1: a configured issue carrying a url keeps it through acquisition
+    // (`gh issue list --json …,url`) — the escalation's gh-only guard reads it.
     ghJson: vi.fn((_args: string[], _cwd: string) =>
-      JSON.stringify(issues.map((i) => ({ number: Number(i.id.slice(3)), title: i.description, body: null })))),
+      JSON.stringify(issues.map((i) => ({
+        number: Number(i.id.slice(3)),
+        title: i.description,
+        body: null,
+        ...(i.url !== undefined ? { url: i.url } : {}),
+      })))),
     refreshRemoteRefs: vi.fn(async () => {}),
     listOpenPrs: vi.fn(async () => config.prs ?? []),
     listMergedPrs: vi.fn(async () => config.mergedPrs ?? []),
@@ -3328,5 +3353,153 @@ describe("plain-list suffix attachments join discovery (WI-3 T7)", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-14 T1: the escalation comment on the failure arms (FR-001 trigger,
+// FR-002 content/handle, FR-003 inline posting + failure recording). Fires
+// exactly on the no-visible-artifact failure family (fail() and the
+// stale-baseline preflight return), gh-sourced issues only; a posting throw
+// is captured verbatim, never retried, and the outcome stands untouched.
+// ---------------------------------------------------------------------------
+
+/** A gh-sourced queue issue — `queueIssue()` omits the url, and only a url-bearing issue has something to comment on (FR-002 boundary). */
+const escalationIssue: NormalizedIssue = {
+  ...queueIssue(1),
+  url: "https://github.com/manjula25/loop-fixtures-py/issues/1",
+};
+/** The verification-red failure reason — the body's Reason line must be byte-identical to the summary's FAILED-line reason. */
+const VERIFICATION_RED = "Verification failed — reproduction test did not pass in the fresh sandbox.";
+
+/** The agreed FR-002 body shape: handle arm (absent → no @ line at all, D6), outcome class, verbatim reason, console-output pointer. */
+function expectedEscalationBody(outcomeClass: "fix-failed" | "preflight-failed", reason: string, handle?: string): string {
+  return [
+    ...(handle !== undefined ? [`@${handle}`] : []),
+    "Automated fix attempt failed.",
+    `Outcome: ${outcomeClass}`,
+    `Reason: ${reason}`,
+    "The full evidence is in the operator's console output for this run; the run summary repeats this reason.",
+  ].join("\n");
+}
+
+describe("escalation comment on the failure arms (WI-14 T1, FR-001/FR-002/FR-003)", () => {
+  it("(a) verification-red, gh-sourced, notifyHandle configured: one comment whose body carries @manjula25, Outcome: fix-failed, and the verbatim FAILED-line reason", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, notifyHandle: "manjula25" } }), deps);
+
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnIssue.mock.calls[0]!;
+    expect(call[0]).toBe("/tmp/repo");
+    // the ACQUIRED issue (rebuilt through acquisition), not the config object
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    // byte-identical reason: the body's Reason line IS the summary's FAILED-line reason
+    expect(call[2]).toBe(expectedEscalationBody("fix-failed", summary.failed[0]![1], "manjula25"));
+    expect(summary.failed[0]![1]).toContain(VERIFICATION_RED);
+    expect(formatSummary(summary)).not.toContain("escalation comment failed");
+  });
+
+  it("(b) notifyHandle ABSENT: the body carries no @ at all, and both the queue summary and the single-issue report state the notify handle is not configured (D6)", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1" });
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+    const body = deps.commentOnIssue.mock.calls[0]![2];
+    expect(body).toBe(expectedEscalationBody("fix-failed", VERIFICATION_RED));
+    expect(body).not.toContain("@");
+    expect(formatSummary(summary)).toContain("notify handle not configured");
+
+    // the single-issue report states the same D6 vocabulary on its no-PR branch
+    const single = makeDeps({ sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1) });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, single);
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain("notify handle not configured");
+  });
+
+  it("(c) stale-baseline preflight failure: the comment carries Outcome: preflight-failed and the verbatim abort reason", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], staleBaselineFor: "gh-1" });
+
+    const error = await runQueue(
+      queueRunInput({ profile: { ...profile, notifyHandle: "manjula25" } }),
+      deps,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+    const call = deps.commentOnIssue.mock.calls[0]!;
+    expect(call[2]).toBe(expectedEscalationBody("preflight-failed", aborted.summary.failed[0]![1], "manjula25"));
+    expect(aborted.summary.failed[0]![1]).toContain("Aborted before the fix run");
+  });
+
+  it("(d) commentOnIssueThrows: the outcome is unchanged, escalationCommentFailure records the throw verbatim, exactly one call (no retry), and the summary carries the line", async () => {
+    const baseline = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      makeDeps({ sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1) }),
+    );
+
+    const deps = makeDeps({
+      sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1),
+      commentOnIssueThrows: "gh: issue comment failed — network",
+    });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1); // captured, never retried (FR-003)
+    expect(outcome.escalationCommentFailure).toBe("gh: issue comment failed — network");
+    // every pre-WI-14 field is byte-identical to the run where posting succeeded
+    const { escalation: baselineEscalation, escalationCommentFailure: baselinePost, ...baselineRest } = baseline;
+    expect(baselinePost).toBeUndefined();
+    const { escalationCommentFailure, escalation, ...rest } = outcome;
+    expect(rest).toEqual(baselineRest);
+    expect(escalation).toEqual(baselineEscalation);
+    expect(escalation).toEqual({ outcomeClass: "fix-failed" });
+    expect(formatSingleIssueResult({ kind: "run", outcome }).stderr).toContain(
+      "escalation comment failed: gh: issue comment failed — network",
+    );
+
+    // queue surface: the FAILED line carries the recording as its own suffix
+    const { deps: queueDeps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1", commentOnIssueThrowsFor: "gh-1" });
+    const summary = await runQueue(queueRunInput(), queueDeps);
+    expect(formatSummary(summary)).toContain("escalation comment failed: gh: issue comment failed — network");
+  });
+
+  it("(e) non-gh issue (no url): commentOnIssue never called and the FAILED line keeps today's byte-identical shape", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, notifyHandle: "manjula25" } }), deps);
+
+    expect(deps.commentOnIssue).not.toHaveBeenCalled();
+    const text = formatSummary(summary);
+    expect(text).toContain(`FAILED gh-1: ${VERIFICATION_RED}`);
+    expect(text).not.toContain("notify handle not configured");
+    expect(text).not.toContain("escalation comment failed");
+  });
+
+  it("(f) PR-left outcomes never escalate: review-uncertain skip and merge-failure posture leave the PR as the artifact", async () => {
+    const optedIn = { ...profile, autoMerge: true, notifyHandle: "manjula25" };
+
+    const uncertain = makeQueueDeps({ issues: [escalationIssue], reviewVerdict: "uncertain" });
+    await runQueue(queueRunInput({ profile: optedIn }), uncertain.deps);
+    expect(uncertain.deps.commentOnIssue).not.toHaveBeenCalled();
+
+    const mergeFailed = makeQueueDeps({ issues: [escalationIssue], mergeThrowsFor: "gh-1" });
+    await runQueue(queueRunInput({ profile: optedIn }), mergeFailed.deps);
+    expect(mergeFailed.deps.commentOnIssue).not.toHaveBeenCalled();
+  });
+
+  it("(g) single-issue entry (--issue surface): the same body as the queue surface (FR-001 surface parity)", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1" });
+
+    const result = await runOverrideIssue(
+      { issue: escalationIssue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile: { ...profile, notifyHandle: "manjula25" } },
+      deps,
+    );
+
+    expect(result.kind).toBe("run");
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+    expect(deps.commentOnIssue.mock.calls[0]![2]).toBe(
+      expectedEscalationBody("fix-failed", VERIFICATION_RED, "manjula25"),
+    );
   });
 });

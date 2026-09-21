@@ -207,6 +207,15 @@ export interface LoopDeps {
    * run continues.
    */
   closeIssue(repoDir: string, issue: NormalizedIssue, comment: string): Promise<void>;
+  /**
+   * WI-14 (FR-002): post an escalation comment on a gh-sourced issue
+   * (`gh issue comment <n> --body <body>`, the number parsed from the issue
+   * url). Called inline at the failure arms the moment the lane fails
+   * (FR-003/D5), never batched at run end. Best-effort at the call site:
+   * a throw is captured into the outcome's `escalationCommentFailure`,
+   * never propagated past the decided verdict, never retried.
+   */
+  commentOnIssue(repoDir: string, issue: NormalizedIssue, body: string): Promise<void>;
 }
 
 export interface SingleIssueInput {
@@ -260,6 +269,27 @@ export interface LoopOutcome {
    * merged outcome, never an issue failure; the queue continues.
    */
   readonly closeFailure?: string;
+  /**
+   * WI-14 (FR-001/FR-002): set when this run ESCALATED the issue — posted the
+   * inline failure-arm comment on the gh-sourced issue (the only notification
+   * channel, D2). Carries the outcome class and the notify-handle posture so
+   * the summary surfaces can render the unified absent-handle vocabulary
+   * (D6 / WI-11/12) without touching the failure reason, which stands
+   * byte-identical. Absent on every PR-left outcome (those leave the PR as
+   * the visible artifact and never escalate) and on non-gh issues.
+   */
+  readonly escalation?: {
+    readonly outcomeClass: string;
+    /** The profile's notifyHandle at escalation time; absent = not configured (D6). */
+    readonly notifyHandle?: string;
+  };
+  /**
+   * WI-14 (FR-003): set when posting the escalation comment THREW — captured
+   * verbatim beside the already-decided verdict (the WI-11 recording posture),
+   * never retried. The outcome is otherwise unchanged; the queue's FAILED
+   * line and the single-issue report name it loudly.
+   */
+  readonly escalationCommentFailure?: string;
   /**
    * WI-7 (FR-003) / WI-8 (FR-001): set when a sandbox's TEARDOWN failed after
    * the suite had already decided the verdict — the canary (close() threw, or
@@ -665,6 +695,60 @@ function harnessLevelFailure(outcome: LoopOutcome): boolean {
   return outcome.failureKind === "harness";
 }
 
+/**
+ * WI-14 (FR-002): the escalation comment body — the `@<notifyHandle>` line
+ * when a handle is configured (absent → NO @ line at all, the D6 arm), then
+ * the outcome class, the failure reason BYTE-IDENTICAL to the string the
+ * outcome carries (and the summary's FAILED line repeats), and the evidence
+ * pointer: the full log is the operator's console output and the run summary
+ * repeats this reason — no persisted log URL exists to point at (plan,
+ * interpretation note 3). No log excerpts, no diagnosis, no suggested fix
+ * (FR-002 non-claims).
+ */
+function buildEscalationComment(input: { outcomeClass: string; reason: string; handle?: string }): string {
+  return [
+    ...(input.handle !== undefined ? [`@${input.handle}`] : []),
+    "Automated fix attempt failed.",
+    `Outcome: ${input.outcomeClass}`,
+    `Reason: ${input.reason}`,
+    "The full evidence is in the operator's console output for this run; the run summary repeats this reason.",
+  ].join("\n");
+}
+
+/**
+ * WI-14 (FR-001 trigger, FR-003/D5): post the escalation comment INLINE at a
+ * failure arm, at the moment the lane fails — gh-sourced issues only
+ * (`issue.url` present, the FR-002 boundary: a spec-doc/plain-list issue has
+ * no issue to comment on and degrades to the run-summary line). The verdict
+ * is already decided when this runs: the body is secrets-guarded and posted
+ * inside one try, a throw is captured verbatim and NEVER retried, and the
+ * caller spreads the returned recording beside the unchanged outcome fields
+ * (the WI-11 recording posture — the failure rides the verdict, never over it).
+ */
+async function escalateOnFailure(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  outcomeClass: "fix-failed" | "preflight-failed",
+  reason: string,
+): Promise<Pick<LoopOutcome, "escalation" | "escalationCommentFailure">> {
+  if (input.issue.url === undefined) {
+    return {};
+  }
+  const handle = input.profile.notifyHandle;
+  const body = buildEscalationComment({ outcomeClass, reason, handle });
+  let escalationCommentFailure: string | undefined;
+  try {
+    assertNoSecrets([body], deps.env);
+    await deps.commentOnIssue(input.repoDir, input.issue, body);
+  } catch (error) {
+    escalationCommentFailure = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    escalation: { outcomeClass, ...(handle !== undefined ? { notifyHandle: handle } : {}) },
+    ...(escalationCommentFailure !== undefined ? { escalationCommentFailure } : {}),
+  };
+}
+
 export async function runSingleIssue(
   input: SingleIssueInput,
   deps: LoopDeps,
@@ -823,11 +907,19 @@ async function runSingleIssueLane(
     }
   }
   if (baselineProblem) {
+    // WI-14 (FR-001 trigger): the preflight arm escalates exactly like a fix
+    // failure — an issue failed by infrastructure still ends the run unfixed
+    // with no visible artifact on GitHub. One string variable keeps the
+    // comment's reason byte-identical to the outcome's failure; the recording
+    // never touches the harness-level verdict.
+    const failure = `Aborted before the fix run — ${baselineProblem}.`;
+    const escalation = await escalateOnFailure(input, deps, "preflight-failed", failure);
     return {
       branch,
-      failure: `Aborted before the fix run — ${baselineProblem}.`,
+      failure,
       failureKind: "harness",
       ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
+      ...escalation,
     };
   }
 
@@ -852,6 +944,10 @@ async function runSingleIssueLane(
   // trip over it (attempt-5/6 lesson).
   const fail = async (reason: string, newFailures?: readonly string[]): Promise<LoopOutcome> => {
     await deps.deleteBranch(input.repoDir, branch);
+    // WI-14 (FR-001 trigger, FR-003/D5): escalate inline at the moment the
+    // lane fails — gh-sourced issues only; a throw is captured, never retried,
+    // and the fields below stand byte-identical (the recording rides beside).
+    const escalation = await escalateOnFailure(input, deps, "fix-failed", reason);
     return {
       branch,
       failure: reason,
@@ -860,6 +956,7 @@ async function runSingleIssueLane(
       // WI-8 (FR-001): a green-baseline run that later fails verification
       // still carries a preflight teardown failure, if there was one.
       ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
+      ...escalation,
     };
   };
 
@@ -1940,9 +2037,20 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // issue identically — that is a harness-level failure, not this issue's.
       // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
       // line as a suffix — the reason itself stands untouched.
+      // WI-14 (FR-002/FR-003): so does a failed escalation-comment post, same
+      // suffix pattern; and an escalation posted WITHOUT a notify handle ends
+      // the line with the unified D6 vocabulary — the comment carried no @,
+      // so the summary is where the absent handle is stated. Reverted and
+      // uncanaried outcomes never escalate (their PR is the artifact) and
+      // render their own notify vocabulary in their own sections.
       failed.push([
         issue.id,
-        `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
+        `${outcome.failure ?? "unknown failure"}` +
+          `${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}` +
+          `${outcome.escalationCommentFailure !== undefined ? ` (escalation comment failed: ${outcome.escalationCommentFailure})` : ""}` +
+          (outcome.escalation !== undefined && outcome.escalation.notifyHandle === undefined
+            ? "; notify handle not configured"
+            : ""),
       ]);
       // WI-13 T11: the shared harness-level classification — the same
       // `harnessLevelFailure` predicate the halt-setter uses, so the abort
@@ -2277,6 +2385,16 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   if (result.outcome.teardownFailure !== undefined) {
     stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
   }
+  // WI-14 (FR-002/FR-003): the escalation recording, same line pattern as the
+  // teardown failure above — a failed comment post is loud on stderr, never
+  // fatal; and an escalation posted WITHOUT a notify handle states the D6
+  // vocabulary here (the comment itself carried no @ line at all).
+  if (result.outcome.escalationCommentFailure !== undefined) {
+    stderr.push(`escalation comment failed: ${result.outcome.escalationCommentFailure}`);
+  }
+  if (result.outcome.escalation !== undefined && result.outcome.escalation.notifyHandle === undefined) {
+    stderr.push("notify handle not configured");
+  }
   return {
     stdout: [],
     stderr,
@@ -2447,6 +2565,14 @@ async function main(): Promise<void> {
     // issue number is the last path segment of the issue url.
     async closeIssue(dir: string, issueToClose: NormalizedIssue, comment: string) {
       execFileSync("gh", ["issue", "close", issueNumberFromUrl(issueToClose.url), "--comment", comment], {
+        cwd: dir,
+        stdio: "inherit",
+      });
+    },
+    // WI-14 (FR-002): the escalation comment lands on the failed gh-sourced
+    // issue — same number-from-url idiom as closeIssue.
+    async commentOnIssue(dir: string, issueToComment: NormalizedIssue, body: string) {
+      execFileSync("gh", ["issue", "comment", issueNumberFromUrl(issueToComment.url), "--body", body], {
         cwd: dir,
         stdio: "inherit",
       });
