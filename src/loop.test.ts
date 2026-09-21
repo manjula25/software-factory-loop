@@ -152,6 +152,8 @@ interface DepOverrides {
   closeThrows?: string;
   /** Simulated escalation-comment failure (gh error) on the failure arms (WI-14 T1, FR-003). */
   commentOnIssueThrows?: string;
+  /** Simulated harness-failed label add failure (gh error) on the failure arms (WI-14 T2, FR-004). */
+  setLabelThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
   /** Preflight reports a stale baseline — shorthand for a SUITE_AFTER_FIX preflight (WI-8 FR-001). */
@@ -269,6 +271,13 @@ function makeDeps(overrides: DepOverrides = {}) {
     commentOnIssue: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _body: string) => {
       if (overrides.commentOnIssueThrows !== undefined) {
         throw new Error(overrides.commentOnIssueThrows);
+      }
+    }),
+    // WI-14 T2 seam (FR-004): the harness-failed label add on the failed
+    // gh-sourced issue. Defaults to success; `setLabelThrows` simulates a gh error.
+    setIssueLabel: vi.fn(async (_repoDir: string, _issue: NormalizedIssue, _op: "add" | "remove") => {
+      if (overrides.setLabelThrows !== undefined) {
+        throw new Error(overrides.setLabelThrows);
       }
     }),
     // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
@@ -1673,6 +1682,8 @@ interface QueueDepsConfig {
   closeThrowsFor?: string;
   /** Escalation comment throws (gh error) for this id — posting failure on a failure arm (WI-14 T1, FR-003). */
   commentOnIssueThrowsFor?: string;
+  /** Harness-failed label add throws (gh error) for this id — recording failure on a failure arm (WI-14 T2, FR-004). */
+  setLabelThrowsFor?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
   /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
@@ -1822,6 +1833,13 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
     commentOnIssue: vi.fn(async (_repoDir: string, target: NormalizedIssue, _body: string) => {
       if (config.commentOnIssueThrowsFor !== undefined && target.id === config.commentOnIssueThrowsFor) {
         throw new Error("gh: issue comment failed — network");
+      }
+    }),
+    // WI-14 T2 seam (FR-004): the harness-failed label add on the failed
+    // gh-sourced issue — can be made to refuse per id. Defaults to success.
+    setIssueLabel: vi.fn(async (_repoDir: string, target: NormalizedIssue, _op: "add" | "remove") => {
+      if (config.setLabelThrowsFor !== undefined && target.id === config.setLabelThrowsFor) {
+        throw new Error("gh: label add failed — network");
       }
     }),
     // WI-6 T6 seams (FR-009)
@@ -3501,5 +3519,96 @@ describe("escalation comment on the failure arms (WI-14 T1, FR-001/FR-002/FR-003
     expect(deps.commentOnIssue.mock.calls[0]![2]).toBe(
       expectedEscalationBody("fix-failed", VERIFICATION_RED, "manjula25"),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-14 T2: the `harness-failed` label add on the failure arms (FR-004). Same
+// trigger as the T1 comment (D6): gh-sourced issues only, both failure arms,
+// best-effort — a throw lands in `escalationLabelFailure` and the outcome
+// stands untouched. PR-left outcomes never label (the PR is the artifact).
+// ---------------------------------------------------------------------------
+
+describe("harness-failed label add on the failure arms (WI-14 T2, FR-004)", () => {
+  it("(a) verification-red: one label add with op \"add\" on the acquired gh-sourced issue, and the T1 comment still fires", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, notifyHandle: "manjula25" } }), deps);
+
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[0]).toBe("/tmp/repo");
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("add");
+    // the T1 comment still fired beside the label add
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+    expect(formatSummary(summary)).not.toContain("harness-failed label add failed");
+  });
+
+  it("(a, preflight arm) stale-baseline abort: one label add with op \"add\", beside the T1 comment", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], staleBaselineFor: "gh-1" });
+
+    const error = await runQueue(queueRunInput(), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("add");
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("(b) setLabelThrows: escalationLabelFailure records the throw verbatim, the outcome and the comment call are otherwise unchanged, and both surfaces carry the line", async () => {
+    const baseline = await runSingleIssue(
+      { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile },
+      makeDeps({ sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1) }),
+    );
+
+    const deps = makeDeps({
+      sandbox: sandboxHandle(SUITE_AFTER_FIX, /* reproExit */ 1),
+      setLabelThrows: "gh: label add failed — network",
+    });
+    const outcome = await runSingleIssue({ issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile }, deps);
+
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1); // captured, never retried
+    expect(deps.commentOnIssue).toHaveBeenCalledTimes(1); // the comment is unaffected
+    expect(outcome.escalationCommentFailure).toBeUndefined();
+    expect(outcome.escalationLabelFailure).toBe("gh: label add failed — network");
+    // every pre-T2 field is byte-identical to the run where the add succeeded
+    const { escalationLabelFailure: baselineLabel, ...baselineRest } = baseline;
+    expect(baselineLabel).toBeUndefined();
+    const { escalationLabelFailure, ...rest } = outcome;
+    expect(rest).toEqual(baselineRest);
+    expect(formatSingleIssueResult({ kind: "run", outcome }).stderr).toContain(
+      "harness-failed label add failed: gh: label add failed — network",
+    );
+
+    // queue surface: the FAILED line carries the recording as its own suffix
+    const { deps: queueDeps } = makeQueueDeps({ issues: [escalationIssue], failReproFor: "gh-1", setLabelThrowsFor: "gh-1" });
+    const summary = await runQueue(queueRunInput(), queueDeps);
+    expect(formatSummary(summary)).toContain("harness-failed label add failed: gh: label add failed — network");
+  });
+
+  it("(c) non-gh issue (no url): setIssueLabel never called and the FAILED line keeps today's shape", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)], failReproFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, notifyHandle: "manjula25" } }), deps);
+
+    expect(deps.setIssueLabel).not.toHaveBeenCalled();
+    const text = formatSummary(summary);
+    expect(text).toContain(`FAILED gh-1: ${VERIFICATION_RED}`);
+    expect(text).not.toContain("harness-failed label add failed");
+  });
+
+  it("(d) PR-left outcomes never label: review-uncertain skip and merge-failure posture leave the PR as the artifact", async () => {
+    const optedIn = { ...profile, autoMerge: true, notifyHandle: "manjula25" };
+
+    const uncertain = makeQueueDeps({ issues: [escalationIssue], reviewVerdict: "uncertain" });
+    await runQueue(queueRunInput({ profile: optedIn }), uncertain.deps);
+    expect(uncertain.deps.setIssueLabel).not.toHaveBeenCalled();
+
+    const mergeFailed = makeQueueDeps({ issues: [escalationIssue], mergeThrowsFor: "gh-1" });
+    await runQueue(queueRunInput({ profile: optedIn }), mergeFailed.deps);
+    expect(mergeFailed.deps.setIssueLabel).not.toHaveBeenCalled();
   });
 });

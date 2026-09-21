@@ -216,6 +216,14 @@ export interface LoopDeps {
    * never propagated past the decided verdict, never retried.
    */
   commentOnIssue(repoDir: string, issue: NormalizedIssue, body: string): Promise<void>;
+  /**
+   * WI-14 (FR-004/FR-005): add/remove the `harness-failed` label on a
+   * gh-sourced issue (`gh issue edit <n> --add-label|--remove-label`).
+   * Removal is idempotent by contract: an issue not wearing the label
+   * resolves successfully. Best-effort at the call site: a throw is recorded
+   * as a summary line only.
+   */
+  setIssueLabel(repoDir: string, issue: NormalizedIssue, op: "add" | "remove"): Promise<void>;
 }
 
 export interface SingleIssueInput {
@@ -290,6 +298,14 @@ export interface LoopOutcome {
    * line and the single-issue report name it loudly.
    */
   readonly escalationCommentFailure?: string;
+  /**
+   * WI-14 (FR-004): set when ADDING the `harness-failed` label on the failed
+   * gh-sourced issue THREW — the same recording posture as
+   * `escalationCommentFailure`: captured verbatim beside the already-decided
+   * verdict, never retried. The outcome is otherwise unchanged; the queue's
+   * FAILED line and the single-issue report name it loudly.
+   */
+  readonly escalationLabelFailure?: string;
   /**
    * WI-7 (FR-003) / WI-8 (FR-001): set when a sandbox's TEARDOWN failed after
    * the suite had already decided the verdict — the canary (close() threw, or
@@ -730,7 +746,7 @@ async function escalateOnFailure(
   deps: LoopDeps,
   outcomeClass: "fix-failed" | "preflight-failed",
   reason: string,
-): Promise<Pick<LoopOutcome, "escalation" | "escalationCommentFailure">> {
+): Promise<Pick<LoopOutcome, "escalation" | "escalationCommentFailure" | "escalationLabelFailure">> {
   if (input.issue.url === undefined) {
     return {};
   }
@@ -743,9 +759,20 @@ async function escalateOnFailure(
   } catch (error) {
     escalationCommentFailure = error instanceof Error ? error.message : String(error);
   }
+  // WI-14 T2 (FR-004): the `harness-failed` label add sits immediately beside
+  // the comment, same trigger — its OWN try, so a failed comment post never
+  // skips the label and a failed label add never touches the comment's
+  // recording. Best-effort, same shape: captured verbatim, never retried.
+  let escalationLabelFailure: string | undefined;
+  try {
+    await deps.setIssueLabel(input.repoDir, input.issue, "add");
+  } catch (error) {
+    escalationLabelFailure = error instanceof Error ? error.message : String(error);
+  }
   return {
     escalation: { outcomeClass, ...(handle !== undefined ? { notifyHandle: handle } : {}) },
     ...(escalationCommentFailure !== undefined ? { escalationCommentFailure } : {}),
+    ...(escalationLabelFailure !== undefined ? { escalationLabelFailure } : {}),
   };
 }
 
@@ -2040,7 +2067,9 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // WI-14 (FR-002/FR-003): so does a failed escalation-comment post, same
       // suffix pattern; and an escalation posted WITHOUT a notify handle ends
       // the line with the unified D6 vocabulary — the comment carried no @,
-      // so the summary is where the absent handle is stated. Reverted and
+      // so the summary is where the absent handle is stated. WI-14 T2
+      // (FR-004): a failed `harness-failed` label add rides the same suffix
+      // pattern. Reverted and
       // uncanaried outcomes never escalate (their PR is the artifact) and
       // render their own notify vocabulary in their own sections.
       failed.push([
@@ -2048,6 +2077,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         `${outcome.failure ?? "unknown failure"}` +
           `${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}` +
           `${outcome.escalationCommentFailure !== undefined ? ` (escalation comment failed: ${outcome.escalationCommentFailure})` : ""}` +
+          `${outcome.escalationLabelFailure !== undefined ? ` (harness-failed label add failed: ${outcome.escalationLabelFailure})` : ""}` +
           (outcome.escalation !== undefined && outcome.escalation.notifyHandle === undefined
             ? "; notify handle not configured"
             : ""),
@@ -2392,6 +2422,11 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   if (result.outcome.escalationCommentFailure !== undefined) {
     stderr.push(`escalation comment failed: ${result.outcome.escalationCommentFailure}`);
   }
+  // WI-14 T2 (FR-004): the label-add recording, same line pattern as the
+  // escalation-comment failure above — loud on stderr, never fatal.
+  if (result.outcome.escalationLabelFailure !== undefined) {
+    stderr.push(`harness-failed label add failed: ${result.outcome.escalationLabelFailure}`);
+  }
   if (result.outcome.escalation !== undefined && result.outcome.escalation.notifyHandle === undefined) {
     stderr.push("notify handle not configured");
   }
@@ -2577,6 +2612,30 @@ async function main(): Promise<void> {
         stdio: "inherit",
       });
     },
+    // WI-14 T2 (FR-004/FR-005): the harness-failed label add (the failure
+    // arms' call) / remove (T3's success arm) — same number-from-url idiom.
+    // The remove is idempotent by contract: a gh exit indicating the label is
+    // absent resolves successfully. Not exercised by vitest — its correctness
+    // is code review + the live runs' job (same posture as closeIssue).
+    async setIssueLabel(dir: string, issueToLabel: NormalizedIssue, op: "add" | "remove") {
+      const labelFlag = op === "add" ? "--add-label" : "--remove-label";
+      try {
+        execFileSync(
+          "gh",
+          ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, "harness-failed"],
+          { cwd: dir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
+        );
+      } catch (error) {
+        const errText =
+          `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
+        // Idempotent remove (FR-004 contract): the issue not wearing the
+        // label is a success, not a failure — whatever wording gh uses.
+        if (op === "remove" && /not found|not present|does not exist|could not remove|couldn't remove/i.test(errText)) {
+          return;
+        }
+        throw error;
+      }
+    },
     // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
     // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in
     // the object database: no checkout, no ref mutation, no working-tree
@@ -2655,6 +2714,14 @@ async function main(): Promise<void> {
     runPlan,
   };
   const allDeps = { ...deps, ...queueDeps };
+
+  // WI-14 T2 (FR-004/FR-005): gh-sourced runs label their failed issues, so
+  // the label must exist before the first failure arm tries to add it — once
+  // at run start, never per issue. Spec-doc/plain-list runs have no gh issues
+  // to label and skip this. Wiring-only, not exercised by vitest.
+  if (source === undefined) {
+    ensureHarnessFailedLabel(repoDir);
+  }
 
   if (issueArg !== undefined) {
     // Single-issue override (decision 6): no cap, no planner, dedup applies.
@@ -2761,6 +2828,31 @@ function issueNumberFromUrl(url: string | undefined): string {
     throw new Error(`cannot derive an issue number from issue url "${url ?? "(none)"}"`);
   }
   return last;
+}
+
+/**
+ * WI-14 T2 (FR-004/FR-005): create the `harness-failed` label on the target
+ * repo, once at run start for gh-sourced runs. An "already exists" failure is
+ * caught and logged — never fatal; any other create failure is a real gh
+ * problem and rethrows loudly at startup, before any spend. The logged line is
+ * a static literal (no gh output echoed), so it needs no secrets guard.
+ * Wiring-only, not exercised by vitest — correctness is code review + the
+ * live runs' job.
+ */
+function ensureHarnessFailedLabel(repoDir: string): void {
+  try {
+    execFileSync(
+      "gh",
+      ["label", "create", "harness-failed", "--color", "B60205", "--description", "automated fix attempt failed"],
+      { cwd: repoDir, stdio: "inherit" },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/already exists/i.test(message)) {
+      throw error;
+    }
+    console.log('label "harness-failed" already exists — nothing to create');
+  }
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]).endsWith("src/loop.ts");
