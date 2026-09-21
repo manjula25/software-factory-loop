@@ -102,7 +102,7 @@ Scope: WI-2 (queue ingestion) and the long-term factory architecture. Evidence b
 - Cloud sandbox providers — local Docker only for the POC
 - Detecting or handling non-independent issues (two issues whose fixes touch overlapping code) — flagged as an open risk, not solved in this plan *(amended 2026-09-19, owner, grilling record `docs/work/WI-13/prd.md`: in scope — dependency-aware planning with parallel execution of unblocked issues; the plan-approval/replan tier of decision 5 remains out of scope)*
 - Real Sentry or other production-monitoring integration — this scope assumes issues are already reported, not discovered from live systems
-- Escalation/notification mechanism for issues that fail all fix attempts
+- Escalation/notification mechanism for issues that fail all fix attempts *(amended 2026-09-20, owner, grilling record `docs/work/WI-14/prd.md`: in scope — per-run escalation; on a failed fix attempt with no PR left behind, a comment on the GitHub issue carrying `@<notifyHandle>` plus a `harness-failed` label that is removed on a later success; non-GitHub sources degrade to the run-summary line only)*
 - Secrets management strategy for API keys inside the sandbox
 - Git commit identity/authorship convention for agent-made commits
 - Rollback plan for a fix that was verified but still causes a problem post-merge
