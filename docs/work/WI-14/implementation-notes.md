@@ -9,7 +9,7 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 | Task | Size/Risk | Fixed point | Candidate | Reviews | Status |
 |---|---|---|---|---|---|
 | T1 | medium/medium | ef8d52e | a9f7b4e | spec PASS / quality PASS | **accepted** |
-| T2 | small-medium/low | a9f7b4e | — | — | dispatched |
+| T2 | small-medium/low | a9f7b4e | 5470a97 | spec PASS / quality PASS (rerun) | **accepted** |
 
 ## T1 — escalation comment on the failure arms
 
@@ -50,4 +50,42 @@ pass-through.
 
 ## T2 — harness-failed label add
 
-Dispatched against fixed point `a9f7b4e`.
+RED observed first (3 tests failed: `setIssueLabel` never called; negatives
+(c)/(d) green by construction, mirroring T1's guards), then minimal GREEN.
+First candidate `69fddac` passed the spec review but the quality review
+returned one BLOCKING finding: `ensureHarnessFailedLabel` matched
+`/already exists/i` against `error.message` under `stdio: "inherit"` — gh
+prints that text to stderr, which inherit keeps out of the thrown error, so
+the catch arm was dead code and every gh-sourced run after the first on a
+repo would abort at startup (a guaranteed T5 break; the reviewer proved it
+empirically with a stub gh). Controller fixed it in `5470a97` by mirroring
+`setIssueLabel`'s classifier (stderr piped, regex over message + stderr),
+stub-verified both ways before committing. Candidate change invalidated both
+review identities; both reran sequentially over `a9f7b4e..5470a97`: spec
+PASS, quality PASS (rerun — resolution re-verified empirically by the
+reviewer's own stubs). Fresh controller gates at `5470a97`: typecheck exit 0;
+focused 152/152 (147 + 5 new); full suite 273/273 (268 + 5 new). Accepted
+2026-09-21.
+
+**Implementer interpretations (both reviews judged faithful):** knob naming
+`setLabelThrows`/`setLabelThrowsFor` mirroring T1; recording-line literal
+`harness-failed label add failed: <msg>` (plan specified shape, not wording);
+`ensureHarnessFailedLabel`'s "never fatal" scoped to the already-exists arm —
+other create failures rethrow loudly at startup, pre-spend.
+
+**Adjacent findings (follow-ups, not scope):**
+- A7: the label is created on the target repo even if the run ends up
+  processing zero issues (creation precedes acquisition) — cosmetic.
+- A8: a gh outage at run start now aborts the run pre-spend where a
+  pre-WI-14 run would have proceeded — deliberate; watch in T5.
+- A9 (quality rerun, UNVERIFIED, for T3): `setIssueLabel`'s remove classifier
+  matches "not found" broadly, so a genuine issue-not-found error during a
+  remove would be swallowed as success. No live surface until T3 calls
+  remove — tighten or test when T3 lands.
+- A10: with fd 2 piped, genuine create-failure stderr reaches the console
+  only via the rethrown error; success-path gh warnings are swallowed
+  (accepted cost of the classifier shape).
+
+## T3 — label removal on verified success
+
+Dispatched against fixed point `5470a97`.
