@@ -59,6 +59,10 @@ export const LOOP_IDENTITY = {
   email: "manjula25+loop@users.noreply.github.com",
 } as const;
 
+/** WI-15 (FR-005): the label's name, defined once — the create, the add/remove edit and the
+ *  membership check must not be able to drift apart. */
+export const HARNESS_FAILED_LABEL = "harness-failed";
+
 /** Facts recorded by onboarding — validated by execution, committed to the target repo. */
 export interface ProjectProfile {
   readonly language: string;
@@ -2722,7 +2726,7 @@ async function main(): Promise<void> {
       try {
         execFileSync(
           "gh",
-          ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, "harness-failed"],
+          ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, HARNESS_FAILED_LABEL],
           { cwd: dir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
         );
       } catch (error) {
@@ -2946,7 +2950,7 @@ function ensureHarnessFailedLabel(repoDir: string): void {
   try {
     execFileSync(
       "gh",
-      ["label", "create", "harness-failed", "--color", "B60205", "--description", "automated fix attempt failed"],
+      ["label", "create", HARNESS_FAILED_LABEL, "--color", "B60205", "--description", "automated fix attempt failed"],
       { cwd: repoDir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
     );
   } catch (error) {
@@ -2955,7 +2959,7 @@ function ensureHarnessFailedLabel(repoDir: string): void {
     if (!/already exists/i.test(errText)) {
       throw error;
     }
-    console.log('label "harness-failed" already exists — nothing to create');
+    console.log(`label "${HARNESS_FAILED_LABEL}" already exists — nothing to create`);
   }
 }
 
