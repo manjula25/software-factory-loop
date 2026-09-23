@@ -228,6 +228,15 @@ export interface LoopDeps {
    * as a summary line only.
    */
   setIssueLabel(repoDir: string, issue: NormalizedIssue, op: "add" | "remove"): Promise<void>;
+  /**
+   * WI-15 (FR-001): the labels an issue currently carries — the evidence the
+   * removal decides from, replacing WI-14's error-text classifier. Read at the
+   * removal site, not at acquisition: the state must be fresh, or a label a
+   * human removed out-of-band would send the removal into a call that fails
+   * (FR-005's boundary: a missing label is success). Wiring-only, not exercised
+   * by vitest — correctness is code review plus the recorded probes.
+   */
+  readIssueLabels(repoDir: string, issue: NormalizedIssue): Promise<readonly string[]>;
 }
 
 export interface SingleIssueInput {
@@ -2739,6 +2748,28 @@ async function main(): Promise<void> {
         }
         throw error;
       }
+    },
+    // WI-15 T2 (FR-001): the label READ the removal decides from — same
+    // number-from-url idiom as setIssueLabel beside it. `--json labels` prints
+    // the label objects (verified shape: T2's recorded probes in
+    // docs/work/WI-15/evidence/label-state-probes.log — an element carries
+    // `name`, so the map is to names, not to `String`). stdout MUST be piped
+    // here, unlike setIssueLabel's call above: this one consumes stdout, and
+    // `inherit` makes execFileSync return null — JSON.parse(null) is null, so
+    // the `.labels` read throws a TypeError on every single call and the read
+    // can never succeed (caught by checkpoint 1's spec review, reproduced
+    // locally). fd 2 stays piped so gh's stderr still lands in the thrown
+    // error's message, which is the text FR-003 records verbatim. A throw here
+    // is a real gh failure and propagates to the caller, which records it
+    // (FR-003). Not exercised by vitest — its correctness is code review + the
+    // recorded probes (same posture as closeIssue).
+    async readIssueLabels(dir: string, issueToRead: NormalizedIssue) {
+      const raw = execFileSync(
+        "gh",
+        ["issue", "view", issueNumberFromUrl(issueToRead.url), "--json", "labels"],
+        { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      return (JSON.parse(raw) as { labels: readonly { name: string }[] }).labels.map((l) => l.name);
     },
     // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
     // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in

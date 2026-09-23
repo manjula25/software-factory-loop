@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { assertNoSecrets } from "./assert-no-secrets.js";
 import { PlainListParseError, SpecDocParseError } from "./issues.js";
 import {
+  HARNESS_FAILED_LABEL,
   LOOP_IDENTITY,
   QueueAbortedError,
   SourceSelectionError,
@@ -154,6 +155,10 @@ interface DepOverrides {
   commentOnIssueThrows?: string;
   /** Simulated harness-failed label write failure (gh error) — the ADD on the failure arms (WI-14 T2, FR-004) or the REMOVE on a verified-PR-delivered arm (WI-14 T3/T3b, FR-005). */
   setLabelThrows?: string;
+  /** WI-15 (FR-001): the label set the removal reads — defaults to the label present. */
+  readLabels?: readonly string[];
+  /** WI-15 (FR-003): the label read itself throws (gh error). */
+  readLabelsThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
   /** Preflight reports a stale baseline — shorthand for a SUITE_AFTER_FIX preflight (WI-8 FR-001). */
@@ -279,6 +284,15 @@ function makeDeps(overrides: DepOverrides = {}) {
       if (overrides.setLabelThrows !== undefined) {
         throw new Error(overrides.setLabelThrows);
       }
+    }),
+    // WI-15 seam (FR-001): the label state the removal decides from. Defaults to
+    // the label being present — the pre-WI-15 assumption every existing
+    // removal-arm test was written against.
+    readIssueLabels: vi.fn(async (_repoDir: string, _target: NormalizedIssue) => {
+      if (overrides.readLabelsThrows !== undefined) {
+        throw new Error(overrides.readLabelsThrows);
+      }
+      return overrides.readLabels ?? [HARNESS_FAILED_LABEL];
     }),
     // WI-6 T6 seams (FR-009): the diff under review + the bounded reviewer run.
     fixDiff: vi.fn(async (_repoDir: string, _branch: string) => overrides.reviewDiff ?? "diff-under-review"),
@@ -1685,6 +1699,10 @@ interface QueueDepsConfig {
   commentOnIssueThrowsFor?: string;
   /** Harness-failed label write throws (gh error) for this id — the add on a failure arm (WI-14 T2, FR-004) or the remove on a verified-PR-delivered arm (WI-14 T3/T3b, FR-005). */
   setLabelThrowsFor?: string;
+  /** WI-15 (FR-001): the label set the removal reads — defaults to the label present. */
+  readLabels?: readonly string[];
+  /** WI-15 (FR-003): the label read itself throws (gh error). */
+  readLabelsThrows?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
   /** Preflight-sandbox close() throws for this id — teardown failure beside the abort (WI-8 FR-001). */
@@ -1845,6 +1863,15 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
       if (config.setLabelThrowsFor !== undefined && target.id === config.setLabelThrowsFor) {
         throw new Error(`gh: label ${op} failed — network`);
       }
+    }),
+    // WI-15 seam (FR-001): the label state the removal decides from. Defaults to
+    // the label being present — the pre-WI-15 assumption every existing
+    // removal-arm test was written against.
+    readIssueLabels: vi.fn(async (_repoDir: string, _target: NormalizedIssue) => {
+      if (config.readLabelsThrows !== undefined) {
+        throw new Error(config.readLabelsThrows);
+      }
+      return config.readLabels ?? [HARNESS_FAILED_LABEL];
     }),
     // WI-6 T6 seams (FR-009)
     fixDiff: vi.fn(async (_repoDir: string, _branch: string) => "diff-under-review"),
