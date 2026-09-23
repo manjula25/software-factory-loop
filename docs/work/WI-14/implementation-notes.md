@@ -11,7 +11,7 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 | T1 | medium/medium | ef8d52e | a9f7b4e | spec PASS / quality PASS | **accepted** |
 | T2 | small-medium/low | a9f7b4e | 5470a97 | spec PASS / quality PASS (rerun) | **accepted** |
 | T3 | small/low | 5470a97 | bb37c0d | spec PASS / quality PASS | superseded by T3b |
-| T3b | small/low | 7df0921 | — | — | dispatched |
+| T3b | small/low | 7df0921 | 2d95039 | spec PASS / quality PASS | **accepted** |
 
 ## T1 — escalation comment on the failure arms
 
@@ -114,7 +114,40 @@ Interpretation note 1 amended in the plan (owner, `7df0921`).
 
 ## T3b — removal widened to the verified PR-left returns
 
-Dispatched against fixed point `7df0921` (plan amendment on top of `bb37c0d`).
+RED observed first (5 failed / 157 skipped — all four positive tests saw
+`setIssueLabel` called 0 times; the failed-remove test likewise), then minimal
+GREEN. Four new call sites in `runSingleIssueLane`: the merger-gate
+non-proceed return (`return { ...gate.outcome, ...(await clearHarnessFailedLabel(...)) }`
+— one call covers all four gate failure arms, which funnel through
+`runVerifiedMergerGate`'s single non-proceed return), the review-skip return,
+the `mergePr`-throw return, and the halted-sibling return. T3's two sites
+untouched. Fresh controller gates at `2d95039`: typecheck exit 0; focused
+162/162 (157 + 5 new); full suite 283/283 (278 + 5 new). Spec review PASS,
+quality review PASS (quality ran the T3b block 8× consecutively, 5/5 each — no
+flake). Accepted 2026-09-21.
+
+**Test change to note:** the T2 test (d) was retargeted from "`setIssueLabel`
+never called" on PR-left arms to "never called with op `add`" — the old
+assertion is false by design once FR-005 removes there. Both reviews judged it
+a faithful reformulation, not a weakening: what those arms *do* call is pinned
+more tightly than before by T3b (b)/(c) (`toHaveBeenCalledTimes(1)` + op
+`"remove"`). The quality review diffed the test file's full deleted-line set to
+confirm no other pre-existing assertion moved.
+
+**Adjacent findings from the T3b reviews (follow-ups, not scope):**
+- A14: T3b's `parkSiblingBehindRevert` test local is a byte-identical copy of
+  WI-13 T11's `parkSiblingBehindRevert` (`loop.test.ts:~2547`), not a literal
+  reuse (the original is describe-scoped) — ~20 duplicated lines; hoisting one
+  shared helper would remove them. Test-only.
+- A15: the removal adds a synchronous `gh issue edit` call inside the shared-git
+  mutex on 5 of 6 sites (consistent with the pre-existing in-mutex
+  `closeIssue`), and on the halted arm it now precedes the abort — a hung `gh`
+  would delay the halt. Bounded; same posture as existing wiring; T5 surface.
+- A16 (nit): the helper reads `clearHarnessFailedLabel` while the dep op and
+  both summary lines say "remove".
+- Single-issue-surface PR-left removal-failure test is absent but structurally
+  covered (`formatSingleIssueResult` branches on `prUrl` alone) — VERIFIED by
+  reading; A12 already records the close×remove ordering gap.
 
 **Adjacent findings from the T3 reviews (follow-ups, not scope):**
 - A11: disambiguation between add-failures and remove-failures riding the one
