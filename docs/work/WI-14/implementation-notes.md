@@ -10,6 +10,8 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 |---|---|---|---|---|---|
 | T1 | medium/medium | ef8d52e | a9f7b4e | spec PASS / quality PASS | **accepted** |
 | T2 | small-medium/low | a9f7b4e | 5470a97 | spec PASS / quality PASS (rerun) | **accepted** |
+| T3 | small/low | 5470a97 | bb37c0d | spec PASS / quality PASS | superseded by T3b |
+| T3b | small/low | 7df0921 | — | — | dispatched |
 
 ## T1 — escalation comment on the failure arms
 
@@ -88,4 +90,47 @@ other create failures rethrow loudly at startup, pre-spend.
 
 ## T3 — label removal on verified success
 
-Dispatched against fixed point `5470a97`.
+RED observed first (3 failed / 2 passed: the three positive tests saw
+`setIssueLabel` called 0 times; the two negatives were green by construction),
+then minimal GREEN. Single helper `clearHarnessFailedLabel` (`src/loop.ts:~781`)
+with two call sites: the green PR-opened return (`:1172`) and the canary-green
+arm beside `closeIssue`. New `QueueSummary.labelFailures` + `LABEL REMOVE
+FAILED` render (mirrors `closeFailures`), and a single-issue stderr line. Fresh
+controller gates at `bb37c0d`: typecheck exit 0; focused 157/157 (152 + 5 new);
+full suite 278/278 (273 + 5 new). Spec review PASS, quality review PASS.
+
+**Superseded by T3b (below).** The implementer raised — rather than silently
+widening — a scope question: the plan's original interpretation note 1 said
+removal "rides exactly two outcomes", but four other lane returns are also
+literally FR-005's "fix verified and PR delivered" (merger-gate non-proceed,
+review-skip, merge-failure, halted-sibling skip), so a label set by an earlier
+hard-failed run would linger there permanently (open-PR dedup blocks any later
+run, even after a human merges). Both reviews independently read FR-005's
+literal text as reaching those sites and judged the narrowing a plan-scope
+decision, not an implementation defect; the code's own merge-failure comment
+already states the position ("a merge failure is not an issue failure: the fix
+IS verified and PR'd"). Put to the owner 2026-09-23; owner chose to widen.
+Interpretation note 1 amended in the plan (owner, `7df0921`).
+
+## T3b — removal widened to the verified PR-left returns
+
+Dispatched against fixed point `7df0921` (plan amendment on top of `bb37c0d`).
+
+**Adjacent findings from the T3 reviews (follow-ups, not scope):**
+- A11: disambiguation between add-failures and remove-failures riding the one
+  `escalationLabelFailure` field is by branch, not by type — verified disjoint
+  today, but a future post-PR escalation would silently mislabel as a removal.
+  WI-11 solved the analogous two-origin problem by splitting fields; a separate
+  field or `{op, reason}` record would be more faithful. Latent, not live.
+- A12: no test pins the close→remove call order on the canary arm, and no test
+  combines a close failure × remove success/failure. Coverage gap, not a defect.
+- A13 (wording, folded into T3b): two `setLabelThrows`/`setLabelThrowsFor` JSDoc
+  lines still say "label add … failure arm"; the queue collector comment claims
+  "only the success paths set this field" (literally false) and calls the PR-left
+  shape "both…in-hand" (over-broad).
+- A9 status: T2's ledger said "tighten or test when T3 lands" — T3 made the
+  broad remove classifier live and did neither, **by controller instruction**
+  (the regex is T5's live surface and an unrequested tightening would be scope
+  creep). Recorded as a deliberate deferral to T5, not an oversight; the
+  consequence is bounded to a stale label with a silent summary on an
+  already-verified, delivered success.
