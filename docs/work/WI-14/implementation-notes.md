@@ -12,6 +12,7 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 | T2 | small-medium/low | a9f7b4e | 5470a97 | spec PASS / quality PASS (rerun) | **accepted** |
 | T3 | small/low | 5470a97 | bb37c0d | spec PASS / quality PASS | superseded by T3b |
 | T3b | small/low | 7df0921 | 2d95039 | spec PASS / quality PASS | **accepted** |
+| T4 | small/low | 2d95039 | e07584e | docs-accuracy PASS | **accepted** |
 
 ## T1 — escalation comment on the failure arms
 
@@ -148,6 +149,35 @@ confirm no other pre-existing assertion moved.
 - Single-issue-surface PR-left removal-failure test is absent but structurally
   covered (`formatSingleIssueResult` branches on `prUrl` alone) — VERIFIED by
   reading; A12 already records the close×remove ordering gap.
+
+## T4 — docs honesty (FR-006)
+
+Two lines changed, one per file: the CLAUDE.md `src/loop.ts` module-table row
+gained the WI-14 escalation clause (taking the row's final-conjunct `and`, with
+the WI-13 T11 clause losing it), and the `docs/agents/workflow.md`
+`npm run loop` row gained one appended clause. Controller diff inspection
+confirmed no other row, heading, or section drifted (`--stat`: 2 files, 1+/1−
+each). Per the plan, T4's verification is a diff review; because the risk that
+matters for a doc row is OVERCLAIM, the independent check run was a
+doc-accuracy review reading every claim against `src/loop.ts` at `e07584e`
+rather than the two-axis spec/quality pair — recorded here as a deliberate
+deviation, not an omission (docs-only checkpoint, no behavior surface; the plan
+specifies diff review for this task).
+
+**Implementer catch worth keeping:** the brief said "merged + canary-green +
+issue-closed", but `clearHarnessFailedLabel` is called on the canary-green arm
+unconditionally — the best-effort `closeFailure` is recorded separately
+(`:1623-1626`) and does not gate the removal. The implementer wrote "the merged
++ canary-green arm with its gh-issue close" instead; the review confirmed that
+reading against the code. The brief's phrasing would have overclaimed a coupling
+that does not exist.
+
+**Adjacent (non-blocking):** A17 — the `workflow.md` clause "an inline
+`@<notifyHandle>` comment when a handle is configured" can be misread as the
+comment existing only when a handle is set; the comment posts either way and
+only the `@` line is conditional. The CLAUDE.md row states the absent-handle
+case correctly. Left as-is (the plan scopes that row to one summary clause);
+a four-word tightening is available if ever wanted.
 
 **Adjacent findings from the T3 reviews (follow-ups, not scope):**
 - A11: disambiguation between add-failures and remove-failures riding the one
