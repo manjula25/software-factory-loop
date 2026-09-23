@@ -203,7 +203,7 @@ Three things this proves:
 | 1. Seed one deliberately unfixable issue | Done — #52 (invalid seed, see run 1) then #54 (valid: same-call contradiction, both sides pinned) |
 | 2. `build:image` + `smoke:image` (expect 9 checks) | **9/9 ok** |
 | 3. Run → FAILED, no PR, one escalation comment (`@`), `harness-failed` label, summary repeats the reason verbatim | **All confirmed** (run 2) |
-| 4. Make it fixable, re-run → success path, label gone | **NOT RUN** — the two authorized loop runs were consumed (run 1 wasted on the invalid seed). Requires fresh authorization; see implementation-notes. |
+| 4. Make it fixable, re-run → success path, label gone | **All confirmed** (run 3, below) — authorized separately after the two-run budget was consumed |
 | 5. Record evidence | This file |
 
 ### Adjacent observations from the live runs (not WI-14 defects)
@@ -232,3 +232,137 @@ The leftover sandbox worktree from run 2
 was removed with the harness's own printed command
 (`git worktree remove --force …`) after its single file was captured above
 verbatim. The fixtures repo itself was left clean on `main`.
+
+## Run 3 — plan step 4: the label-removal half (issue #54 made fixable)
+
+Authorized separately (the two-run budget was consumed; run 1 was wasted on the
+invalid seed). The **same issue #54** was amended — body replaced with a plainly
+fixable requirement — so that it *kept* its `harness-failed` label and its
+escalation comment. That is the plan's "amend the issue to something fixable"
+route, and it is the only way to witness a real removal: the label must be
+present when a verified PR is delivered.
+
+Amendment: `word_count` must not count whitespace-separated chunks with no
+alphanumeric character — `word_count("hello --- world") == 2` — with every other
+behaviour unchanged. Verified to be a **real** defect first (pre-fix:
+`word_count("hello --- world")` → `3`), so the RED is genuine, not staged.
+
+Post-amend, pre-run state:
+`{"number":54,"state":"OPEN","labels":["harness-failed"],"comments":1}` — the
+label survived the body edit, and the run-2 escalation comment was still there.
+
+### Run 3 — full console output (verbatim)
+
+```
+> software-factory-loop@0.0.0 loop
+> tsx src/loop.ts --repo /home/bitcot/Documents/projects/loop-fixtures-py --provider claude-via-proxy --issue 54
+
+label "harness-failed" already exists — nothing to create
+[gh-54] Started on branch fix/gh-54
+remote: Create a pull request for 'fix/gh-54' on GitHub by visiting:
+remote:      https://github.com/manjula25/loop-fixtures-py/pull/new/fix/gh-54
+ * [new branch]      fix/gh-54 -> fix/gh-54
+[review] Started on branch loop/review
+From github.com:manjula25/loop-fixtures-py
+    e4a301e..f22c294  main       -> origin/main
+Updating e4a301e..f22c294
+Fast-forward
+ src/loopfix/textops.py           |  6 +++++-
+ tests/fixed-issues/test_gh_54.py | 24 ++++++++++++++++++++++++
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+ create mode 100644 tests/fixed-issues/test_gh_54.py
+✓ Closed issue #54 (word_count() must count hyphen-separated terms separately)
+https://github.com/manjula25/loop-fixtures-py/issues/54
+PR opened: https://github.com/manjula25/loop-fixtures-py/pull/55
+Merged: https://github.com/manjula25/loop-fixtures-py/pull/55 @ f22c294c9bd32e911f4b42500c2fec8e60d9f96f
+RUN3-EXIT: 0
+```
+
+The success path in full: repro test RED → fix → verification → pre-merge
+review → PR #55 → squash-merge → **canary green on main** → gh-issue close.
+The line `https://github.com/manjula25/loop-fixtures-py/issues/54` immediately
+after `✓ Closed issue` is the `gh issue edit --remove-label` edit's output —
+the removal call, in the same arm as `closeIssue`.
+
+### Run 3 — the removal, confirmed on GitHub
+
+```
+BEFORE (pre-run 3): {"number":54,"state":"OPEN",  "labels":["harness-failed"],"comments":1}
+AFTER  (post-run 3): {"number":54,"state":"CLOSED","labels":[],               "comments":2}
+```
+
+**The `harness-failed` label was removed live on the merged + canary-green arm.**
+This closes FR-005's removal half against real `gh`, not just vitest. The label
+itself still exists on the repo (correctly — it is reusable, not deleted).
+
+Both FR-005 branches are now live-proven:
+- **present-label removal** — run 3 (label present → verified PR delivered → gone);
+- **already-absent removal (idempotent)** — run 1 (success path with no label on
+  the issue, which cannot have been an error, since the run completed normally).
+
+### Run 3 — no stray escalation on the success path (negative check)
+
+All comments on issue #54, verbatim:
+
+```
+--- manjula25 2026-09-23T11:45:43Z ---            <- run 2, the failed attempt
+@manjula25
+Automated fix attempt failed.
+Outcome: fix-failed
+Reason: Fix run produced no commits — nothing to verify or PR.
+The full evidence is in the operator's console output for this run; the run summary repeats this reason.
+
+--- manjula25 2026-09-23T12:20:11Z ---            <- run 3, the merge close comment
+Closed by the fix loop: the fix PR https://github.com/manjula25/loop-fixtures-py/pull/55 was squash-merged (merge commit f22c294c9bd32e911f4b42500c2fec8e60d9f96f) and the post-merge canary suite on the base branch is green — no new failures versus the onboarding baseline.
+```
+
+The success path posted **only** the close comment — no escalation comment was
+added on a run that did not fail. (This is a genuine negative observation, not
+an inference: the comment count went 1 → 2 and the second body is the close
+comment.)
+
+### Run 3 — the merged fix, for honesty of the live path
+
+```python
+-    return len(text.split())
++    return sum(
++        1 for chunk in text.split() if any(c.isalnum() for c in chunk)
++    )
+```
+
+with the docstring extended and a 4-test reproduction file
+(`tests/fixed-issues/test_gh_54.py`) pinning the new behaviour **and** every
+unchanged one (`one two three` → 3, `state-of-the-art` → 1, `""` → 0,
+`"  spaced   out  "` → 2). Merged commit `f22c294`; the pinned
+`tests/fixed-issues/test_gh_32.py` was left untouched, and canary green
+confirms the suite on main carries no new failures.
+
+Cosmetic fixture artifact, not a harness issue: the issue's **title** still
+reads "must count hyphen-separated terms separately" because step 4's amendment
+replaced the body only, so the agent's reproduction docstring echoes the stale
+title while asserting the new contract.
+
+### Post-run housekeeping
+
+Run 3 left **no** leftover sandbox worktree (the success path cleans up after
+itself) and no `fix/*` branch on origin; the fixtures repo is clean on `main` at
+`f22c294`. Two **pre-existing** leftovers from earlier work items
+(`fix-gh-3`, `fix-spec-titlecase-…`) remain under `.sandcastle/worktrees/` — not
+produced by WI-14 and deliberately not deleted.
+
+### T5 conclusion
+
+Every element the plan's T5 set out to prove is now witnessed live against real
+`gh` and a real Docker sandbox: the escalation comment (content, handle arm,
+outcome class, byte-identical reason, single post, no retry), the label add, the
+label remove on delivered success, the failed lane leaving no PR and no branch,
+and — unplanned but valuable — `ensureHarnessFailedLabel`'s already-exists
+classifier, which is the T2 blocking-defect arm.
+
+**Non-claims:** A9 (a *genuine* gh error during a label remove being swallowed by
+the broad `not found` classifier) is **not** exercised by any of these runs and
+remains open as recorded; the runs only exercised the intended idempotent-absent
+branch. The preflight-failed and reverted/uncanaried arms were not produced live.
+The absent-handle (`notify handle not configured`) arm was not produced live —
+the fixtures profile sets a handle, so only the present arm was witnessed; the
+absent arm stays vitest-only.

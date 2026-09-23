@@ -13,7 +13,7 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 | T3 | small/low | 5470a97 | bb37c0d | spec PASS / quality PASS | superseded by T3b |
 | T3b | small/low | 7df0921 | 2d95039 | spec PASS / quality PASS | **accepted** |
 | T4 | small/low | 2d95039 | e07584e | docs-accuracy PASS | **accepted** |
-| T5 | live validation | e07584e | evidence commit | — (no review; live-run evidence) | **escalation arm PROVEN live; removal half awaiting authorization** |
+| T5 | live validation | e07584e | evidence commit | — (no review; live-run evidence) | **complete — both halves proven live** |
 
 ## T1 — escalation comment on the failure arms
 
@@ -254,11 +254,41 @@ Observed (verbatim in the evidence file):
   rejected** reusing its run-1 `split_hyphens` escape, because constraint #1
   pinned the plain call — confirming the re-seed closed run 1's hole.
 
-**Still unrun: plan step 4 (the removal half).** The two authorized loop runs are
-now consumed, one of them on my invalid seed, so FR-005's *live* removal (label
-present → verified PR delivered → label gone) has not been witnessed. Its
-harness-source behavior is pinned by T3/T3b vitest; what is missing is the live
-confirmation. Put to the owner rather than spending unasked.
+**Run 3 (issue #54, amended) — the removal half PROVEN live.** The two-run
+budget was consumed, so I put step 4 to the owner and it was authorized
+separately. The **same issue #54** was amended to a plainly fixable requirement
+(body replaced; title left stale — a fixture cosmetic), which kept it wearing
+the `harness-failed` label with the run-2 escalation comment still on it. The
+amended requirement was verified to be a *real* defect before the run
+(`word_count("hello --- world")` → 3, should be 2), so the RED was genuine.
+Result: repro RED → fix → verification → review → PR #55 → squash-merge
+(`f22c294`) → **canary green on main** → gh-issue close, exit 0, and
+**the label went `["harness-failed"]` → `[]`**. Both FR-005 branches are now
+live: present-label removal (run 3) and the idempotent already-absent case
+(run 1). A negative check too — the success path posted **only** the close
+comment (comment count 1 → 2, second body is the close comment), so no
+escalation rode a run that did not fail.
+
+**T5 is complete.** Everything the plan's T5 set out to prove is witnessed
+against real `gh` and a real Docker sandbox. **Live non-claims, stated for the
+record:** A9 remains open (no run produced a *genuine* gh error during a label
+remove, so the broad `not found` classifier's failure mode is still unproven —
+only the intended idempotent-absent branch was exercised); the
+`preflight-failed` arm, the reverted/uncanaried arms, and the absent-handle
+(`notify handle not configured`) arm were not produced live — the fixtures
+profile sets a handle, so only the present arm was witnessed, and those arms
+stay vitest-only.
+
+**Candidate-change disclosure (CLAUDE.md edited after T4).** T5 closes with two
+one-line additions to CLAUDE.md's `## Lessons` (the seed-design trap above, and
+the worktree-`.env` fact), added under CLAUDE.md's own standing Self-learning
+rule. This is a **post-T4 candidate change and is disclosed rather than
+smuggled**: the *module-table row that T4 was reviewed for is byte-identical*,
+and both new lines sit in an unrelated section, but per the loop's rule a
+changed candidate invalidates prior review identities — so the branch-level
+`code-review` at delivery must carry this, and it does (it reviews
+`main...HEAD`). The T4 checkpoint's docs-accuracy PASS still applies to the row
+it reviewed; the Lessons lines have not themselves been independently reviewed.
 
 **Adjacent observations (not WI-14 defects, recorded in the evidence file):**
 - O1: the console prints `Run succeeded but worktree has uncommitted changes`
