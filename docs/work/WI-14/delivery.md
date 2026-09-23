@@ -131,39 +131,51 @@ Branch `worktree-wi-14` (worktree `.claude/worktrees/wi-14`); base `main` @ `ef8
 Target: PR to `manjula25/software-factory-loop` `main`. Human merge only — this repo never
 auto-merges itself (constraint 1).
 
-**Base-ref note for the owner:** `origin/main` is at `a175dea`, and local `main` is **3 commits
-ahead** of it — `42b64b1`, `e488832`, `ef8d52e`, WI-14's own grilling/spec/plan docs, which have
-never been pushed. Pushing only the branch therefore yields a PR showing **19** commits
-(those 3 plus the branch's 16), not the WI-14 implementation range alone. Options at the ask
-below.
+**Base-ref note (resolved at the ask):** `origin/main` was at `a175dea`, 3 commits behind local
+`main` (`42b64b1`, `e488832`, `ef8d52e` — WI-14's own grilling/spec/plan docs, never pushed).
+The owner chose to push `main` first, so the PR's diff is the WI-14 implementation range alone;
+otherwise the PR would have shown 19 commits, since GitHub diffs against `origin/main`.
 
 ## Commit range
 
-`ef8d52e..690c2e3` — 16 commits, all of T1–T5, the live-run evidence, the verification record
-and the review record. Extended by this record's own commit, so the PR will carry
-`ef8d52e..HEAD` (17 commits).
+`ef8d52e..782edbf` as opened — 17 commits (T1–T5, the live-run evidence, the verification
+record, the review record, this delivery record). This record's post-execution amendment adds
+one further commit, so the branch tip to merge will be `ef8d52e..HEAD` (18 commits).
 
 ## Requested external actions
 
-**None yet — awaiting explicit authorization.** Nothing in this delivery has been pushed, opened,
-merged or deleted. The only execution outside the harness repo in this work item was T5's
-fixture-repo activity (`manjula25/loop-fixtures-py`), authorized separately on 2026-09-23 and
-recorded verbatim in `evidence/escalation-live-run.log`.
+Owner authorized (2026-09-23, via AskUserQuestion, option "Push main, branch, open PR"):
+(1) push local `main` to `origin`, (2) push `worktree-wi-14`, (3) open the PR. Scope was
+confirmed against the base-ref wrinkle above — the owner was told the `main` push also publishes
+WI-14's grilling/spec/plan docs to `main` directly, without review.
 
-To be decided at the ask:
-
-1. Whether to push local `main` (`ef8d52e`) to `origin` first, so the PR's diff is the WI-14
-   implementation range alone — or to let the PR carry the 3 planning commits too.
-2. Push `worktree-wi-14` to `origin`.
-3. Open a PR `worktree-wi-14` → `main` on `manjula25/software-factory-loop`.
+Not yet requested: pushing this record's post-execution amendment (a further push to the same
+PR), cleanup, or any merge.
 
 ## Executed external actions and observed results
 
-None. No delivery action has been performed for WI-14.
+- **Push `main`** → origin: executed 2026-09-23; observed `a175dea..ef8d52e  main -> main`,
+  a fast-forward (verified `origin/main` was an ancestor first). `origin/main` now reads
+  `ef8d52eb05a3e1dc23030443641b0e807f9f9ae8`.
+- **Push `worktree-wi-14`** → origin: executed 2026-09-23; observed `* [new branch]
+  worktree-wi-14 -> worktree-wi-14`, upstream `origin/worktree-wi-14` set. Origin now reads
+  `782edbf44f668ee2d631c56f59b2aa9e4973f4eb`.
+- **PR `worktree-wi-14` → `main`**: executed 2026-09-23; observed
+  **https://github.com/manjula25/software-factory-loop/pull/18** — read back as `OPEN`,
+  base `main`, head `worktree-wi-14`, `MERGEABLE`, not a draft, **17 commits**, 10 changed
+  files, +2118/−14. The file list is exactly the WI-14 surface (2 `src/`, `CLAUDE.md`,
+  `docs/agents/workflow.md`, 6 `docs/work/WI-14/`), confirming the `main` push kept the three
+  planning commits out of the diff.
+- **T5 fixture-repo activity** (`manjula25/loop-fixtures-py`): authorized separately 2026-09-23
+  and executed then, not part of this delivery — recorded verbatim in
+  `evidence/escalation-live-run.log` (PR #55 squash-merged as `f22c294`, issue #54 closed).
 
 ## Pending actions
 
-- Owner authorization for the push and PR above (each action separately).
-- Human review + merge of the PR (owner; this repo never auto-merges itself).
-- Post-merge worktree/branch cleanup, and the fixtures-repo cleanup already noted in
-  `implementation-notes.md` — both need explicit authorization at that point.
+- Owner authorization to push this record's post-execution amendment (the branch tip currently
+  pushed, `782edbf`, carries a `delivery.md` that still reads "nothing pushed" — true when
+  written, stale now).
+- **Human review + merge of PR #18** (owner; this repo never auto-merges itself).
+- Post-merge worktree/branch cleanup (`worktree-wi-14` + its worktree), and the fixtures-repo
+  cleanup already noted in `implementation-notes.md` — both need explicit authorization at that
+  point.
