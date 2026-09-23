@@ -152,7 +152,7 @@ interface DepOverrides {
   closeThrows?: string;
   /** Simulated escalation-comment failure (gh error) on the failure arms (WI-14 T1, FR-003). */
   commentOnIssueThrows?: string;
-  /** Simulated harness-failed label add failure (gh error) on the failure arms (WI-14 T2, FR-004). */
+  /** Simulated harness-failed label write failure (gh error) — the ADD on the failure arms (WI-14 T2, FR-004) or the REMOVE on a verified-PR-delivered arm (WI-14 T3/T3b, FR-005). */
   setLabelThrows?: string;
   /** Simulated canary-sandbox close() failure (container rm error) on opted-in runs (WI-7 FR-003). */
   canaryCloseThrows?: string;
@@ -1683,7 +1683,7 @@ interface QueueDepsConfig {
   closeThrowsFor?: string;
   /** Escalation comment throws (gh error) for this id — posting failure on a failure arm (WI-14 T1, FR-003). */
   commentOnIssueThrowsFor?: string;
-  /** Harness-failed label add throws (gh error) for this id — recording failure on a failure arm (WI-14 T2, FR-004). */
+  /** Harness-failed label write throws (gh error) for this id — the add on a failure arm (WI-14 T2, FR-004) or the remove on a verified-PR-delivered arm (WI-14 T3/T3b, FR-005). */
   setLabelThrowsFor?: string;
   /** Canary-sandbox close() throws for this id — teardown failure on an opted-in run (WI-7 FR-003). */
   canaryCloseThrowsFor?: string;
@@ -3604,16 +3604,20 @@ describe("harness-failed label add on the failure arms (WI-14 T2, FR-004)", () =
     expect(text).not.toContain("harness-failed label add failed");
   });
 
-  it("(d) PR-left outcomes never label: review-uncertain skip and merge-failure posture leave the PR as the artifact", async () => {
+  it("(d) PR-left outcomes never ADD: review-uncertain skip and merge-failure posture leave the PR as the artifact", async () => {
     const optedIn = { ...profile, autoMerge: true, notifyHandle: "manjula25" };
+    /** FR-004's contract is that no `add` rides a PR-left arm — T3b added the
+     * REMOVE there (FR-005), so the assertion is on the op, not on the count. */
+    const labelAdds = (deps: ReturnType<typeof makeQueueDeps>["deps"]) =>
+      deps.setIssueLabel.mock.calls.filter(([, , op]) => op === "add");
 
     const uncertain = makeQueueDeps({ issues: [escalationIssue], reviewVerdict: "uncertain" });
     await runQueue(queueRunInput({ profile: optedIn }), uncertain.deps);
-    expect(uncertain.deps.setIssueLabel).not.toHaveBeenCalled();
+    expect(labelAdds(uncertain.deps)).toEqual([]);
 
     const mergeFailed = makeQueueDeps({ issues: [escalationIssue], mergeThrowsFor: "gh-1" });
     await runQueue(queueRunInput({ profile: optedIn }), mergeFailed.deps);
-    expect(mergeFailed.deps.setIssueLabel).not.toHaveBeenCalled();
+    expect(labelAdds(mergeFailed.deps)).toEqual([]);
   });
 });
 
@@ -3733,4 +3737,141 @@ describe("harness-failed label removal on verified success (WI-14 T3, FR-005)", 
     expect(text).toContain("fixed: 1");
     expect(text).not.toContain("LABEL REMOVE FAILED");
   });
+});
+
+// ---------------------------------------------------------------------------
+// WI-14 T3b: the removal WIDENED to every verified-PR-delivered return
+// (FR-005; plan interpretation note 1 amended — owner, 2026-09-23). An open PR
+// carrying a fresh-sandbox-verified fix IS FR-005's "fix verified and PR
+// delivered" shape, so all FOUR PR-left returns in the lane clear the label:
+// the merger-gate non-proceed return (every one of the gate's failure arms —
+// probe throw, merger throw, resolution-failed-verification, push throw —
+// funnels through that single return), the review-skip return, the mergePr-throw
+// return, and the halted-sibling return. Reverted and uncanaried merges remain
+// the ONLY non-removers among PR'd outcomes: delivered but UNVERIFIED (the
+// revert re-queue guard may re-run the issue). Recording posture is unchanged —
+// the same try, the same verbatim capture, the same loud summary line.
+// ---------------------------------------------------------------------------
+
+describe("harness-failed label removal widened to the PR-left returns (WI-14 T3b, FR-005)", () => {
+  const optedIn = { ...profile, autoMerge: true };
+  /** `queueIssue()` omits the url; only a url-bearing issue has a label to clear. */
+  const ghIssue2: NormalizedIssue = {
+    ...queueIssue(2),
+    url: "https://github.com/manjula25/loop-fixtures-py/issues/2",
+  };
+
+  it("(a) merger-gate non-proceed (resolution failed verification): the open PR's issue removes once", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [escalationIssue],
+      conflictFor: "gh-1",
+      mergerResolutionFailsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    // the gate's non-proceed return, still the WI-6 merge-failure posture
+    expect(summary.mergeFailures[0]![0]).toBe("gh-1");
+    expect(deps.mergePr).not.toHaveBeenCalled();
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[0]).toBe("/tmp/repo");
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("remove");
+    expect(formatSummary(summary)).not.toContain("LABEL REMOVE FAILED");
+  });
+
+  it("(b) review-skip (verdict not approved): the open PR's issue removes once", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], reviewVerdict: "uncertain" });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(formatSummary(summary)).toContain("REVIEW SKIP gh-1");
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("remove");
+    expect(formatSummary(summary)).not.toContain("LABEL REMOVE FAILED");
+  });
+
+  it("(c) mergePr throws: the open PR's issue removes once", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], mergeThrowsFor: "gh-1" });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(formatSummary(summary)).toContain("MERGE FAILED gh-1: ");
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("remove");
+    expect(formatSummary(summary)).not.toContain("LABEL REMOVE FAILED");
+  });
+
+  it("(d) halted sibling lane: the skipped PR's issue removes once, the reverted sibling never removes", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [escalationIssue, ghIssue2],
+      canaryNewFailureFor: "gh-1",
+    });
+    parkSiblingBehindRevert(deps, "fix/gh-2");
+
+    const error = await runQueue(queueRunInput({ profile: optedIn }), deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(QueueAbortedError);
+    const aborted = error as QueueAbortedError;
+    expect(formatSummary(aborted.summary)).toContain("⚠️ REVERTED gh-1");
+    // the halted sibling keeps its open PR — and that PR is its verified
+    // deliverable, so its issue clears the label. gh-1 (reverted) does not.
+    expect(aborted.summary.reviewSkipped[0]![0]).toBe("gh-2");
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[1]).toMatchObject({ id: "gh-2", url: ghIssue2.url });
+    expect(call[2]).toBe("remove");
+  });
+
+  it("(e) a failed remove on a PR-left return is recorded verbatim, never retried, and the PR'd outcome stands", async () => {
+    const { deps } = makeQueueDeps({
+      issues: [escalationIssue],
+      reviewVerdict: "uncertain",
+      setLabelThrowsFor: "gh-1",
+    });
+
+    const summary = await runQueue(queueRunInput({ profile: optedIn }), deps);
+
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1); // captured, never retried
+    expect(summary.fixed).toContain("gh-1"); // the verified open PR still counts fixed
+    expect(summary.failed).toEqual([]);
+    const text = formatSummary(summary);
+    expect(text).toContain("REVIEW SKIP gh-1");
+    expect(text).toContain("LABEL REMOVE FAILED gh-1: gh: label remove failed — network");
+  });
+
+  /**
+   * Force gh-1's red-canary merge chain to settle BEFORE the sibling lane's
+   * chain can enter the mutex — the sibling's fix run parks until gh-1's
+   * revertMerge has landed, so the chain-top halt check is exercised
+   * deterministically regardless of lane scheduling order (the same device the
+   * WI-13 T11 tests use for their halted-sibling pin).
+   */
+  const parkSiblingBehindRevert = (
+    deps: ReturnType<typeof makeQueueDeps>["deps"],
+    parkedBranch: string,
+  ) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const origFixRun = deps.runFixRun.getMockImplementation()!;
+    deps.runFixRun.mockImplementation(async (input: { branch: string }) => {
+      if (input.branch === parkedBranch) {
+        await gate;
+      }
+      return origFixRun(input);
+    });
+    const origRevert = deps.revertMerge.getMockImplementation()!;
+    deps.revertMerge.mockImplementation(async (...args: Parameters<typeof origRevert>) => {
+      const result = await origRevert(...args);
+      release();
+      return result;
+    });
+  };
 });

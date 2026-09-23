@@ -781,8 +781,12 @@ async function escalateOnFailure(
 /**
  * WI-14 (FR-005/D7): REMOVE the `harness-failed` label at a verified-delivered
  * outcome — the label means "currently failing", so a run that delivers the
- * verified fix (green PR-opened return, or the merged + canary-green +
- * issue-closed chain) clears it. gh-sourced issues only, the same `issue.url`
+ * verified fix clears it. Wired at every verified-PR-delivered return (T3b,
+ * plan interpretation note 1 amended 2026-09-23): the green PR-opened return,
+ * the merged + canary-green + issue-closed chain, and the four PR-left returns
+ * (merger-gate non-proceed, review skip, merge throw, halted sibling). Reverted
+ * and uncanaried merges are delivered-but-UNVERIFIED and never clear it.
+ * gh-sourced issues only, the same `issue.url`
  * guard the add uses: the label is GitHub state and a spec-doc/plain-list issue
  * has no issue to label. Same recording posture as the add — one try, a throw
  * captured verbatim into `escalationLabelFailure` beside the already-earned
@@ -1115,7 +1119,13 @@ async function runSingleIssueLane(
       // over the sandbox's concurrency.
       const gate = await runVerifiedMergerGate(input, deps, prOutcome, prUrl);
       if (!gate.proceed) {
-        return gate.outcome;
+        // WI-14 T3b (FR-005): the gate's non-proceed outcome is a PR-left
+        // outcome — the fix IS verified and the PR stays open for a human — so
+        // the issue's `harness-failed` label comes off here. Every one of the
+        // gate's failure arms (probe throw, merger run throw, resolution failed
+        // verification, push throw) funnels through this single return, so
+        // this one call covers all four.
+        return { ...gate.outcome, ...(await clearHarnessFailedLabel(input, deps)) };
       }
       if (gate.teardownFailure !== undefined && prOutcome.teardownFailure === undefined) {
         prOutcome = { ...prOutcome, teardownFailure: gate.teardownFailure };
@@ -1125,7 +1135,13 @@ async function runSingleIssueLane(
       // other outcome returns a PR'd result carrying the skip reason.
       const review = await runPreMergeReview(input, deps, prUrl);
       if (!review.approved) {
-        return { ...prOutcome, reviewSkip: review.reviewSkip };
+        // WI-14 T3b (FR-005): a review-skipped PR is a verified-delivered PR —
+        // it stays open for a human — so it is a removal site (T3 left it out).
+        return {
+          ...prOutcome,
+          reviewSkip: review.reviewSkip,
+          ...(await clearHarnessFailedLabel(input, deps)),
+        };
       }
       let mergeCommit: string;
       try {
@@ -1135,7 +1151,13 @@ async function runSingleIssueLane(
         // continues — but never silently. A merge failure is not an issue
         // failure: the fix IS verified and PR'd (the queue counts it fixed).
         const reason = error instanceof Error ? error.message : String(error);
-        return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
+        // WI-14 T3b (FR-005): a failed merge still leaves a verified, delivered
+        // PR in hand — same removal site as the skips above.
+        return {
+          ...prOutcome,
+          mergeFailure: `merge failed for ${prUrl}: ${reason}`,
+          ...(await clearHarnessFailedLabel(input, deps)),
+        };
       }
 
       // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
@@ -1152,9 +1174,14 @@ async function runSingleIssueLane(
         // queue's REVIEW SKIP surface carries the reason. Like every
         // reviewSkip string it is secrets-guarded at the summary emission
         // seam, not at construction.
+        // WI-14 T3b (FR-005): the halted sibling's open PR is its verified
+        // deliverable (the spec's stated end-state for these lanes), so its
+        // issue clears the label too — the skip is about the merge, not about
+        // the deliverable.
         return {
           ...prOutcome,
           reviewSkip: `merge skipped — run halted by ${haltedBy.id}: ${haltedBy.reason}`,
+          ...(await clearHarnessFailedLabel(input, deps)),
         };
       }
       const outcome = await mergeChain();
@@ -2108,10 +2135,14 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         if (outcome.closeFailure !== undefined) {
           closeFailures.push([issue.id, outcome.closeFailure]);
         }
-        // WI-14 T3 (FR-005): a failed label REMOVAL — the same loud-note shape
-        // as the close failure above. Only the success paths set this field
-        // (the add's own failure rides the FAILED line), so it belongs here in
-        // the PR'd branch, on both the merged and the PR-left-in-hand shapes.
+        // WI-14 T3/T3b (FR-005): a failed label REMOVAL — the same loud-note
+        // shape as the close failure above. It belongs here in the PR'd branch:
+        // a removal only ever rides a verified-delivered outcome (the merged
+        // chain's canary-green arm, or one of the four PR-left returns), so
+        // every outcome carrying one has a `prUrl` and is collected here. The
+        // field itself is shared with the ADD's failure (FR-004), but that one
+        // rides a failure arm — no `prUrl` — so it falls through to the FAILED
+        // line's suffix below and never reaches this branch.
         if (outcome.escalationLabelFailure !== undefined) {
           labelFailures.push([issue.id, outcome.escalationLabelFailure]);
         }
