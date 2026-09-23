@@ -3760,9 +3760,72 @@ describe("harness-failed label removal on verified success (WI-14 T3, FR-005)", 
     const summary = await runQueue(queueRunInput(), deps);
 
     expect(deps.setIssueLabel).not.toHaveBeenCalled();
+    expect(deps.readIssueLabels).not.toHaveBeenCalled();
     const text = formatSummary(summary);
     expect(text).toContain("fixed: 1");
     expect(text).not.toContain("LABEL REMOVE FAILED");
+  });
+
+  it("(f) label not applied: the removal is never attempted, nothing is recorded, the outcome is unchanged", async () => {
+    // queue surface: a green PR-opened run whose issue wears no label
+    const { deps } = makeQueueDeps({ issues: [escalationIssue], readLabels: [] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.setIssueLabel).not.toHaveBeenCalled();
+    const text = formatSummary(summary);
+    expect(text).toContain("fixed: 1");
+    expect(text).not.toContain("LABEL REMOVE FAILED");
+
+    // single-issue surface: the same green PR-opened arm. Byte-identical to the
+    // run whose issue DOES wear the label and whose removal succeeds — a
+    // non-member label is a no-op, not a recorded event (FR-001/FR-005 boundary).
+    const input = { issue, repoDir: "/tmp/repo", imageName: "sandcastle-loop", agent, profile };
+    const baseline = await runSingleIssue(input, makeDeps());
+    const single = makeDeps({ readLabels: [] });
+    const outcome = await runSingleIssue(input, single);
+
+    expect(single.setIssueLabel).not.toHaveBeenCalled();
+    expect(outcome.escalationLabelFailure).toBeUndefined();
+    expect(outcome).toEqual(baseline);
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).not.toContain("harness-failed label remove failed:");
+    expect(report.exitCode).toBe(0);
+  });
+
+  it("(g) a throwing label read: the removal is skipped and the read is recorded on the existing line", async () => {
+    const READ_THROW = "gh: HTTP 502 — bad gateway";
+    const REASON = `could not read the issue's labels: ${READ_THROW}`;
+    const mergedInput = {
+      issue,
+      repoDir: "/tmp/repo",
+      imageName: "sandcastle-loop",
+      agent,
+      profile: { ...profile, autoMerge: true },
+    };
+    const baseline = await runSingleIssue(mergedInput, makeDeps());
+
+    const deps = makeDeps({ readLabelsThrows: READ_THROW });
+    const outcome = await runSingleIssue(mergedInput, deps);
+
+    // never guessed at, never attempted (FR-003): the removal cannot be decided
+    expect(deps.setIssueLabel).not.toHaveBeenCalled();
+    expect(outcome.escalationLabelFailure).toBe(REASON);
+    expect(outcome.merged).toEqual(baseline.merged);
+    // every other field is byte-identical to the run whose read succeeded
+    const { escalationLabelFailure, ...rest } = outcome;
+    expect(escalationLabelFailure).toBe(REASON);
+    expect(rest).toEqual(baseline);
+    // single-issue surface: the read failure rides the EXISTING line, never fatal
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain(`harness-failed label remove failed: ${REASON}`);
+    expect(report.exitCode).toBe(0);
+
+    // queue surface: the merged chain's read failure gets its own loud line
+    const { deps: queueDeps } = makeQueueDeps({ issues: [escalationIssue], readLabelsThrows: READ_THROW });
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps);
+    expect(queueDeps.setIssueLabel).not.toHaveBeenCalled();
+    expect(formatSummary(summary)).toContain(`LABEL REMOVE FAILED gh-1: ${REASON}`);
   });
 });
 
