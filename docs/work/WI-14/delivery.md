@@ -149,8 +149,11 @@ Owner authorized (2026-09-23, via AskUserQuestion, option "Push main, branch, op
 confirmed against the base-ref wrinkle above — the owner was told the `main` push also publishes
 WI-14's grilling/spec/plan docs to `main` directly, without review.
 
-Not yet requested: pushing this record's post-execution amendment (a further push to the same
-PR), cleanup, or any merge.
+Authorized afterwards by the owner on 2026-09-23: (4) push this record's post-execution
+amendment (a further push to the same PR), (5) prune the merged fixtures branch `fix/gh-3`, and
+(6) correct this record. The **merge itself was never requested of the harness** — asked to
+merge, the harness surfaced constraint 1 (this repo keeps human merge; all 15 prior merges were
+the owner's in the UI) and the owner merged it in the GitHub UI.
 
 ## Executed external actions and observed results
 
@@ -166,16 +169,38 @@ PR), cleanup, or any merge.
   files, +2118/−14. The file list is exactly the WI-14 surface (2 `src/`, `CLAUDE.md`,
   `docs/agents/workflow.md`, 6 `docs/work/WI-14/`), confirming the `main` push kept the three
   planning commits out of the diff.
+- **Push of the post-execution amendment**: executed 2026-09-23; observed
+  `782edbf..1feb895  worktree-wi-14 -> worktree-wi-14`. PR #18 then read back as `MERGEABLE` /
+  `mergeStateStatus: CLEAN`, 18 commits, 10 files, +2130/−14.
+- **Merge of PR #18**: performed by the owner (`manjula25`) in the **GitHub UI**, 2026-09-23
+  13:55:05Z — not by the harness (constraint 1). Read back: `MERGED`, merge commit
+  `c335fc88f7fe8e183273febaece14635a3e50b6b` with parents `ef8d52e` + `1feb895`, a true merge
+  commit matching all 15 prior merges. Local `main` fast-forwarded `ef8d52e → c335fc8` (clean;
+  the pre-existing dirty `docs/work/reports/harness-functionality-guide.html` untouched).
+- **Post-merge cleanup**: remote branch `worktree-wi-14` deleted (tip verified an ancestor of
+  `origin/main` first); worktree `.claude/worktrees/wi-14` removed; local branch deleted.
+  `origin` now carries only `main`, and `main` carries `src/loop.ts` = `e51d2f82…` and
+  `src/loop.test.ts` = `3a890e34…` — the exact blobs the gates and the T5 runs were proven
+  against.
 - **T5 fixture-repo activity** (`manjula25/loop-fixtures-py`): authorized separately 2026-09-23
   and executed then, not part of this delivery — recorded verbatim in
   `evidence/escalation-live-run.log` (PR #55 squash-merged as `f22c294`, issue #54 closed).
+- **Fixtures `fix/gh-3` pruned**: executed 2026-09-23 — the branch was verified merged into
+  fixtures `main` before anything was removed; its sandbox worktree (holding only untracked
+  `.loop-harness/.loop-harness/` nesting junk) was removed with `--force` and the branch deleted.
 
 ## Pending actions
 
-- Owner authorization to push this record's post-execution amendment (the branch tip currently
-  pushed, `782edbf`, carries a `delivery.md` that still reads "nothing pushed" — true when
-  written, stale now).
-- **Human review + merge of PR #18** (owner; this repo never auto-merges itself).
-- Post-merge worktree/branch cleanup (`worktree-wi-14` + its worktree), and the fixtures-repo
-  cleanup already noted in `implementation-notes.md` — both need explicit authorization at that
-  point.
+- **Correction, recorded in this commit:** an earlier revision of this record listed
+  "the fixtures-repo cleanup already noted in `implementation-notes.md`" as a WI-14 pending
+  action. That attribution was **wrong**. WI-14 left **nothing** in
+  `manjula25/loop-fixtures-py`: its fix branches were already deleted by the runs, PR #55 is
+  merged (`f22c294`), issue #54 is closed, and no `fix/gh-52` / `fix/gh-54` branch or staging
+  directory survives. The artifacts found there belong to **earlier** work items.
+- **One fixtures artifact is deliberately left in place:**
+  `fix/spec-titlecase-returns-all-caps-instead-of-title-case`, with its sandbox worktree and the
+  matching `.loop-harness/` attachment staging, is **NOT merged** into fixtures `main` — it holds
+  a real commit `31fc46e` ("fix(titlecase): capitalize first letter of each word, preserve
+  rest"). It is not WI-14's, and removing it would destroy unmerged work, so it was left for its
+  owner to decide. (`fix/gh-3`, which *was* merged, was pruned as authorized.)
+- Human review + merge of this correction's PR (owner; this repo never auto-merges itself).
