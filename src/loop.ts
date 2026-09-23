@@ -299,11 +299,13 @@ export interface LoopOutcome {
    */
   readonly escalationCommentFailure?: string;
   /**
-   * WI-14 (FR-004): set when ADDING the `harness-failed` label on the failed
-   * gh-sourced issue THREW — the same recording posture as
+   * WI-14 (FR-004/FR-005): set when a `harness-failed` label write THREW —
+   * ADDING the label on the failed gh-sourced issue (FR-004) or REMOVING it on
+   * a verified-delivered success (FR-005). The same recording posture as
    * `escalationCommentFailure`: captured verbatim beside the already-decided
    * verdict, never retried. The outcome is otherwise unchanged; the queue's
-   * FAILED line and the single-issue report name it loudly.
+   * FAILED / `LABEL REMOVE FAILED` line and the single-issue report name it
+   * loudly.
    */
   readonly escalationLabelFailure?: string;
   /**
@@ -776,6 +778,34 @@ async function escalateOnFailure(
   };
 }
 
+/**
+ * WI-14 (FR-005/D7): REMOVE the `harness-failed` label at a verified-delivered
+ * outcome — the label means "currently failing", so a run that delivers the
+ * verified fix (green PR-opened return, or the merged + canary-green +
+ * issue-closed chain) clears it. gh-sourced issues only, the same `issue.url`
+ * guard the add uses: the label is GitHub state and a spec-doc/plain-list issue
+ * has no issue to label. Same recording posture as the add — one try, a throw
+ * captured verbatim into `escalationLabelFailure` beside the already-earned
+ * success verdict, never retried, never propagated (FR-005: "a failed removal
+ * is a summary line only"). Removal is idempotent by contract: the wiring's
+ * classifier treats a missing label as success, so an issue a human already
+ * un-labeled is a no-op, not a failure.
+ */
+async function clearHarnessFailedLabel(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+): Promise<{ escalationLabelFailure?: string }> {
+  if (input.issue.url === undefined) {
+    return {};
+  }
+  try {
+    await deps.setIssueLabel(input.repoDir, input.issue, "remove");
+  } catch (error) {
+    return { escalationLabelFailure: error instanceof Error ? error.message : String(error) };
+  }
+  return {};
+}
+
 export async function runSingleIssue(
   input: SingleIssueInput,
   deps: LoopDeps,
@@ -1134,7 +1164,12 @@ async function runSingleIssueLane(
       return outcome;
     });
   }
-  return prOutcome;
+  // WI-14 T3 (FR-005): the green PR-opened return — the fix is verified and
+  // the PR is delivered, so the issue's `harness-failed` label (if an earlier
+  // failed run put one there) comes off here. Opted-in runs never reach this
+  // return: they leave through the merge chain above, which clears the label
+  // on its canary-green arm alone.
+  return { ...prOutcome, ...(await clearHarnessFailedLabel(input, deps)) };
 }
 
 /**
@@ -1564,10 +1599,16 @@ async function runCanary(
           `${error instanceof Error ? error.message : String(error)}`;
       }
     }
+    // WI-14 T3 (FR-005): this arm is the second — and only other — place the
+    // label comes off: the fix is verified, merged, and canary-green on main,
+    // so the issue no longer wears `harness-failed`. Its own try, beside the
+    // close above; a red canary reverts instead and never reaches here.
+    const labelRemoval = await clearHarnessFailedLabel(input, deps);
     return {
       ...prOutcome,
       merged: { prUrl, mergeCommit, canaryGreen: true },
       ...(closeFailure !== undefined ? { closeFailure } : {}),
+      ...labelRemoval,
       // FR-003: the merged outcome stands; the teardown failure rides beside it.
       // WI-11 (FR-001, decision d1): the canary's teardown failure gets its OWN
       // origin-labeled field — spreading `prOutcome` keeps the early
@@ -1721,6 +1762,15 @@ export interface QueueSummary {
    */
   readonly closeFailures: [string, string][];
   /**
+   * [id, reason] — WI-14 T3 (FR-005): REMOVING the `harness-failed` label on a
+   * verified-delivered outcome failed. Like `closeFailures` this is a loud note
+   * of its own (`LABEL REMOVE FAILED` lines), never a `failed` entry — the fix
+   * is verified and delivered, the label is bookkeeping, and the queue
+   * continues. (A failed label ADD rides the FAILED line as a suffix instead:
+   * it only ever happens on a failure arm.)
+   */
+  readonly labelFailures: [string, string][];
+  /**
    * [id, reason] — WI-6 (FR-009): merges the pre-merge review pass blocked
    * (wrong / uncertain / reviewer unavailable). Mirrors `mergeFailures`: a
    * loud note of its own (`REVIEW SKIP` lines), never a `failed` entry — the
@@ -1842,6 +1892,8 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const mergedPrs: [string, string, string, string?][] = [];
   const mergeFailures: [string, string][] = [];
   const closeFailures: [string, string][] = [];
+  /** WI-14 T3 (FR-005): failed `harness-failed` label REMOVALS on PR'd outcomes. */
+  const labelFailures: [string, string][] = [];
   const reviewSkipped: [string, string][] = [];
   const reverted: RevertedRecord[] = [];
   const uncanariedMerges: [string, string][] = [];
@@ -1857,6 +1909,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     mergedPrs: [...mergedPrs],
     mergeFailures: [...mergeFailures],
     closeFailures: [...closeFailures],
+    labelFailures: [...labelFailures],
     reviewSkipped: [...reviewSkipped],
     reverted: [...reverted],
     uncanariedMerges: [...uncanariedMerges],
@@ -2055,6 +2108,13 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         if (outcome.closeFailure !== undefined) {
           closeFailures.push([issue.id, outcome.closeFailure]);
         }
+        // WI-14 T3 (FR-005): a failed label REMOVAL — the same loud-note shape
+        // as the close failure above. Only the success paths set this field
+        // (the add's own failure rides the FAILED line), so it belongs here in
+        // the PR'd branch, on both the merged and the PR-left-in-hand shapes.
+        if (outcome.escalationLabelFailure !== undefined) {
+          labelFailures.push([issue.id, outcome.escalationLabelFailure]);
+        }
         if (outcome.reviewSkip !== undefined) {
           reviewSkipped.push([issue.id, outcome.reviewSkip]);
         }
@@ -2225,6 +2285,9 @@ export function formatSummary(summary: QueueSummary): string {
     ...summary.uncanariedMerges.map(([id, detail]) => `⚠️ UNCANARIED MERGE ${id}: ${detail}`),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.closeFailures.map(([id, reason]) => `ISSUE CLOSE FAILED ${id}: ${reason}`),
+    // WI-14 T3 (FR-005): the label-removal failure's own loud note — the fix
+    // is verified and delivered, so the run's success stands untouched.
+    ...summary.labelFailures.map(([id, reason]) => `LABEL REMOVE FAILED ${id}: ${reason}`),
     ...summary.reviewSkipped.map(([id, reason]) => `REVIEW SKIP ${id}: auto-merge not performed — ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
@@ -2390,6 +2453,12 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     // — loud (guarded, stderr), never fatal.
     if (result.outcome.closeFailure !== undefined) {
       stderr.push(`issue close failed: ${result.outcome.closeFailure}`);
+    }
+    // WI-14 T3 (FR-005): the label REMOVAL's own recording, same bookkeeping
+    // posture — loud on stderr, never fatal (the PR is the deliverable) and
+    // never a reason to lose the success exit code.
+    if (result.outcome.escalationLabelFailure !== undefined) {
+      stderr.push(`harness-failed label remove failed: ${result.outcome.escalationLabelFailure}`);
     }
     // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
     // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,

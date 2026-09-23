@@ -1310,6 +1310,7 @@ describe("issue closing on merge (WI-6 T5, FR-008)", () => {
       mergedPrs: [["gh-1", "https://example/pr/fix/gh-1", "mdef456"]],
       mergeFailures: [],
       closeFailures: [],
+      labelFailures: [],
       reviewSkipped: [],
       reverted: [],
       uncanariedMerges: [],
@@ -1835,11 +1836,14 @@ function makeQueueDeps(config: QueueDepsConfig = {}) {
         throw new Error("gh: issue comment failed — network");
       }
     }),
-    // WI-14 T2 seam (FR-004): the harness-failed label add on the failed
-    // gh-sourced issue — can be made to refuse per id. Defaults to success.
-    setIssueLabel: vi.fn(async (_repoDir: string, target: NormalizedIssue, _op: "add" | "remove") => {
+    // WI-14 T2/T3 seam (FR-004/FR-005): the harness-failed label add on the
+    // failed gh-sourced issue, and its remove on a verified success — can be
+    // made to refuse per id. Defaults to success. The thrown literal names the
+    // op so a remove failure reads as a remove failure (the add literal is
+    // byte-identical to T2's).
+    setIssueLabel: vi.fn(async (_repoDir: string, target: NormalizedIssue, op: "add" | "remove") => {
       if (config.setLabelThrowsFor !== undefined && target.id === config.setLabelThrowsFor) {
-        throw new Error("gh: label add failed — network");
+        throw new Error(`gh: label ${op} failed — network`);
       }
     }),
     // WI-6 T6 seams (FR-009)
@@ -3610,5 +3614,123 @@ describe("harness-failed label add on the failure arms (WI-14 T2, FR-004)", () =
     const mergeFailed = makeQueueDeps({ issues: [escalationIssue], mergeThrowsFor: "gh-1" });
     await runQueue(queueRunInput({ profile: optedIn }), mergeFailed.deps);
     expect(mergeFailed.deps.setIssueLabel).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-14 T3: the `harness-failed` label REMOVED on verified success (FR-005).
+// The label means "currently failing" (D7), so it comes off exactly where a run
+// leaves the issue deliver-and-verified: the green PR-opened return, and the
+// merged + canary-green + issue-closed chain (beside the close). A reverted or
+// uncanaried merge is delivered-but-UNVERIFIED — the revert re-queue guard may
+// re-run the issue — so it never removes. Recording posture is the add's: a
+// throw is captured verbatim in `escalationLabelFailure` beside the already
+// earned success verdict, never retried, and both summary surfaces name it.
+// ---------------------------------------------------------------------------
+
+describe("harness-failed label removal on verified success (WI-14 T3, FR-005)", () => {
+  it("(a) green PR-opened run on a labeled gh-sourced issue: exactly one label call, op \"remove\"", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[0]).toBe("/tmp/repo");
+    // the ACQUIRED issue (rebuilt through acquisition), not the config object
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("remove");
+    // non-opted-in: the PR is the deliverable — nothing merged, nothing closed
+    expect(deps.closeIssue).not.toHaveBeenCalled();
+    expect(deps.commentOnIssue).not.toHaveBeenCalled();
+    const text = formatSummary(summary);
+    expect(text).toContain("fixed: 1");
+    expect(text).not.toContain("LABEL REMOVE FAILED");
+  });
+
+  it("(b) merged + canary-green + issue-closed chain: the remove rides beside the close", async () => {
+    const { deps } = makeQueueDeps({ issues: [escalationIssue] });
+
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), deps);
+
+    expect(deps.closeIssue).toHaveBeenCalledTimes(1);
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1);
+    const call = deps.setIssueLabel.mock.calls[0]!;
+    expect(call[1]).toMatchObject({ id: "gh-1", url: escalationIssue.url });
+    expect(call[2]).toBe("remove");
+    const text = formatSummary(summary);
+    expect(text).toContain("MERGED gh-1");
+    expect(text).not.toContain("LABEL REMOVE FAILED");
+    expect(text).not.toContain("harness-failed label add failed");
+  });
+
+  it("(c) reverted and uncanaried outcomes never remove: delivered but unverified", async () => {
+    const optedIn = { ...profile, autoMerge: true };
+
+    const reverted = makeQueueDeps({ issues: [escalationIssue], canaryNewFailureFor: "gh-1" });
+    const revertError = await runQueue(queueRunInput({ profile: optedIn }), reverted.deps).catch(
+      (e: unknown) => e,
+    );
+    expect(revertError).toBeInstanceOf(QueueAbortedError);
+    expect(formatSummary((revertError as QueueAbortedError).summary)).toContain("⚠️ REVERTED gh-1");
+    expect(reverted.deps.setIssueLabel).not.toHaveBeenCalled();
+
+    const uncanaried = makeQueueDeps({ issues: [escalationIssue], syncMainThrowsFor: "gh-1" });
+    const uncanariedError = await runQueue(queueRunInput({ profile: optedIn }), uncanaried.deps).catch(
+      (e: unknown) => e,
+    );
+    expect(uncanariedError).toBeInstanceOf(QueueAbortedError);
+    expect(formatSummary((uncanariedError as QueueAbortedError).summary)).toContain(
+      "⚠️ UNCANARIED MERGE gh-1",
+    );
+    expect(uncanaried.deps.setIssueLabel).not.toHaveBeenCalled();
+  });
+
+  it("(d) a throwing remove is recorded verbatim and never retried: the merged outcome is otherwise unchanged, both surfaces carry the line, and the run stays green", async () => {
+    const mergedInput = {
+      issue,
+      repoDir: "/tmp/repo",
+      imageName: "sandcastle-loop",
+      agent,
+      profile: { ...profile, autoMerge: true },
+    };
+    const baseline = await runSingleIssue(mergedInput, makeDeps());
+
+    const deps = makeDeps({ setLabelThrows: "gh: label remove failed — network" });
+    const outcome = await runSingleIssue(mergedInput, deps);
+
+    expect(deps.setIssueLabel).toHaveBeenCalledTimes(1); // captured, never retried
+    expect(deps.closeIssue).toHaveBeenCalledTimes(1); // the chain's own close is unaffected
+    expect(outcome.escalationLabelFailure).toBe("gh: label remove failed — network");
+    expect(outcome.merged).toEqual(baseline.merged);
+    // every other field is byte-identical to the run where the remove succeeded
+    const { escalationLabelFailure, ...rest } = outcome;
+    expect(escalationLabelFailure).toBe("gh: label remove failed — network");
+    expect(rest).toEqual(baseline);
+    // single-issue surface: loud on stderr, never fatal (the PR is the deliverable)
+    const report = formatSingleIssueResult({ kind: "run", outcome });
+    expect(report.stderr).toContain(
+      "harness-failed label remove failed: gh: label remove failed — network",
+    );
+    expect(report.exitCode).toBe(0);
+
+    // queue surface: the merged chain's remove failure gets its own loud line
+    const { deps: queueDeps } = makeQueueDeps({ issues: [escalationIssue], setLabelThrowsFor: "gh-1" });
+    const summary = await runQueue(queueRunInput({ profile: { ...profile, autoMerge: true } }), queueDeps);
+    expect(queueDeps.setIssueLabel).toHaveBeenCalledTimes(1);
+    expect(formatSummary(summary)).toContain(
+      "LABEL REMOVE FAILED gh-1: gh: label remove failed — network",
+    );
+  });
+
+  it("(e) a non-GitHub issue (no url): remove never called and the success line keeps today's shape", async () => {
+    const { deps } = makeQueueDeps({ issues: [queueIssue(1)] });
+
+    const summary = await runQueue(queueRunInput(), deps);
+
+    expect(deps.setIssueLabel).not.toHaveBeenCalled();
+    const text = formatSummary(summary);
+    expect(text).toContain("fixed: 1");
+    expect(text).not.toContain("LABEL REMOVE FAILED");
   });
 });
