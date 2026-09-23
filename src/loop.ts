@@ -207,6 +207,23 @@ export interface LoopDeps {
    * run continues.
    */
   closeIssue(repoDir: string, issue: NormalizedIssue, comment: string): Promise<void>;
+  /**
+   * WI-14 (FR-002): post an escalation comment on a gh-sourced issue
+   * (`gh issue comment <n> --body <body>`, the number parsed from the issue
+   * url). Called inline at the failure arms the moment the lane fails
+   * (FR-003/D5), never batched at run end. Best-effort at the call site:
+   * a throw is captured into the outcome's `escalationCommentFailure`,
+   * never propagated past the decided verdict, never retried.
+   */
+  commentOnIssue(repoDir: string, issue: NormalizedIssue, body: string): Promise<void>;
+  /**
+   * WI-14 (FR-004/FR-005): add/remove the `harness-failed` label on a
+   * gh-sourced issue (`gh issue edit <n> --add-label|--remove-label`).
+   * Removal is idempotent by contract: an issue not wearing the label
+   * resolves successfully. Best-effort at the call site: a throw is recorded
+   * as a summary line only.
+   */
+  setIssueLabel(repoDir: string, issue: NormalizedIssue, op: "add" | "remove"): Promise<void>;
 }
 
 export interface SingleIssueInput {
@@ -260,6 +277,37 @@ export interface LoopOutcome {
    * merged outcome, never an issue failure; the queue continues.
    */
   readonly closeFailure?: string;
+  /**
+   * WI-14 (FR-001/FR-002): set when this run ESCALATED the issue — posted the
+   * inline failure-arm comment on the gh-sourced issue (the only notification
+   * channel, D2). Carries the outcome class and the notify-handle posture so
+   * the summary surfaces can render the unified absent-handle vocabulary
+   * (D6 / WI-11/12) without touching the failure reason, which stands
+   * byte-identical. Absent on every PR-left outcome (those leave the PR as
+   * the visible artifact and never escalate) and on non-gh issues.
+   */
+  readonly escalation?: {
+    readonly outcomeClass: string;
+    /** The profile's notifyHandle at escalation time; absent = not configured (D6). */
+    readonly notifyHandle?: string;
+  };
+  /**
+   * WI-14 (FR-003): set when posting the escalation comment THREW — captured
+   * verbatim beside the already-decided verdict (the WI-11 recording posture),
+   * never retried. The outcome is otherwise unchanged; the queue's FAILED
+   * line and the single-issue report name it loudly.
+   */
+  readonly escalationCommentFailure?: string;
+  /**
+   * WI-14 (FR-004/FR-005): set when a `harness-failed` label write THREW —
+   * ADDING the label on the failed gh-sourced issue (FR-004) or REMOVING it on
+   * a verified-delivered success (FR-005). The same recording posture as
+   * `escalationCommentFailure`: captured verbatim beside the already-decided
+   * verdict, never retried. The outcome is otherwise unchanged; the queue's
+   * FAILED / `LABEL REMOVE FAILED` line and the single-issue report name it
+   * loudly.
+   */
+  readonly escalationLabelFailure?: string;
   /**
    * WI-7 (FR-003) / WI-8 (FR-001): set when a sandbox's TEARDOWN failed after
    * the suite had already decided the verdict — the canary (close() threw, or
@@ -665,6 +713,103 @@ function harnessLevelFailure(outcome: LoopOutcome): boolean {
   return outcome.failureKind === "harness";
 }
 
+/**
+ * WI-14 (FR-002): the escalation comment body — the `@<notifyHandle>` line
+ * when a handle is configured (absent → NO @ line at all, the D6 arm), then
+ * the outcome class, the failure reason BYTE-IDENTICAL to the string the
+ * outcome carries (and the summary's FAILED line repeats), and the evidence
+ * pointer: the full log is the operator's console output and the run summary
+ * repeats this reason — no persisted log URL exists to point at (plan,
+ * interpretation note 3). No log excerpts, no diagnosis, no suggested fix
+ * (FR-002 non-claims).
+ */
+function buildEscalationComment(input: { outcomeClass: string; reason: string; handle?: string }): string {
+  return [
+    ...(input.handle !== undefined ? [`@${input.handle}`] : []),
+    "Automated fix attempt failed.",
+    `Outcome: ${input.outcomeClass}`,
+    `Reason: ${input.reason}`,
+    "The full evidence is in the operator's console output for this run; the run summary repeats this reason.",
+  ].join("\n");
+}
+
+/**
+ * WI-14 (FR-001 trigger, FR-003/D5): post the escalation comment INLINE at a
+ * failure arm, at the moment the lane fails — gh-sourced issues only
+ * (`issue.url` present, the FR-002 boundary: a spec-doc/plain-list issue has
+ * no issue to comment on and degrades to the run-summary line). The verdict
+ * is already decided when this runs: the body is secrets-guarded and posted
+ * inside one try, a throw is captured verbatim and NEVER retried, and the
+ * caller spreads the returned recording beside the unchanged outcome fields
+ * (the WI-11 recording posture — the failure rides the verdict, never over it).
+ */
+async function escalateOnFailure(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+  outcomeClass: "fix-failed" | "preflight-failed",
+  reason: string,
+): Promise<Pick<LoopOutcome, "escalation" | "escalationCommentFailure" | "escalationLabelFailure">> {
+  if (input.issue.url === undefined) {
+    return {};
+  }
+  const handle = input.profile.notifyHandle;
+  const body = buildEscalationComment({ outcomeClass, reason, handle });
+  let escalationCommentFailure: string | undefined;
+  try {
+    assertNoSecrets([body], deps.env);
+    await deps.commentOnIssue(input.repoDir, input.issue, body);
+  } catch (error) {
+    escalationCommentFailure = error instanceof Error ? error.message : String(error);
+  }
+  // WI-14 T2 (FR-004): the `harness-failed` label add sits immediately beside
+  // the comment, same trigger — its OWN try, so a failed comment post never
+  // skips the label and a failed label add never touches the comment's
+  // recording. Best-effort, same shape: captured verbatim, never retried.
+  let escalationLabelFailure: string | undefined;
+  try {
+    await deps.setIssueLabel(input.repoDir, input.issue, "add");
+  } catch (error) {
+    escalationLabelFailure = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    escalation: { outcomeClass, ...(handle !== undefined ? { notifyHandle: handle } : {}) },
+    ...(escalationCommentFailure !== undefined ? { escalationCommentFailure } : {}),
+    ...(escalationLabelFailure !== undefined ? { escalationLabelFailure } : {}),
+  };
+}
+
+/**
+ * WI-14 (FR-005/D7): REMOVE the `harness-failed` label at a verified-delivered
+ * outcome — the label means "currently failing", so a run that delivers the
+ * verified fix clears it. Wired at every verified-PR-delivered return (T3b,
+ * plan interpretation note 1 amended 2026-09-23): the green PR-opened return,
+ * the merged + canary-green + issue-closed chain, and the four PR-left returns
+ * (merger-gate non-proceed, review skip, merge throw, halted sibling). Reverted
+ * and uncanaried merges are delivered-but-UNVERIFIED and never clear it.
+ * gh-sourced issues only, the same `issue.url`
+ * guard the add uses: the label is GitHub state and a spec-doc/plain-list issue
+ * has no issue to label. Same recording posture as the add — one try, a throw
+ * captured verbatim into `escalationLabelFailure` beside the already-earned
+ * success verdict, never retried, never propagated (FR-005: "a failed removal
+ * is a summary line only"). Removal is idempotent by contract: the wiring's
+ * classifier treats a missing label as success, so an issue a human already
+ * un-labeled is a no-op, not a failure.
+ */
+async function clearHarnessFailedLabel(
+  input: SingleIssueInput,
+  deps: LoopDeps,
+): Promise<{ escalationLabelFailure?: string }> {
+  if (input.issue.url === undefined) {
+    return {};
+  }
+  try {
+    await deps.setIssueLabel(input.repoDir, input.issue, "remove");
+  } catch (error) {
+    return { escalationLabelFailure: error instanceof Error ? error.message : String(error) };
+  }
+  return {};
+}
+
 export async function runSingleIssue(
   input: SingleIssueInput,
   deps: LoopDeps,
@@ -823,11 +968,19 @@ async function runSingleIssueLane(
     }
   }
   if (baselineProblem) {
+    // WI-14 (FR-001 trigger): the preflight arm escalates exactly like a fix
+    // failure — an issue failed by infrastructure still ends the run unfixed
+    // with no visible artifact on GitHub. One string variable keeps the
+    // comment's reason byte-identical to the outcome's failure; the recording
+    // never touches the harness-level verdict.
+    const failure = `Aborted before the fix run — ${baselineProblem}.`;
+    const escalation = await escalateOnFailure(input, deps, "preflight-failed", failure);
     return {
       branch,
-      failure: `Aborted before the fix run — ${baselineProblem}.`,
+      failure,
       failureKind: "harness",
       ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
+      ...escalation,
     };
   }
 
@@ -852,6 +1005,10 @@ async function runSingleIssueLane(
   // trip over it (attempt-5/6 lesson).
   const fail = async (reason: string, newFailures?: readonly string[]): Promise<LoopOutcome> => {
     await deps.deleteBranch(input.repoDir, branch);
+    // WI-14 (FR-001 trigger, FR-003/D5): escalate inline at the moment the
+    // lane fails — gh-sourced issues only; a throw is captured, never retried,
+    // and the fields below stand byte-identical (the recording rides beside).
+    const escalation = await escalateOnFailure(input, deps, "fix-failed", reason);
     return {
       branch,
       failure: reason,
@@ -860,6 +1017,7 @@ async function runSingleIssueLane(
       // WI-8 (FR-001): a green-baseline run that later fails verification
       // still carries a preflight teardown failure, if there was one.
       ...(preflightTeardown !== undefined ? { teardownFailure: preflightTeardown } : {}),
+      ...escalation,
     };
   };
 
@@ -961,7 +1119,13 @@ async function runSingleIssueLane(
       // over the sandbox's concurrency.
       const gate = await runVerifiedMergerGate(input, deps, prOutcome, prUrl);
       if (!gate.proceed) {
-        return gate.outcome;
+        // WI-14 T3b (FR-005): the gate's non-proceed outcome is a PR-left
+        // outcome — the fix IS verified and the PR stays open for a human — so
+        // the issue's `harness-failed` label comes off here. Every one of the
+        // gate's failure arms (probe throw, merger run throw, resolution failed
+        // verification, push throw) funnels through this single return, so
+        // this one call covers all four.
+        return { ...gate.outcome, ...(await clearHarnessFailedLabel(input, deps)) };
       }
       if (gate.teardownFailure !== undefined && prOutcome.teardownFailure === undefined) {
         prOutcome = { ...prOutcome, teardownFailure: gate.teardownFailure };
@@ -971,7 +1135,13 @@ async function runSingleIssueLane(
       // other outcome returns a PR'd result carrying the skip reason.
       const review = await runPreMergeReview(input, deps, prUrl);
       if (!review.approved) {
-        return { ...prOutcome, reviewSkip: review.reviewSkip };
+        // WI-14 T3b (FR-005): a review-skipped PR is a verified-delivered PR —
+        // it stays open for a human — so it is a removal site (T3 left it out).
+        return {
+          ...prOutcome,
+          reviewSkip: review.reviewSkip,
+          ...(await clearHarnessFailedLabel(input, deps)),
+        };
       }
       let mergeCommit: string;
       try {
@@ -981,7 +1151,13 @@ async function runSingleIssueLane(
         // continues — but never silently. A merge failure is not an issue
         // failure: the fix IS verified and PR'd (the queue counts it fixed).
         const reason = error instanceof Error ? error.message : String(error);
-        return { ...prOutcome, mergeFailure: `merge failed for ${prUrl}: ${reason}` };
+        // WI-14 T3b (FR-005): a failed merge still leaves a verified, delivered
+        // PR in hand — same removal site as the skips above.
+        return {
+          ...prOutcome,
+          mergeFailure: `merge failed for ${prUrl}: ${reason}`,
+          ...(await clearHarnessFailedLabel(input, deps)),
+        };
       }
 
       // WI-6 T4 (D2/D3, FR-005): the post-merge chain — sync main to the merged
@@ -998,9 +1174,14 @@ async function runSingleIssueLane(
         // queue's REVIEW SKIP surface carries the reason. Like every
         // reviewSkip string it is secrets-guarded at the summary emission
         // seam, not at construction.
+        // WI-14 T3b (FR-005): the halted sibling's open PR is its verified
+        // deliverable (the spec's stated end-state for these lanes), so its
+        // issue clears the label too — the skip is about the merge, not about
+        // the deliverable.
         return {
           ...prOutcome,
           reviewSkip: `merge skipped — run halted by ${haltedBy.id}: ${haltedBy.reason}`,
+          ...(await clearHarnessFailedLabel(input, deps)),
         };
       }
       const outcome = await mergeChain();
@@ -1010,7 +1191,12 @@ async function runSingleIssueLane(
       return outcome;
     });
   }
-  return prOutcome;
+  // WI-14 T3 (FR-005): the green PR-opened return — the fix is verified and
+  // the PR is delivered, so the issue's `harness-failed` label (if an earlier
+  // failed run put one there) comes off here. Opted-in runs never reach this
+  // return: they leave through the merge chain above, which clears the label
+  // on its canary-green arm alone.
+  return { ...prOutcome, ...(await clearHarnessFailedLabel(input, deps)) };
 }
 
 /**
@@ -1440,10 +1626,16 @@ async function runCanary(
           `${error instanceof Error ? error.message : String(error)}`;
       }
     }
+    // WI-14 T3 (FR-005): this arm is the second — and only other — place the
+    // label comes off: the fix is verified, merged, and canary-green on main,
+    // so the issue no longer wears `harness-failed`. Its own try, beside the
+    // close above; a red canary reverts instead and never reaches here.
+    const labelRemoval = await clearHarnessFailedLabel(input, deps);
     return {
       ...prOutcome,
       merged: { prUrl, mergeCommit, canaryGreen: true },
       ...(closeFailure !== undefined ? { closeFailure } : {}),
+      ...labelRemoval,
       // FR-003: the merged outcome stands; the teardown failure rides beside it.
       // WI-11 (FR-001, decision d1): the canary's teardown failure gets its OWN
       // origin-labeled field — spreading `prOutcome` keeps the early
@@ -1597,6 +1789,15 @@ export interface QueueSummary {
    */
   readonly closeFailures: [string, string][];
   /**
+   * [id, reason] — WI-14 T3 (FR-005): REMOVING the `harness-failed` label on a
+   * verified-delivered outcome failed. Like `closeFailures` this is a loud note
+   * of its own (`LABEL REMOVE FAILED` lines), never a `failed` entry — the fix
+   * is verified and delivered, the label is bookkeeping, and the queue
+   * continues. (A failed label ADD rides the FAILED line as a suffix instead:
+   * it only ever happens on a failure arm.)
+   */
+  readonly labelFailures: [string, string][];
+  /**
    * [id, reason] — WI-6 (FR-009): merges the pre-merge review pass blocked
    * (wrong / uncertain / reviewer unavailable). Mirrors `mergeFailures`: a
    * loud note of its own (`REVIEW SKIP` lines), never a `failed` entry — the
@@ -1718,6 +1919,8 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
   const mergedPrs: [string, string, string, string?][] = [];
   const mergeFailures: [string, string][] = [];
   const closeFailures: [string, string][] = [];
+  /** WI-14 T3 (FR-005): failed `harness-failed` label REMOVALS on PR'd outcomes. */
+  const labelFailures: [string, string][] = [];
   const reviewSkipped: [string, string][] = [];
   const reverted: RevertedRecord[] = [];
   const uncanariedMerges: [string, string][] = [];
@@ -1733,6 +1936,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
     mergedPrs: [...mergedPrs],
     mergeFailures: [...mergeFailures],
     closeFailures: [...closeFailures],
+    labelFailures: [...labelFailures],
     reviewSkipped: [...reviewSkipped],
     reverted: [...reverted],
     uncanariedMerges: [...uncanariedMerges],
@@ -1931,6 +2135,17 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         if (outcome.closeFailure !== undefined) {
           closeFailures.push([issue.id, outcome.closeFailure]);
         }
+        // WI-14 T3/T3b (FR-005): a failed label REMOVAL — the same loud-note
+        // shape as the close failure above. It belongs here in the PR'd branch:
+        // a removal only ever rides a verified-delivered outcome (the merged
+        // chain's canary-green arm, or one of the four PR-left returns), so
+        // every outcome carrying one has a `prUrl` and is collected here. The
+        // field itself is shared with the ADD's failure (FR-004), but that one
+        // rides a failure arm — no `prUrl` — so it falls through to the FAILED
+        // line's suffix below and never reaches this branch.
+        if (outcome.escalationLabelFailure !== undefined) {
+          labelFailures.push([issue.id, outcome.escalationLabelFailure]);
+        }
         if (outcome.reviewSkip !== undefined) {
           reviewSkipped.push([issue.id, outcome.reviewSkip]);
         }
@@ -1940,9 +2155,23 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
       // issue identically — that is a harness-level failure, not this issue's.
       // WI-8 (FR-001): a teardown failure beside the verdict rides the FAILED
       // line as a suffix — the reason itself stands untouched.
+      // WI-14 (FR-002/FR-003): so does a failed escalation-comment post, same
+      // suffix pattern; and an escalation posted WITHOUT a notify handle ends
+      // the line with the unified D6 vocabulary — the comment carried no @,
+      // so the summary is where the absent handle is stated. WI-14 T2
+      // (FR-004): a failed `harness-failed` label add rides the same suffix
+      // pattern. Reverted and
+      // uncanaried outcomes never escalate (their PR is the artifact) and
+      // render their own notify vocabulary in their own sections.
       failed.push([
         issue.id,
-        `${outcome.failure ?? "unknown failure"}${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}`,
+        `${outcome.failure ?? "unknown failure"}` +
+          `${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}` +
+          `${outcome.escalationCommentFailure !== undefined ? ` (escalation comment failed: ${outcome.escalationCommentFailure})` : ""}` +
+          `${outcome.escalationLabelFailure !== undefined ? ` (harness-failed label add failed: ${outcome.escalationLabelFailure})` : ""}` +
+          (outcome.escalation !== undefined && outcome.escalation.notifyHandle === undefined
+            ? "; notify handle not configured"
+            : ""),
       ]);
       // WI-13 T11: the shared harness-level classification — the same
       // `harnessLevelFailure` predicate the halt-setter uses, so the abort
@@ -2087,6 +2316,9 @@ export function formatSummary(summary: QueueSummary): string {
     ...summary.uncanariedMerges.map(([id, detail]) => `⚠️ UNCANARIED MERGE ${id}: ${detail}`),
     ...summary.mergeFailures.map(([id, reason]) => `MERGE FAILED ${id}: ${reason}`),
     ...summary.closeFailures.map(([id, reason]) => `ISSUE CLOSE FAILED ${id}: ${reason}`),
+    // WI-14 T3 (FR-005): the label-removal failure's own loud note — the fix
+    // is verified and delivered, so the run's success stands untouched.
+    ...summary.labelFailures.map(([id, reason]) => `LABEL REMOVE FAILED ${id}: ${reason}`),
     ...summary.reviewSkipped.map(([id, reason]) => `REVIEW SKIP ${id}: auto-merge not performed — ${reason}`),
     ...summary.failed.map(([id, reason]) => `FAILED ${id}: ${reason}`),
     ...summary.attachmentFailures.map(([id, url]) => `ATTACHMENT FAILED ${id}: ${url}`),
@@ -2253,6 +2485,12 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     if (result.outcome.closeFailure !== undefined) {
       stderr.push(`issue close failed: ${result.outcome.closeFailure}`);
     }
+    // WI-14 T3 (FR-005): the label REMOVAL's own recording, same bookkeeping
+    // posture — loud on stderr, never fatal (the PR is the deliverable) and
+    // never a reason to lose the success exit code.
+    if (result.outcome.escalationLabelFailure !== undefined) {
+      stderr.push(`harness-failed label remove failed: ${result.outcome.escalationLabelFailure}`);
+    }
     // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
     // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,
     // the run stays green.
@@ -2276,6 +2514,21 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   // never deciding the outcome that was already earned.
   if (result.outcome.teardownFailure !== undefined) {
     stderr.push(`sandbox teardown failed: ${result.outcome.teardownFailure}`);
+  }
+  // WI-14 (FR-002/FR-003): the escalation recording, same line pattern as the
+  // teardown failure above — a failed comment post is loud on stderr, never
+  // fatal; and an escalation posted WITHOUT a notify handle states the D6
+  // vocabulary here (the comment itself carried no @ line at all).
+  if (result.outcome.escalationCommentFailure !== undefined) {
+    stderr.push(`escalation comment failed: ${result.outcome.escalationCommentFailure}`);
+  }
+  // WI-14 T2 (FR-004): the label-add recording, same line pattern as the
+  // escalation-comment failure above — loud on stderr, never fatal.
+  if (result.outcome.escalationLabelFailure !== undefined) {
+    stderr.push(`harness-failed label add failed: ${result.outcome.escalationLabelFailure}`);
+  }
+  if (result.outcome.escalation !== undefined && result.outcome.escalation.notifyHandle === undefined) {
+    stderr.push("notify handle not configured");
   }
   return {
     stdout: [],
@@ -2451,6 +2704,38 @@ async function main(): Promise<void> {
         stdio: "inherit",
       });
     },
+    // WI-14 (FR-002): the escalation comment lands on the failed gh-sourced
+    // issue — same number-from-url idiom as closeIssue.
+    async commentOnIssue(dir: string, issueToComment: NormalizedIssue, body: string) {
+      execFileSync("gh", ["issue", "comment", issueNumberFromUrl(issueToComment.url), "--body", body], {
+        cwd: dir,
+        stdio: "inherit",
+      });
+    },
+    // WI-14 T2 (FR-004/FR-005): the harness-failed label add (the failure
+    // arms' call) / remove (T3's success arm) — same number-from-url idiom.
+    // The remove is idempotent by contract: a gh exit indicating the label is
+    // absent resolves successfully. Not exercised by vitest — its correctness
+    // is code review + the live runs' job (same posture as closeIssue).
+    async setIssueLabel(dir: string, issueToLabel: NormalizedIssue, op: "add" | "remove") {
+      const labelFlag = op === "add" ? "--add-label" : "--remove-label";
+      try {
+        execFileSync(
+          "gh",
+          ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, "harness-failed"],
+          { cwd: dir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
+        );
+      } catch (error) {
+        const errText =
+          `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
+        // Idempotent remove (FR-004 contract): the issue not wearing the
+        // label is a success, not a failure — whatever wording gh uses.
+        if (op === "remove" && /not found|not present|does not exist|could not remove|couldn't remove/i.test(errText)) {
+          return;
+        }
+        throw error;
+      }
+    },
     // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
     // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in
     // the object database: no checkout, no ref mutation, no working-tree
@@ -2529,6 +2814,14 @@ async function main(): Promise<void> {
     runPlan,
   };
   const allDeps = { ...deps, ...queueDeps };
+
+  // WI-14 T2 (FR-004/FR-005): gh-sourced runs label their failed issues, so
+  // the label must exist before the first failure arm tries to add it — once
+  // at run start, never per issue. Spec-doc/plain-list runs have no gh issues
+  // to label and skip this. Wiring-only, not exercised by vitest.
+  if (source === undefined) {
+    ensureHarnessFailedLabel(repoDir);
+  }
 
   if (issueArg !== undefined) {
     // Single-issue override (decision 6): no cap, no planner, dedup applies.
@@ -2635,6 +2928,35 @@ function issueNumberFromUrl(url: string | undefined): string {
     throw new Error(`cannot derive an issue number from issue url "${url ?? "(none)"}"`);
   }
   return last;
+}
+
+/**
+ * WI-14 T2 (FR-004/FR-005): create the `harness-failed` label on the target
+ * repo, once at run start for gh-sourced runs. An "already exists" failure is
+ * caught and logged — never fatal; any other create failure is a real gh
+ * problem and rethrows loudly at startup, before any spend. The logged line is
+ * a static literal (no gh output echoed), so it needs no secrets guard.
+ * fd 2 is PIPED (not inherited): gh prints "already exists" to stderr, and
+ * only a piped fd puts it in the thrown error — the same classifier shape as
+ * `setIssueLabel` above, without which this catch arm could never fire.
+ * Wiring-only, not exercised by vitest — correctness is code review + the
+ * live runs' job.
+ */
+function ensureHarnessFailedLabel(repoDir: string): void {
+  try {
+    execFileSync(
+      "gh",
+      ["label", "create", "harness-failed", "--color", "B60205", "--description", "automated fix attempt failed"],
+      { cwd: repoDir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
+    );
+  } catch (error) {
+    const errText =
+      `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
+    if (!/already exists/i.test(errText)) {
+      throw error;
+    }
+    console.log('label "harness-failed" already exists — nothing to create');
+  }
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]).endsWith("src/loop.ts");

@@ -32,11 +32,27 @@ exists; none is added.
 
 ## Interpretation notes (bounded, traced to spec)
 
-1. **Uncanaried merge does not remove the label.** FR-005 names "fix verified
-   and PR delivered, or the issue closed as fixed"; an uncanaried merge is
-   delivered-but-unverified, and the revert re-queue guard may re-run the issue.
-   Removal rides exactly two outcomes: the green-verified PR-opened return, and
-   the merged + canary-green + issue-closed chain. (FR-005 boundary.)
+1. **Removal rides every verified-PR-delivered outcome; the uncanaried merge
+   does not.** FR-005 names "fix verified and PR delivered, or the issue closed
+   as fixed"; an uncanaried merge is delivered-but-unverified, and the revert
+   re-queue guard may re-run the issue — so it keeps the label.
+   *(Amended 2026-09-23, owner — supersedes the original "rides exactly two
+   outcomes" wording, which named only the green-verified PR-opened return and
+   the merged + canary-green + issue-closed chain.)* The original narrowing was
+   raised by the T3 implementer rather than widened silently, and both the
+   specification review and the code-quality review independently read FR-005's
+   literal text as reaching further: an open PR with a fresh-sandbox-verified
+   fix is exactly FR-005's first shape, and `src/loop.ts`'s own merge-failure
+   comment states the position — "a merge failure is not an issue failure: the
+   fix IS verified and PR'd (the queue counts it fixed)". Left as-is, a label
+   set by an earlier hard-failed run would linger on a review-skipped or
+   merge-failed issue permanently (open-PR dedup blocks any later run), even
+   after a human merged it, contradicting D7's "always means currently
+   failing". Removal therefore rides the green PR-opened return, the
+   merged + canary-green + issue-closed chain, AND the verified PR-left returns:
+   the merger-gate non-proceed outcome, the review-skip return, the merge-failure
+   return, and the halted-sibling review-skip return. Reverted and uncanaried
+   outcomes still never remove. (FR-005 boundary; owner decision 2026-09-23.)
 2. **Stale-baseline spam is accepted.** A stale profile fails every lane that
    reached preflight; each failed lane escalates per FR-001 ("preflight/sandbox
    failure escalates exactly like a fix failure"). Bounded by wave size;
