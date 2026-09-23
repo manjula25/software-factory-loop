@@ -13,6 +13,7 @@ Controller log for the `implement` loop on branch `worktree-wi-14`
 | T3 | small/low | 5470a97 | bb37c0d | spec PASS / quality PASS | superseded by T3b |
 | T3b | small/low | 7df0921 | 2d95039 | spec PASS / quality PASS | **accepted** |
 | T4 | small/low | 2d95039 | e07584e | docs-accuracy PASS | **accepted** |
+| T5 | live validation | e07584e | evidence commit | — (no review; live-run evidence) | **escalation arm PROVEN live; removal half awaiting authorization** |
 
 ## T1 — escalation comment on the failure arms
 
@@ -197,3 +198,79 @@ a four-word tightening is available if ever wanted.
   creep). Recorded as a deliberate deferral to T5, not an oversight; the
   consequence is bounded to a stale label with a silent summary on an
   already-verified, delivered success.
+
+## T5 — live validation (slice 3)
+
+Evidence: `docs/work/WI-14/evidence/escalation-live-run.log` (verbatim logs).
+Target `manjula25/loop-fixtures-py`, provider `claude-via-proxy`, worktree
+`wi-14` at `e07584e`. Docker image built and smoke-tested first: **9/9 checks**.
+An untracked `.env` had to be copied into the worktree root — `main()` calls
+`loadEnv(process.cwd())`, and a git worktree carries only tracked files, so the
+provider credentials were genuinely absent there. Copied, gitignored, tree
+verified clean; **key names only were ever read, never values**.
+
+**Run 1 (issue #52) — a wasted authorization, and my error.** I seeded the
+"unfixable" issue as a conflict *between two call sites* of `initials`
+(`"J.P"` for a badge renderer vs `"J.L.P"` for a legal exporter). The agent
+*solved* it honestly: it added a `split_hyphens` parameter, kept gh-48's pinned
+default untouched, and served both call sites. The issue was fixed, reviewed,
+squash-merged (`e4a301e`), canaried green, and closed — exit 0, **no
+escalation**. A two-call-site conflict has a parameter escape hatch, so it is
+not "a described behavior no code change can satisfy". Recorded as a controller
+seeding error, not an agent or harness failure. This run consumed one of the two
+authorized loop runs.
+
+Incidental evidence run 1 did produce: it exercised the full success path with
+**no label present**, i.e. FR-005's removal as the documented idempotent no-op
+(the human-already-removed case), and it created the repo's `harness-failed`
+label via `ensureHarnessFailedLabel`'s **create** path.
+
+**Run 2 (issue #54) — the valid seed, and the escalation arm PROVEN.** Re-seeded
+so the contradiction sits on the **same no-argument call**, both sides pinned by
+permanent artifacts: `word_count("state-of-the-art")` must return `3` for the
+indexer, while `tests/fixed-issues/test_gh_32.py` — named in the issue as
+untouchable — pins `1` for that identical bare call. No parameter and no default
+can reconcile that. Both honest agent outcomes (`no commits` at `src/loop.ts:1025`
+and verification-red at `:1048`) funnel through `fail()`, so the `fix-failed`
+arm was reached either way.
+
+Observed (verbatim in the evidence file):
+- the lane **FAILED**, exit **1**, **no PR**, no leftover `fix/*` branch;
+- **exactly one** escalation comment on issue #54, carrying `@manjula25`
+  (the present-handle arm — the fixtures profile sets `notifyHandle`),
+  `Outcome: fix-failed`, the console-output pointer, and a `Reason:` **byte-identical**
+  to the console summary line `Fix run produced no commits — nothing to verify or PR.`;
+- the `harness-failed` label **added**; the issue left **OPEN**;
+- `label "harness-failed" already exists — nothing to create` at startup — the
+  **already-exists classifier of `ensureHarnessFailedLabel` fired live for the
+  first time**, which is precisely the arm whose dead-code regex was T2's
+  blocking defect (`69fddac` → `5470a97`). Before that fix this run would have
+  aborted pre-spend. The T2 defect fix is now proven against real `gh`, not just
+  a stub.
+- The agent's own log confirms the failure reason is honest: it wrote the RED
+  repro (`assert 1 == 3`), declined to change the default (it would break gh-32),
+  declined to special-case the pinned test as "test-suite gaming", declined to
+  edit gh-32, and declined to commit. It also **explicitly considered and
+  rejected** reusing its run-1 `split_hyphens` escape, because constraint #1
+  pinned the plain call — confirming the re-seed closed run 1's hole.
+
+**Still unrun: plan step 4 (the removal half).** The two authorized loop runs are
+now consumed, one of them on my invalid seed, so FR-005's *live* removal (label
+present → verified PR delivered → label gone) has not been witnessed. Its
+harness-source behavior is pinned by T3/T3b vitest; what is missing is the live
+confirmation. Put to the owner rather than spending unasked.
+
+**Adjacent observations (not WI-14 defects, recorded in the evidence file):**
+- O1: the console prints `Run succeeded but worktree has uncommitted changes`
+  immediately before `Loop finished without a PR` — "Run succeeded" refers to the
+  agent run, but the juxtaposition is misleading in an escalation context.
+  Pre-existing wording, outside WI-14's surface.
+- O2: a failed lane leaves `.sandcastle/worktrees/fix-<id>` on the *target* repo
+  when the agent left uncommitted files (branch deleted, harness prints the
+  removal command). Housekeeping only. I removed run 2's leftover after
+  capturing its single file verbatim; two **pre-existing** leftovers from
+  earlier WI runs (`fix-gh-3`, `fix-spec-titlecase-…`) were left untouched —
+  not mine to delete.
+- O3: the agent log ends `Reached max iterations (1)`, which did not cause the
+  failure (the agent had reached its conclusion) and is not named in the
+  harness's failure reason. Outside WI-14's surface.
