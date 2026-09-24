@@ -270,8 +270,10 @@ Findings it did raise:
   twelve than the baseline the repo had inlined — a 12-for-12 swap that drops `Mysterious Name` and
   `Refused Bequest` and adds three others — so bringing the skill up to what was run silently changed
   the prompts every future review in this repository is given. That is a factual change to the review
-  process, recorded at the time only as a file relocation. Still the owner's call; see the open
-  question in `delivery.md` row 9.*
+  process, recorded at the time only as a file relocation. **Put to the owner 2026-09-24 and
+  decided: keep the twelve that ran** — the swap stands and both dropped prompts stay out, since
+  restoring them would leave the committed skill describing a review nobody has run. See
+  `delivery.md` row 9.*
 - **(c) Looks implemented, is wrong:** three false claims inside `implementation-notes.md` — the
   frontmatter described as "defined **two** … promised four" (it read "along two axes"; the real
   drift was record-vs-skill), "the **six** sibling skills that ship one" (seven at `0b46971`), and
