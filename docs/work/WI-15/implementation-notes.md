@@ -693,3 +693,76 @@ silently dropped, and rather than invented into existence.
 `tsconfig.json`'s include, and there is no lint step in this repository in which to hang a check. The
 evidence above is inspection and path resolution, which is the strongest evidence this surface admits;
 a green `npm test` would say nothing about it and is not offered as though it did.
+
+### Follow-up — 2026-09-24 (same branch): the two deferred test assertions, closed with a mutation probe
+
+Pending row 5 deferred two assertions in the (g) test — a duplicate and a subsumed one — on the
+reasoning that "a `src/` edit void[s] both current verdicts." That reasoning expired when the branch
+merged: the round-2 verdicts describe `d54d8ae`, a tree that is now delivered, so a further edit
+voids nothing that was not already historical. Closed on the owner's decision.
+
+The change is two deletions, `src/loop.test.ts` only:
+
+```
+$ git diff -- src/loop.test.ts
+-    expect(outcome.escalationLabelFailure).toBe(REASON);
+-    expect(outcome.merged).toEqual(baseline.merged);
+$ git diff --quiet -- src/loop.ts && echo "src/loop.ts IDENTICAL to HEAD"
+src/loop.ts IDENTICAL to HEAD
+```
+
+**The claim to defend is "coverage preserved", not "fewer lines".** Deleting an assertion is exactly
+the move that can silently remove a guard, so it was probed rather than argued. Three probes, each
+run against the working tree and reverted immediately.
+
+**Probe 0 — was the deleted `merged` assertion vacuous?** If `baseline.merged` were `undefined`, the
+line would have compared `undefined` to `undefined` and deleting it would prove nothing either way. It
+is not:
+
+```
+$ # temporary `throw` in the (g) test, reverted immediately
+PROBE baseline.merged={"prUrl":"https://github.com/manjula25/loop-fixtures-py/pull/9","mergeCommit":"m0ckmerge","canaryGreen":true} outcome.merged={…same…} equal=true
+```
+
+**Probe 1 — the surviving duplicate still guards the field.** `src/loop.ts:831` mutated to record
+nothing on a failed read (`return {};`). The deleted line was a byte-identical duplicate of the
+survivor at the destructure, so the survivor must fail:
+
+```
+× (g) a throwing label read: the removal is skipped and the read is recorded on the existing line
+AssertionError: expected undefined to be 'could not read the issue\'s labels: g…'
+Tests  1 failed | 163 passed (164)
+```
+
+**Probe 2 — the surviving whole-outcome comparison subsumes the deleted `merged` assertion.**
+`src/loop.ts:831` mutated to also return `merged: undefined`, which the spread at the canary-green
+return places *after* `merged`, so only the read-failing run diverges:
+
+```
+× (g) a throwing label read: the removal is skipped and the read is recorded on the existing line
+AssertionError: expected { branch: 'fix/gh-1', …(2) } to deeply equal { branch: 'fix/gh-1', …(2) }
+Tests  1 failed | 163 passed (164)
+```
+
+Exactly one test failed, on the `expect(rest).toEqual(baseline)` line — so `rest` does carry `merged`
+and the comparison is a real guard on it, not a tautology.
+
+An earlier, blunter attempt is recorded because it was the wrong probe and looked like a result:
+forcing `merged: undefined` at the canary-green return itself failed **20+** tests, which shows the
+field is load-bearing across the file but says nothing about whether `rest` covers it. A probe that
+breaks everything cannot answer a question about one comparison.
+
+**Restoration and verification.** `cp /tmp/loop.ts.orig src/loop.ts`; `git diff --quiet -- src/loop.ts`
+→ identical to HEAD, and `git diff --check` is clean (an intermediate edit left four trailing spaces
+on a blank line, since removed). Then:
+
+```
+$ npm run typecheck        # exit 0, no diagnostics
+$ npx vitest run src/loop.test.ts   → 164 passed (1 file)
+$ npm test                 → 285 passed (10 files)
+```
+
+**Non-claim.** This follow-up branch now carries a `src/` change, and the four-axis verdicts in
+`review.md` describe `d54d8ae`. They do not cover it. A review of the new one-commit range is the
+owner's call and **has not been run** — the verification above is the full extent of the evidence
+behind this edit.

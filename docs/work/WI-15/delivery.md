@@ -102,9 +102,16 @@ assertion — not a compile error, as the plan predicted.
    commands in the correction note in `implementation-notes.md`.* **Pre-existing; WI-15 deepens
    existing rot rather than creating it.** Labelled in place rather than repaired (owner decision,
    2026-09-24): its header now says it is a historical artifact that must not be run.
-5. **Two deferred test assertions** — `src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
+5. **Two deferred test assertions** — **closed 2026-09-24** (owner decision) on the follow-up
+   branch: the duplicate and the subsumed assertion are both deleted, `src/loop.test.ts` only,
+   `src/loop.ts` byte-identical. *Was:* "`src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
    subsumed by `:3818`. Not corrected because a `src/` edit would void both current verdicts for a
-   cosmetic duplicate.
+   cosmetic duplicate" — a reason that stopped applying once the branch merged, since the verdicts
+   then described a delivered tree either way. Coverage-preserving, and proven rather than asserted:
+   with the read-failure path mutated to record nothing, the surviving
+   `expect(escalationLabelFailure).toBe(REASON)` still fails; with `merged` mutated to differ, the
+   surviving `expect(rest).toEqual(baseline)` still fails. Proving commands in
+   `implementation-notes.md`.
 6. **FR-006's spec text says "one line" under `## Lessons`; two landed.** Both are true and both
    concern this work item's defect classes, and `CLAUDE.md`'s standing self-learning rule asks for a
    line per caught mistake — so the spec text is one line behind the delivery rather than the
@@ -247,7 +254,7 @@ surfaced in Pending actions).
 | 2 | ~~Open the PR against `main`~~ | **done** | [PR #20](https://github.com/manjula25/software-factory-loop/pull/20) |
 | 3 | Merge | **a human reviewer** | hard constraint 1 — the harness's own repository keeps human merge regardless |
 | 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
-| 5 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
+| 5 | ~~`src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions~~ | **done** | owner chose 2026-09-24 to fix it; both lines deleted. The deferral's reason had expired — the verdicts described a delivered tree once the branch merged. Coverage proved by mutation (risk 5) |
 | 6 | ~~`canary-red-driver.ts` uncompilable~~ | **done** | owner chose (b) 2026-09-24 — labelled in place as a historical artifact; the records corrected (six missing deps, broken since WI-13, not WI-14) |
 | 7 | ~~FR-006 "one line" vs the `## Lessons` lines~~ | **done** | owner chose 2026-09-24 to leave it as is — the spec is a planning artifact and the delivery has moved past it; no edit made |
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |

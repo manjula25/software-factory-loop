@@ -3810,8 +3810,6 @@ describe("harness-failed label removal on verified success (WI-14 T3, FR-005)", 
 
     // never guessed at, never attempted (FR-003): the removal cannot be decided
     expect(deps.setIssueLabel).not.toHaveBeenCalled();
-    expect(outcome.escalationLabelFailure).toBe(REASON);
-    expect(outcome.merged).toEqual(baseline.merged);
     // every other field is byte-identical to the run whose read succeeded
     const { escalationLabelFailure, ...rest } = outcome;
     expect(escalationLabelFailure).toBe(REASON);

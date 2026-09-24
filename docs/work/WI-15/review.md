@@ -111,6 +111,9 @@ independently by two axes each, which is the strongest signal either could carry
 
 - **`src/loop.test.ts:3817` / `:3814`** — a duplicate and a subsumed assertion. A `src/` edit would
   void both current verdicts for a cosmetic duplicate; recorded as ask (j) and left to the owner.
+  **Resolved 2026-09-24** (owner decision) on the follow-up branch: both lines deleted. The verdicts
+  they would have voided already described a delivered tree once this branch merged. Coverage
+  preserved, proven by mutation rather than argued — see the note in `implementation-notes.md`.
 - **`docs/work/WI-6/evidence/canary-red-driver.ts:114`** — a `QueueLoopDeps` literal still carrying
   the two properties WI-13 retired (`runTriage`, `triage`) and missing **six** required deps added
   since (`branchConflictsWithMain`, `runMerger`, `pushBranch` — WI-13; `commentOnIssue`,
