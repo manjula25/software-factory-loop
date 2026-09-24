@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Gates run at** | `0035506` — the completion gates below were executed here |
-| **Reviewed candidate** | `5946199` — the four stage-4 review axes ran here |
-| **Corrected candidate** | the commit carrying the corrections below (docs-only) |
+| **First review candidate** | `5946199` — the four stage-4 review axes first ran here |
+| **Re-review candidate** | `d54d8ae` — all four axes re-ran here after the first corrections |
 | **Source identity** | `eaf006e` — the last commit touching `src/` |
 | **Base** | `39d1b26` (`main`) |
 | **Branch** | `worktree-wi-15`, worktree `.claude/worktrees/wi-15` |
@@ -15,13 +15,25 @@
 
 The path count moves by one because a verification record cannot count its own commit: at
 `0035506` this file did not yet exist. The range and path list are given for the gate candidate and
-for the reviewed one rather than as a single figure, so neither reads as a claim about a tree it did
-not describe.
+for the first review candidate rather than as a single figure, so neither reads as a claim about a
+tree it did not describe.
 
-**What "source identity" means here, and why it is stated separately.** Four commits follow
-`eaf006e` — the spec amendment `f988101`, the docs-hygiene fix `5bd9a8a`, the attribution fix
-`c66e268`, and the checkpoint-3 acceptance `0035506` — and none touches a `src/` path. Verified
-rather than asserted:
+**No row names a "current candidate."** A record cannot cite the commit that contains it, so such a
+row is either a placeholder or a self-reference: the first version of this table carried one, and
+the standards and complexity axes both flagged it independently at `d54d8ae`. Counts are given only
+for candidates this record can name. Every commit after `5946199` is docs-only and adds one commit
+but no new path, so re-derive the current figures rather than reading them here:
+
+```
+$ git log --oneline 39d1b26..HEAD | wc -l
+$ git diff --name-only 39d1b26...HEAD | wc -l
+```
+
+**What "source identity" means here, and why it is stated separately.** A growing run of docs-only
+commits follows `eaf006e` — beginning with the spec amendment `f988101`, the docs-hygiene fix
+`5bd9a8a`, the attribution fix `c66e268`, and the checkpoint-3 acceptance `0035506`, then the
+verification record `5946199`, the corrections `d54d8ae`, and this record's own commit — and none
+touches a `src/` path. Verified rather than asserted:
 
 ```
 $ git log -1 --format='%H %s' -- src/
@@ -81,8 +93,8 @@ assertions.
 | FR-002 | No error text is interpreted in the **removal** path | Diff-level deletion proof plus the regex sweep below (this section) | pass (diff-verified, not test-verified) |
 | FR-002 | A failed removal on a confirmed-present label is recorded verbatim, never excused | `src/loop.ts:838-842` (bare call, no classifier); test **(d)** `src/loop.test.ts:3720` — throw recorded, `setIssueLabel` called exactly once (never retried), run green | pass |
 | FR-003 | A throwing read is recorded verbatim, prefixed, and the removal skipped | `src/loop.ts:827-832` (reason `:830`, prefix `:831`); test **(g)** `src/loop.test.ts:3796` — `readLabelsThrows` → `setIssueLabel` not called, `escalationLabelFailure` equals `could not read the issue's labels: …` | pass |
-| FR-004 | One field, one line, no new vocabulary | No field added — `git diff 39d1b26...0035506 -- src/loop.ts \| grep -E '^[-+].*LoopOutcome'` is **empty**, so the interface is untouched and `escalationLabelFailure` is only ever *used* in the diff, never declared; test **(g)** asserts the read failure on the **existing** lines — `src/loop.test.ts:3821` (`harness-failed label remove failed: …`) and `:3828` (`LABEL REMOVE FAILED gh-1: …`) | pass |
-| FR-005 | One source of truth for the label name | `src/loop.ts:64` is the only non-comment occurrence of the literal in **`src/loop.ts`**; the 16 in `src/loop.test.ts` are fixture string literals, which the amended criterion excludes (full enumeration below) | pass (review-evidenced, structural) |
+| FR-004 | One field, one line, no new vocabulary | No field added — the interface body is unchanged apart from JSDoc: `diff <(git show 39d1b26:src/loop.ts \| sed -n '/^export interface LoopOutcome/,/^}/p') <(sed -n … src/loop.ts)` differs **only** in the amended comment, and `grep -c readonly` is **22** on both sides. The field is only ever *used* in the range: `git diff 39d1b26...0035506 -- src/loop.ts \| grep -E '^[-+].*escalationLabelFailure'` → **7** changed lines, all uses (one new return, three operator strings re-pointed at the constant), none a declaration. Test **(g)** asserts the read failure on the **existing** lines — `src/loop.test.ts:3821` (`harness-failed label remove failed: …`) and `:3828` (`LABEL REMOVE FAILED gh-1: …`) | pass |
+| FR-005 | One source of truth for the label name | `src/loop.ts:64` is the only non-comment occurrence of the literal in **`src/loop.ts`**; the 16 occurrences in `src/loop.test.ts` are 5 **comments** and 11 fixture/expected-output lines, both categories the amended criterion excludes (full enumeration below) | pass (review-evidenced, structural) |
 | FR-006 | Docs honesty in the same delivery | `CLAUDE.md:31` (module row) and `:159-160` (two `## Lessons` lines), both in the range; `docs/agents/workflow.md` untouched | pass (review-evidenced) |
 
 ### FR-002's absence claim — the proving sweep (ask (a))
@@ -146,7 +158,7 @@ All 29, accounted for:
 | `src/loop.ts` | `:64` | 1 | **code — the single definition** |
 | `src/loop.ts` | `:225`, `:318`, `:782`, `:800`, `:1157`, `:1228`, `:1664`, `:1826`, `:1958`, `:2198`, `:2751`, `:2985` | 12 | comment / JSDoc |
 | `src/loop.test.ts` | `:156`, `:281`, `:1857`, `:3557`, `:3652` | 5 | comment |
-| `src/loop.test.ts` | `:3563`, `:3576`, `:3614`, `:3620`, `:3631`, `:3662`, `:3695`, `:3744`, `:3792`, `:3821`, `:3846` | 11 | fixture and expected-output text |
+| `src/loop.test.ts` | `:3563`, `:3576`, `:3614`, `:3620`, `:3631`, `:3662`, `:3695`, `:3744`, `:3792`, `:3821`, `:3846` | 11 | fixture and expected-output text (8) and `describe(…)` suite titles (3 — `:3563`, `:3662`, `:3846`) |
 
 **Exactly one non-comment occurrence in `src/loop.ts`, and it is the definition at `:64`.**
 
@@ -155,10 +167,12 @@ It printed `grep -rn "harness-failed" src/` above a 14-row table whose rows were
 of `grep … | grep -vE ':\s*(\*|//)'` — the very filter the surrounding prose declared inadmissible.
 The two do not correspond: the command yields **29** lines, the table held **14**. The 15 omitted
 were 11 `src/loop.ts` comment lines and 4 `src/loop.test.ts` comment lines; the table's `:1958` row
-was itself a line that filter failed to drop. The table therefore could not have been incomplete
-whatever the tree contained — a table that cannot fail is not evidence, which is this work item's
-own defect class committed inside the record that certifies the work. The evidence-and-risk review
-at `5946199` found it. **No conclusion changes:** that reviewer re-derived the same result
+was itself a line that filter failed to drop. Nothing inside the table signalled those omissions —
+the filter's output carries no marker that it dropped anything, so as an artifact the table read as
+complete, and only running the command it printed against the tree exposes the 29-vs-14 gap. A check
+that cannot fail is not evidence: this work item's own defect class, committed inside the record that
+certifies the work. The evidence-and-risk review at `5946199` found it by running the command.
+**No conclusion changes:** that reviewer re-derived the same result
 independently from `grep -rn "harness-failed" src/loop.ts` read line by line, and the enumeration
 above is that check performed in full.
 
@@ -213,13 +227,14 @@ acceptance.
    it has not compiled since WI-14 made `setIssueLabel` required. It is outside `tsconfig.json`'s
    `include` (`["src","scripts","vitest.config.ts"]`) and was last touched by `aa6f2e0` (WI-6):
    **pre-existing, unrelated to WI-15, and surfaced to the owner rather than fixed here.**
-5. **The two current review verdicts describe `c66e268`, not this record's commit.** The
-   specification PASS and the code-quality APPROVED both apply to `c66e268`; `0035506` is
+5. **The checkpoint verdicts describe `c66e268`, and the stage-4 verdicts describe `d54d8ae`.**
+   The specification PASS and the code-quality APPROVED both apply to `c66e268`; `0035506` is
    docs-only (three narration closures and the acceptance entry, none touching `src/`). By this
-   ledger's own standard a later commit voids an earlier verdict, so the verdicts are recorded as
-   describing `c66e268` and nothing later — and the prose after them is covered by the lifecycle's
-   stage-4 `code-review` at final HEAD. This is stated rather than smoothed over because a record
-   claiming otherwise would be WI-15's own defect class.
+   ledger's own standard a later commit voids an earlier verdict, so those two are recorded as
+   describing `c66e268` and nothing later. The lifecycle's stage-4 `code-review` then ran at
+   `5946199` (three PASS, evidence/risk FAIL) and was re-run at `d54d8ae` (four PASS) — those
+   verdicts, and the corrections that postdate them, are recorded in `review.md`. This is stated
+   rather than smoothed over because a record claiming otherwise would be WI-15's own defect class.
 6. **`node_modules` is an untracked symlink in this worktree.** `.gitignore` carries
    `node_modules/` with a trailing slash, which matches real directories but not symlinks, so
    `git status --short` shows `?? node_modules`. It is not in the tree (`git ls-tree -r --name-only
@@ -228,23 +243,52 @@ acceptance.
 
 ## Corrections applied after review (2026-09-24)
 
+### Round 1 — the stage-4 review at `5946199`, and the corrections in `d54d8ae`
+
 The stage-4 review ran four axes at candidate `5946199`. Three returned PASS; the
 **evidence-and-risk-integrity axis returned FAIL** on one blocking finding — the FR-005 sweep above,
 which presented a filtered result as a hand-classified full enumeration. The conclusion was
-independently re-derived and holds, so no code changed; the corrections below are all in this
-artifact, and all four axes were re-run at the corrected candidate.
+independently re-derived and holds, so no code changed. The corrections landed in `d54d8ae`, a
+docs-only commit: **one path below is in `specification.md`, not in this artifact**, and the row for
+it is present because an earlier version of this paragraph claimed every correction was here, which
+was itself an understatement of the same kind this section exists to record.
 
 | Correction | Where | Found by |
 |---|---|---|
 | The FR-005 sweep rebuilt as a real 29-occurrence enumeration, with the false claim about it recorded rather than quietly replaced | `### FR-005's sweep` above | the evidence/risk axis (blocking) |
-| FR-005's evidence row said "the only non-comment occurrence … in `src/`"; true of `src/loop.ts`, false of all of `src/` (16 fixture literals live in `src/loop.test.ts`) | FR → evidence map | the evidence/risk axis |
+| FR-005's evidence row said "the only non-comment occurrence … in `src/`"; true of `src/loop.ts`, false of all of `src/` | FR → evidence map | the evidence/risk axis |
 | `src/loop.ts:833` cited for text spanning two lines; the `return {}` is at `:836` | FR → evidence map | the evidence/risk axis |
 | `expect(deps.setIssueLabel).not.toHaveBeenCalled()` cited at `src/loop.test.ts:3813`; it is at **`:3812`** (`:3813` is the `escalationLabelFailure` assertion) | Remaining risk 2 | the controller, from a line-numbered `grep` after deriving the pointer from a ranged `sed` |
+| The identity table's range/path counts restated per candidate, and the "Corrected candidate" row added | `## Candidate identity` | the controller, on a reviewer's observation that a single figure described no single tree |
+| `## Amendments`' enumeration completed from three edits to all five, with the authority for each named | `specification.md` (**not this file**) | the specification-fidelity axis |
 
-The last row is the same class of error as the first: a pointer produced by a looser method than the
-one claimed. It is listed separately only because the reviewer did not find it; and it is a third
+The pointer row is the same class of error as the first: a pointer produced by a looser method than
+the one claimed. It is listed separately only because the reviewer did not find it; and it is a third
 instance of the pattern this work item keeps meeting — a check that could not have failed, a filter
-that agreed for the wrong reason, and now a pointer derived from a range instead of a line.
+that agreed for the wrong reason, and a pointer derived from a range instead of a line.
+
+### Round 2 — all four axes re-run at `d54d8ae`, and the corrections below
+
+`d54d8ae` was docs-only, so all four axes reviewed the same `eaf006e` source identity and all four
+returned **PASS**; the evidence/risk axis confirmed the remedy by running the command itself (29
+lines), reproducing the filter's 14 survivors and the 15 omitted, and reproducing the RED in a
+throwaway copy (`2 failed | 162 passed (164)`, failing at the `setIssueLabel` assertion, no compile
+error). Six adjacent findings were raised, none blocking, all in this artifact:
+
+| Correction | Where | Found by |
+|---|---|---|
+| The FR-005 evidence row called all 16 `src/loop.test.ts` occurrences "fixture string literals"; 5 are comments | FR → evidence map | the evidence/risk axis; the specification-fidelity axis flagged it independently |
+| The corrections table omitted two of `d54d8ae`'s corrections (the `specification.md` enumeration and the identity-table counts) while the prose called the list complete | this section | the evidence/risk axis |
+| A sentence stated the **opposite** of this section's own finding — that the old table "could not have been incomplete", when the finding is that it *was* incomplete (14 of 29) | `### FR-005's sweep` above | the evidence/risk axis |
+| FR-004's proving command (`grep -E '^[-+].*LoopOutcome'`) could not detect a field added inside the interface body; replaced with an interface-body diff plus the field-usage grep | FR → evidence map | the evidence/risk axis |
+| The identity table's "Corrected candidate" row could not name its own commit and went stale for any later reader; rows are now given only for candidates the record can name, with the re-derivation commands | `## Candidate identity` | the complexity and standards axes, independently |
+| The 11-line fixture bucket labelled three `describe(…)` suite titles as fixture text | `### FR-005's sweep` above | the evidence/risk axis |
+
+**This round's corrections are themselves un-reviewed.** They postdate the four verdicts, exactly as
+round 1's did — a record cannot be reviewed by the round that produced it. Rather than a third full
+four-axis pass over a docs-only delta, the evidence/risk axis is asked to re-check only the rows it
+found, and its answer is recorded in `review.md` beside the four verdicts. Stated here because a
+record claiming its own corrections were reviewed would be this work item's defect class once more.
 
 ## Explicit non-claims
 
