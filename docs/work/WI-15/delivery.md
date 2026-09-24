@@ -20,9 +20,11 @@ line, no new vocabulary. The label's name is defined once as `HARNESS_FAILED_LAB
 `already exists` check on label *creation* is deliberately kept (prd decision 5) and named as the
 exception in the spec, the code comment and the `CLAUDE.md` row.
 
-**Scope:** 9 files, 1705 insertions / 57 deletions. `src/` accounts for 186 insertions / 43 deletions
-across exactly two files; the rest is the work item's mandated lifecycle records and the recorded
-`gh` probes.
+**Scope:** the pull request is `0d371ef..HEAD` — **12 files, +2527/-44** (the deviation note under
+Executed external actions explains why this is larger than the branch range). The `src/` change alone
+is **186 insertions / 43 deletions across exactly two files**; everything else is this work item's
+mandated lifecycle records, the recorded `gh` probes, and the three planning-chain inputs T0
+committed to local `main`.
 
 ## Plan artifacts
 
@@ -170,16 +172,60 @@ $ git diff --name-only 39d1b26...HEAD | wc -l
 
 ## Requested external actions
 
-**None executed. None authorized yet.** Per this repository's hard constraint 1 and the project copy
-of this skill, delivery is a pull request and nothing else — no merge, no deployment, no tracker
-transition. Awaiting the owner's explicit instruction and scope.
+**Authorized and executed:** push `worktree-wi-15` to `origin`, and open the pull request against
+`main`. The owner authorized this exact scope explicitly, before either action ran.
+
+Per this repository's hard constraint 1 and the project copy of this skill, delivery is a pull
+request and nothing else. **No merge, no deployment, no tracker transition was requested, and none
+was performed** — merging belongs to a human reviewer.
 
 ## Executed external actions and observed results
 
-**Nothing has been executed.** No push, no PR, no merge, no tracker write, no publication. `main` is
-untouched beyond the T0 planning-chain commit `39d1b26`, which was already there at the start of this
-work item. The branch has no upstream configured, which is the observable evidence that nothing was
-pushed.
+| Action | Command | Observed |
+|---|---|---|
+| Push the branch | `git push -u origin worktree-wi-15` | `* [new branch] worktree-wi-15 -> worktree-wi-15`; upstream set to `origin/worktree-wi-15` |
+| Open the PR | `gh pr create --base main --head worktree-wi-15 …` | [PR #20](https://github.com/manjula25/software-factory-loop/pull/20) |
+
+Read back from GitHub after creation, rather than taken from the create command:
+
+```
+$ gh pr view 20 --json number,state,baseRefName,headRefName,mergeable,mergeStateStatus,mergedAt,changedFiles,additions,deletions,commits
+PR #20  state=OPEN  draft=false  mergedAt=null (not merged)
+base=main  head=worktree-wi-15  mergeable=MERGEABLE  mergeState=CLEAN
+files=12  +2527 -44  commits=16
+```
+
+**`main` was not pushed and not modified.** The merge-base of `origin/main` and this branch is
+`0d371ef`, unchanged. Nothing was merged; `mergedAt` is null.
+
+### A deviation: the PR carries the T0 planning commit, which the plan intended to be already on main
+
+The plan's T0 lands the three planning-chain inputs on `main` before the branch "so a PR's diff is
+the implementation range alone." T0 did commit them — `39d1b26` is on local `main` — but it was
+**never pushed**, because this plan recorded "Not pushed — pushing is a separate, explicitly
+authorized delivery action", and no authorization for it was given until now.
+
+So the PR's range is `0d371ef..aa1d2ca` — **16 commits, 12 paths, +2527/-44** — not the
+`39d1b26..HEAD` figure of 14 commits / 10 paths that this record's earlier sections describe. The two
+extra paths are `docs/work/WI-15/prd.md` and `docs/work/WI-15/slices.md`; `specification.md` is in
+both ranges. Verified:
+
+```
+$ git merge-base origin/main HEAD
+0d371ef13c999b82dddd6c8965f7ef5979e60338
+$ git branch -r --contains 39d1b26
+  origin/worktree-wi-15           # not origin/main
+```
+
+**This is a scope deviation, not a defect or a leak.** The three inputs are legitimate WI-15
+artifacts and the PR is a valid unit of work either way. It is recorded because this record's own
+scope figures describe the branch range, and a reader comparing them to the PR's file count would
+otherwise find a discrepancy with no explanation.
+
+Resolving it would mean pushing local `main` (`39d1b26`) to `origin/main`, which would shrink the PR
+to the implementation range and would match T0's intent — **but that writes directly to the shared
+`main` branch and is a separate action requiring its own authorization.** It is listed in Pending
+actions and has **not** been done.
 
 Every `gh` command run during this work item was **read-only and against
 `manjula25/loop-fixtures-py`**, a throwaway fixtures repo — not against the harness repository, and
@@ -192,17 +238,25 @@ surfaced in Pending actions).
 
 | # | Action | Needs | Notes |
 |---|---|---|---|
-| 1 | Push `worktree-wi-15` to `origin` | explicit authorization | 14 commits, nothing pushed |
-| 2 | Open the PR against `main` | explicit authorization | body prepared below; base `39d1b26` |
+| 1 | ~~Push `worktree-wi-15` to `origin`~~ | **done** | executed with authorization; observed above |
+| 2 | ~~Open the PR against `main`~~ | **done** | [PR #20](https://github.com/manjula25/software-factory-loop/pull/20) |
 | 3 | Merge | **a human reviewer** | hard constraint 1 — the harness's own repository keeps human merge regardless |
-| 4 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
-| 5 | `canary-red-driver.ts` uncompilable | owner decision | pre-existing since WI-14 (risk 4) |
-| 6 | FR-006 "one line" vs two `## Lessons` lines | owner decision | spec text one line behind delivery (risk 6) |
-| 7 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
-| 8 | Personal-vs-project skill drift (`code-review` four-axis, `finishing-a-development-branch` missing the repo-context section) | owner decision | whether a `## Lessons` line belongs in `CLAUDE.md` or `~/.claude/CLAUDE.md` |
-| 9 | Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place) | owner decision | noted in `review.md` |
+| 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
+| 5 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
+| 6 | `canary-red-driver.ts` uncompilable | owner decision | pre-existing since WI-14 (risk 4) |
+| 7 | FR-006 "one line" vs two `## Lessons` lines | owner decision | spec text one line behind delivery (risk 6) |
+| 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
+| 9 | Personal-vs-project skill drift (`code-review` four-axis, `finishing-a-development-branch` missing the repo-context section) | owner decision | whether a `## Lessons` line belongs in `CLAUDE.md` or `~/.claude/CLAUDE.md` |
+| 10 | Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place) | owner decision | noted in `review.md` |
 
-### Prepared PR body — not sent
+### PR body as opened, then corrected
+
+The body was sent with the PR and then edited once, to fix the scope figure: the prepared version
+said "9 files, 1705 insertions / 57 deletions", which is the `39d1b26..HEAD` branch range and **not**
+the PR's range. The deviation above explains the difference. The body now states the PR's real
+figures (12 files, +2527/-44) and notes that the range includes the T0 planning commit.
+
+Original text as sent:
 
 > **WI-15 — decide the label removal from the issue's labels, not from error text**
 >
