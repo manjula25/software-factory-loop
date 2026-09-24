@@ -976,3 +976,42 @@ the first pass fixed one artifact and did not check whether the same citation ap
 
 Both are now fixed, and both are the reason the second pass re-ran every command it had printed
 rather than reading the figures off the first pass's text.
+
+## Correction — appended 2026-09-24 (third pass; this ledger is not rewritten)
+
+**8. The commit messages on this branch assert things this ledger's corrections now deny, and they
+cannot be corrected in place.** A commit message is immutable history. Nine commits sit on
+`wi-15-followup`; the following carry a claim the records have since corrected:
+
+| Commit | What its message asserts | What the records now say |
+|---|---|---|
+| `dbc2bc8` | `chore(wi-15): bring the committed code-review skill up to the four axes actually run` | The instruction was **"bring the repo's code-review up to what was run"** — the whole skill directory. "The four axes" under-describes it, and the narrowing is what made `smells.md` and `agents/openai.yaml` look like unauthorized extras. `delivery.md` row 9, `review.md` round 3 |
+| `704f443` | `docs(wi-15): correct the WI-6 driver diagnosis — six missing deps, broken since WI-13` | **Eight** missing deps. The six came from TypeScript reporting an intersection through one constituent only. `delivery.md` row 6, risk 4, `verification.md` |
+| `0cd33bb` | `docs(wi-15): write down the correction-recording rule — both behaviors, chosen by artifact` | Accurate. Listed only to show the sweep was over all nine, not just the two known-suspect ones |
+| `7f14f52`, `f912a81` | The two corrections themselves | Accurate at the time of writing |
+
+The remaining five commits — `72faee7`, `a82127b`, `0a54a66`, `0dad330` — were read against the
+current records and carry no claim those records contradict.
+
+```
+$ git log --format='%h %s' origin/main..HEAD
+f912a81 docs(wi-15): close the smell-list question — owner keeps the twelve that ran
+7f14f52 docs(wi-15): relay the owner instruction verbatim into row 9 and the round-3 scope finding
+0dad330 docs(wi-15): correct the follow-up records — wrong PR endpoint, eight deps, round-3 verdicts
+0a54a66 docs(wi-15): mark the two WI-6 requeue proofs unrunnable, line numbers re-measured
+a82127b docs(wi-15): close the pending list — merge landed, the main-push row is void
+72faee7 test(wi-15): drop the duplicate and subsumed assertions the review flagged
+0cd33bb docs(wi-15): write down the correction-recording rule — both behaviors, chosen by artifact
+dbc2bc8 chore(wi-15): bring the committed code-review skill up to the four axes actually run
+704f443 docs(wi-15): correct the WI-6 driver diagnosis — six missing deps, broken since WI-13
+```
+
+**Why this is a note and not an amend.** Rewriting `dbc2bc8` or `704f443` would change every SHA
+after them and discard the record of *when* the error was believed — which is the one thing a
+chronological ledger exists to preserve, and the reason this ledger is appended to rather than
+rewritten. The reader who reaches `dbc2bc8` by `git log` and stops there is the reader this note is
+for: without it, the commit message is the only artifact they will have seen, and it is the one
+artifact no correction can reach.
+
+Nothing in this note changes a delivered file. It exists so that "the record" and "the history"
+cannot be read as disagreeing when they are read separately.
