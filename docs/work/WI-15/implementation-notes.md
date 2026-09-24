@@ -274,7 +274,7 @@ the record the work traces to would be worse than the stale label. Recorded as a
 the delivery record.
 
 **Reversed 2026-09-24 — the stale headers were fixed, and the reversal is recorded here rather
-than smoothed.** The third specification review of this work item caught the contradiction: this
+than smoothed.** The specification review at `f988101` caught the contradiction: this
 ledger said the headers were deliberately left alone, and a later commit changed them anyway,
 with nothing recording the reversal. That is this work item's own defect class — a record making a
 claim that is not true of the tree it ships in — so the decision is left standing above and
@@ -296,9 +296,13 @@ as owner decisions.
 
 ### Checkpoint 3 — T4 (docs honesty and evidence, FR-006)
 
-**Status: specification review returned FAIL at `a11d39b`; both blocking findings and the
-missing-evidence item are fixed, and the re-review runs at the candidate named at the end of this
-entry.** Base for the range: `39d1b26`.
+**Status: not yet accepted.** Three specification reviews have run against this checkpoint — each
+verdict recorded by candidate SHA rather than by ordinal, so it can be checked: **FAIL at
+`a11d39b`** (two blocking findings and one missing-evidence item), **PASS at `f988101`** (eight
+adjacent observations and two missing-evidence items, dispositioned below), and **FAIL at
+`5bd9a8a`** (one blocking finding — an authority overclaim in this work item's own `## Amendments`,
+which is this work item's defect class committed by its controller). All are addressed; the
+verdict for the candidate closing this entry is pending. Base for the range: `39d1b26`.
 
 Commits: T1 `9c19268` → T2 `9970111` → T3 `3c0571b` → T4 `ba57d4c`, amended to `a11d39b` →
 blocker fix pass `eaf006e` → spec amendment `f988101` → docs-hygiene fix (this commit).
@@ -333,6 +337,27 @@ add, remove, membership test, and the operator-facing message text), with commen
 fixtures named as excluded; FR-002's title narrowed to the removal path; its boundary naming the
 kept exception. The owner's authority for the criterion and the controller's authority for the rest
 are recorded in the two entries above and in the spec's `## Amendments`.
+
+**The `f988101` review's findings and their dispositions — recorded here because the ledger's own
+stated reason for existing is that these outlive the session.** The review returned PASS and raised
+eight adjacent observations plus two missing-evidence items; the dispositions were the controller's,
+and they are enumerated rather than left in a session transcript:
+
+| Finding at `f988101` | Disposition |
+|---|---|
+| Adj 1 — this ledger said the stale headers were deliberately *not* fixed, then a later commit fixed them, with no reversal recorded | **Fixed** — the reversal entry above, with the original decision left standing |
+| Adj 2 — `implementation-plan.md:3` said "No implementation has begun." | **Fixed** — now names T1–T4 complete and T5 pending |
+| Adj 3 — FR-002's title restated FR-001's state-vs-text axis | **Fixed by narrowing** — the title is the original sentence scoped to the removal path |
+| Adj 4 — the `## Amendments` prose said "three operator-facing message sites" where four use the constant | **Fixed** — names the three flagged sites and the fourth (`:3011`) explicitly |
+| Adj 5 — `src/loop.test.ts:3792`'s negative assertion uses a hard-coded name, so a rename would make it pass vacuously | **Deferred deliberately** — see ask (g) below |
+| Adj 6, 7 — observations that the amended criterion is honest and is not a face-saving weakening | No action — they were observations in the controller's favour |
+| Adj 8 — `docs/work/WI-6/evidence/canary-red-driver.ts:106` lacks the now-required deps | **Deferred** — see ask (i) below |
+| ME 1 — the owner's authorization existed only in the artifact it authorized | **Addressed** — the provenance note above, with its limit stated |
+| ME 2 — the checkpoint-3 FAIL/fix/amend cycle was not recorded in this ledger | **Addressed** — this checkpoint entry |
+
+The `f988101` review also independently reproduced the evidence log's Part 3 (byte-for-byte, with a
+matching `md5sum` across three runs) and rebuilt the confound shape to confirm Part 3's
+self-correction was genuine rather than a tidy-up.
 
 **What T4 delivered.** Four files: `CLAUDE.md` (the `src/loop.ts` module-row clause + both
 `## Lessons` lines), `docs/work/WI-15/evidence/label-state-probes.log` (+130 lines),
@@ -395,10 +420,27 @@ nine blocks in two sets and the phrase means the pre-grilling five. (e) The `bui
 non-claim (prd decision 7). (f) The delivery-note items the checkpoint-2 quality review asked for
 (a read failure rendering on the removal lines though no removal was attempted; `labelFailures`'
 doc — now **fixed** in T4, so this ask narrows to the rendering behaviour alone).
+(g) **The deferred test-fixture vacuity** (adjacent 5 of the `f988101` review):
+`src/loop.test.ts:3792` asserts `not.toContain("harness-failed label remove failed:")` against a
+hard-coded name, so renaming the constant would leave that *negative* assertion passing vacuously.
+Deferred deliberately — it sits inside the amended criterion's test-fixture carve-out, and the
+sibling assertions at `:3614`, `:3620`, `:3744` and `:3821` pin the rendered text against
+hard-coded literals and would fail loudly on a rename. Recorded here because a deferral that lives
+only in a session is precisely what this ledger exists to prevent.
+(h) **FR-003's last criterion is live-only.** "the label remains on the issue and the next
+successful run attempts the removal again" (`specification.md:70-71`) cannot be shown by
+dep-injected vitest; it follows by construction from "no removal call is made", and it falls inside
+the declared no-live-run boundary. T5 must state that rather than omit it silently.
+(i) **Adjacent 8 of the `f988101` review — deferred, and verified well-founded, not merely
+asserted.** `docs/work/WI-6/evidence/canary-red-driver.ts:106` is a `QueueLoopDeps` literal with
+neither `setIssueLabel` nor `readIssueLabels`; it has been uncompilable since WI-14 made
+`setIssueLabel` required, `tsconfig.json`'s `include` (`["src","scripts","vitest.config.ts"]`) never
+covered it, and it was last touched by `aa6f2e0` (WI-6). Already recorded at `:117` above; a
+follow-up to surface at delivery, not WI-15's to fix.
 
-**Reviews: specification review first, then code-quality review** — both against **the candidate at
-HEAD** (the docs-hygiene commit closing this entry), both read-only, sequentially per the quality
-contract. Every earlier verdict is void: the `a11d39b` pair by the fix pass, and the `f988101`
-specification PASS by this commit, which changed `specification.md`, `implementation-plan.md` and
-this ledger after it was taken. The carried asks (a)–(f) remain T5's, except (b) and (c), which the
-amendment resolves by construction rather than by a scoped claim.
+**Reviews: specification review first, then code-quality review** — both against **the candidate
+that closes this entry**, both read-only, sequentially per the quality contract. Every earlier
+verdict is void: the `a11d39b` pair by the fix pass, the `f988101` specification PASS by the
+docs-hygiene commit, and the `5bd9a8a` verdict by this one. The carried asks (a)–(i) remain T5's,
+except (b), (c) and (d), which the amendment resolves by construction rather than by a scoped
+claim.

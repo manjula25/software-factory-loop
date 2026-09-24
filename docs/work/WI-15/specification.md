@@ -92,8 +92,9 @@ In force. Carried through `writing-plans` and `implement` under owner direction 
 
 ### FR-005: One source of truth for the label name
 
-- **Behavior:** The label name used to create the label, to add or remove it, and to test
-  membership is defined once, so those uses cannot drift apart.
+- **Behavior:** The label name used to create the label, to add or remove it, to test membership,
+  and to name the label to the operator in the harness's own output is defined once, so those uses
+  cannot drift apart.
 - **Source traceability:** prd.md decision 6.
 - **Slice coverage:** Slice 1.
 - **Success criteria:** a single definition supplies every use of the label name — the create,
@@ -127,8 +128,9 @@ In force. Carried through `writing-plans` and `implement` under owner direction 
   WI-15 changes no secrets-guard posture and repairs none.
 - **Evidence boundary.** The two `gh` calls themselves (the label read and the label removal)
   are subprocess wiring: not exercised by vitest, and **no live run is bought for this work
-  item** (prd.md decision 7). Their correctness rests on review plus the five recorded probe
-  commands (`docs/work/WI-15/evidence/`), and that limit is stated as a non-claim in the
+  item** (prd.md decision 7). Their correctness rests on review plus the recorded probes in
+  `docs/work/WI-15/evidence/` — nine blocks in two sets (five pre-grilling commands, four T2 shape
+  probes) plus a local `stdio` reproduction — and that limit is stated as a non-claim in the
   verification record.
 - **No new command surface.** There is no lint step in this repository and none is added; the
   authoritative command list (`docs/agents/workflow.md`) is unchanged.
@@ -143,7 +145,8 @@ None. Every decision this requirement set depends on was settled in the grilling
 
 ## Amendments
 
-**2026-09-24 — FR-005's success criterion, and FR-002's title and boundary (owner-authorized).**
+**2026-09-24 — FR-005's success criterion (owner-authorized); FR-002's title and boundary, and
+the stale status headers (the controller's own calls, on the same reasoning).**
 The specification review of the delivered implementation found FR-005's criterion — "no second
 literal of the label name remains in the source" — **unsatisfiable as written**: the label name
 legitimately survives in comments, JSDoc and the test fixtures, and stripping those would destroy
@@ -154,6 +157,12 @@ directed the criterion be amended to the uses it was always meant to cover rathe
 disagreeing with the code. FR-002's title is **narrowed**, not replaced: "anywhere in the label
 path" becomes "in the label removal path", which is the Behavior clause it already carried, and
 its boundary now names the kept create-time exception explicitly.
+
+**Authority, attributed exactly.** The owner was asked about **FR-005's criterion alone**, and
+directed it be amended. The FR-002 title and boundary change, and the correction of the stale
+status headers in this file and in `implementation-plan.md`, were the **controller's own calls**
+on the same reasoning. They are not presented here as owner decisions, and the heading above
+attributes them accordingly.
 
 **No behavioral requirement changed.** Nothing the harness does is different, and the review found
 no behavior defect in the label path. The three message sites the review flagged —
@@ -176,4 +185,5 @@ criteria ask.
 ## Approval
 
 In force. The owner carried this specification through `writing-plans` and `implement`
-(2026-09-23/24); **amended 2026-09-24** under owner direction — see Amendments above.
+(2026-09-23/24); **amended 2026-09-24** — see Amendments above for which change the owner
+authorized and which were the controller's.
