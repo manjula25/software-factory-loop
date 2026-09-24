@@ -2,7 +2,8 @@
 
 ## Status
 
-Draft — awaiting owner approval (2026-09-23).
+In force. Carried through `writing-plans` and `implement` under owner direction (2026-09-23/24);
+**amended 2026-09-24** — see Amendments below for what changed, by whose authority, and why.
 
 ## Source artifacts
 
@@ -35,7 +36,7 @@ Draft — awaiting owner approval (2026-09-23).
   present (FR-002 covers that arm). The membership test compares the label name as GitHub
   returns it; the harness creates the label itself, so the name it checks is the name it wrote.
 
-### FR-002: No subprocess error text is interpreted anywhere in the label path
+### FR-002: The label removal decides from the issue's state, not from subprocess error text
 
 - **Behavior:** The removal no longer decides whether a failure is harmless by matching phrases
   in a subprocess's error output. A failure while removing a label that the harness has
@@ -50,8 +51,11 @@ Draft — awaiting owner approval (2026-09-23).
 - **Evidence label:** Focused vitest at the public seam for the recorded-failure arm; the
   absence of error-text matching is confirmed by review of the delivered diff, not by a
   behavioral test.
-- **Boundary and errors:** The removal call itself may still fail for any reason; every such
-  failure is recorded.
+- **Boundary and errors:** This requirement governs the **removal** decision. The create-time
+  `already exists` check on label *creation* is deliberately kept (prd.md decision 5): it is a
+  narrow, single-purpose match that aborts loudly before any spend, and it is outside this
+  requirement. The removal call itself may still fail for any reason; every such failure is
+  recorded.
 - **Non-claims:** Does not claim the removal is retried (it never is, and stays unretried).
 
 ### FR-003: A failing label read is recorded, and the removal is skipped
@@ -92,8 +96,11 @@ Draft — awaiting owner approval (2026-09-23).
   membership is defined once, so those uses cannot drift apart.
 - **Source traceability:** prd.md decision 6.
 - **Slice coverage:** Slice 1.
-- **Success criteria:** a single definition supplies every use in the label path; no second
-  literal of the label name remains in the source.
+- **Success criteria:** a single definition supplies every use of the label name — the create,
+  the add, the remove, the membership test, and the operator-facing message text that names the
+  label to the operator — so no second literal of the name appears in code or in emitted output.
+  Comments, JSDoc and test fixtures are documentation and fixture text: they may name the label,
+  and are outside this criterion.
 - **Evidence label:** Review of the delivered diff.
 - **Boundary and errors:** N/A (structural).
 - **Non-claims:** This is a structural constraint, not a behavioral one — it is review-evidenced
@@ -134,6 +141,23 @@ Draft — awaiting owner approval (2026-09-23).
 None. Every decision this requirement set depends on was settled in the grilling record; no
 `[NEEDS CLARIFICATION]` marker remains.
 
+## Amendments
+
+**2026-09-24 — FR-005's success criterion, and FR-002's title and boundary (owner-authorized).**
+The specification review of the delivered implementation found FR-005's criterion — "no second
+literal of the label name remains in the source" — **unsatisfiable as written**: the label name
+legitimately survives in comments, JSDoc and the test fixtures, and stripping those would destroy
+documentation and fixture text rather than strengthen the requirement. The same review found
+FR-002's title claiming more than the delivered code does, because the create-time
+`already exists` check on label *creation* is deliberately kept (prd.md decision 5). The owner
+directed the criterion be amended to the uses it was always meant to cover rather than left
+disagreeing with the code; FR-002's title is scoped to the removal its Behavior clause already
+described, and its boundary now names the kept exception explicitly.
+
+**No behavioral requirement changed.** Nothing the harness does is different, and the review found
+no behavior defect in the label path. The delivered code already interpolates the shared constant
+at the three operator-facing message sites, which is what these criteria now ask for.
+
 ## Traceability matrix
 
 | FR | prd.md basis | Slice | Evidence |
@@ -147,4 +171,5 @@ None. Every decision this requirement set depends on was settled in the grilling
 
 ## Approval
 
-Draft — not approved. Present for the owner's approval before `writing-plans`.
+In force. The owner carried this specification through `writing-plans` and `implement`
+(2026-09-23/24); **amended 2026-09-24** under owner direction — see Amendments above.
