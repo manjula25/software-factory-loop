@@ -544,3 +544,91 @@ The forward reference two paragraphs up is therefore **fulfilled, not pending** 
 ordering caveat applies one level down: the corrections in `e12d8f4` and the record `review.md` both
 postdate the four `d54d8ae` verdicts, which `review.md` states in its own closing section rather than
 letting a reader discover it. No `src/` path moved at any point after `eaf006e`.
+
+---
+
+### Correction — 2026-09-24 (follow-up branch `wi-15-followup`): the WI-6 driver's rot is older and wider than this ledger recorded
+
+A follow-up pass **re-measured** `docs/work/WI-6/evidence/canary-red-driver.ts` rather than reading
+the claim above, and the claim was wrong on both of its particulars. What checkpoint 1 (`:121`),
+checkpoint 3 (`:370`, `:451`) and `verification.md`'s remaining risk 4 all said was:
+
+> a `QueueLoopDeps` literal carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable
+> since WI-14
+
+| Recorded | Measured |
+|---|---|
+| Two deps missing | **Six** missing |
+| Broken since WI-14 | Broken since **WI-13** (`cca5e53`) |
+
+**The six, by the work item that made each required:** `branchConflictsWithMain`, `runMerger`,
+`pushBranch` (WI-13); `commentOnIssue`, `setIssueLabel` (WI-14); `readIssueLabels` (WI-15). The file
+also still carries two properties WI-13 deleted: `runTriage` and `triage`.
+
+The missing set, re-derived by direction comparison — 19 `LoopDeps` members minus the literal's 20
+(the extra ones being `QueueDeps` members):
+
+```
+$ sed -n '/^export interface LoopDeps {/,/^}/p' src/loop.ts | grep -oE '^  (readonly )?[a-zA-Z_]+' | sed 's/readonly //' | sort -u > /tmp/a
+$ sed -n '/^const deps: QueueLoopDeps = {/,/^};/p' docs/work/WI-6/evidence/canary-red-driver.ts | grep -oE '^  (async )?[a-zA-Z_]+' | sed 's/async //' | sort -u > /tmp/b
+$ comm -23 /tmp/a /tmp/b
+  branchConflictsWithMain
+  commentOnIssue
+  pushBranch
+  readIssueLabels
+  runMerger
+  setIssueLabel
+```
+
+The date, from the deletion that broke it:
+
+```
+$ git log --oneline -S'runTriage' -- src/loop.ts | head -1
+cca5e53 feat(WI-13): planner pass wired, --triage retired with loud startup error (FR-001, FR-009)
+```
+
+Compiling the file shows only those two deleted properties:
+
+```
+$ npx tsc --noEmit --ignoreConfig --skipLibCheck --strict --target ES2022 \
+    --module NodeNext --moduleResolution NodeNext --types node \
+    docs/work/WI-6/evidence/canary-red-driver.ts
+docs/work/WI-6/evidence/canary-red-driver.ts(209,3): error TS2353: Object literal may only specify known properties, and 'runTriage' does not exist in type 'QueueLoopDeps'.
+docs/work/WI-6/evidence/canary-red-driver.ts(220,85): error TS2353: Object literal may only specify known properties, and 'triage' does not exist in type 'QueueRunInput'.
+```
+
+(Line numbers are on the delivered file. On the file as first measured, before the banner shifted
+it, the same two errors read `(201,3)` and `(212,85)` — which is why the records corrected alongside
+this note point at `:114`.)
+
+**Why the earlier reading saw only two.** TypeScript prints the *excess*-property error for an object
+literal and **suppresses** the missing-property error behind it, so the two deleted properties mask
+all six missing deps. Isolated — a literal with one excess property and every required property
+absent — the missing list does not appear at all:
+
+```
+$ npx tsc … zz-probe.ts      # const x: QueueLoopDeps = { zzz: 1 };
+zz-probe.ts(2,28): error TS2353: Object literal may only specify known properties, and 'zzz' does not exist in type 'QueueLoopDeps'.
+```
+
+The check *does* fire on this type once nothing masks it — the control for the paragraph above, so it
+is not read as "the check never runs":
+
+```
+$ npx tsc … zz-probe.ts      # const x: QueueLoopDeps = {};
+zz-probe.ts(2,7): error TS2322: Type '{}' is not assignable to type 'QueueLoopDeps'.
+  Type '{}' is missing the following properties from type 'LoopDeps': env, runFixRun, createFixSandbox, deleteBranch, and 15 more.
+```
+
+Both probes were written into `docs/work/WI-6/evidence/` so their relative imports resolve exactly as
+the driver's do, and deleted immediately; `git status` after them showed nothing but the owner's
+pre-existing modification to `docs/work/reports/harness-functionality-guide.html`.
+
+**Disposition — owner decision (b), 2026-09-24: labelled, not repaired.** The driver's header now
+opens with a `HISTORICAL ARTIFACT — NOT RUNNABLE` banner, and the three records that carried the wrong
+diagnosis are corrected in place, each noting what it said before. Repair was declined deliberately:
+compiling would mean writing six stubs for deps that did not exist when WI-6 ran, and the result would
+compile without being verified — the fixture state that run depended on is gone, so its logs cannot be
+reproduced from the driver either way. A file that looks runnable and is not is worse than one that
+says what it is. Option (c) — repair it *and* re-run it live in Docker against a re-seeded fixtures
+repo — stays open if the owner ever wants that driver back.

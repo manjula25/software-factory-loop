@@ -111,9 +111,14 @@ independently by two axes each, which is the strongest signal either could carry
 
 - **`src/loop.test.ts:3817` / `:3814`** — a duplicate and a subsumed assertion. A `src/` edit would
   void both current verdicts for a cosmetic duplicate; recorded as ask (j) and left to the owner.
-- **`docs/work/WI-6/evidence/canary-red-driver.ts:106`** — a `QueueLoopDeps` literal carrying neither
-  `setIssueLabel` nor `readIssueLabels`, uncompilable since WI-14, outside `tsconfig.json`'s include.
-  Pre-existing; WI-15 deepens existing rot rather than creating it.
+- **`docs/work/WI-6/evidence/canary-red-driver.ts:114`** — a `QueueLoopDeps` literal still carrying
+  the two properties WI-13 retired (`runTriage`, `triage`) and missing **six** required deps added
+  since (`branchConflictsWithMain`, `runMerger`, `pushBranch` — WI-13; `commentOnIssue`,
+  `setIssueLabel` — WI-14; `readIssueLabels` — WI-15), outside `tsconfig.json`'s include.
+  Pre-existing; WI-15 deepens existing rot rather than creating it. *Corrected 2026-09-24 — this
+  entry said "carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable since WI-14",
+  naming two of the six and dating the break one work item late. Proving commands in the correction
+  note in `implementation-notes.md`.*
 - **The corrections-section redundancy** (complexity recommended deleting the table and the spec
   parenthetical) — kept deliberately. Both are the audit trail for the round-1 blocking finding;
   deleting review-finding evidence to satisfy a taste axis is the wrong trade. The divergence from

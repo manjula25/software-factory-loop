@@ -197,7 +197,7 @@ acceptance.
 | (f) A read failure renders on the removal lines though no removal was attempted | **Closed** — recorded under Remaining risks, with the test that pins it |
 | (g) The deferred test-fixture vacuity at `src/loop.test.ts:3792` | **Deferred, well-founded** — see Remaining risks |
 | (h) FR-003's last criterion is live-only | **Stated, not omitted** — under Explicit non-claims |
-| (i) `docs/work/WI-6/evidence/canary-red-driver.ts:106` is uncompilable | **Deferred to the owner as a follow-up** — see Remaining risks |
+| (i) `docs/work/WI-6/evidence/canary-red-driver.ts:114` is uncompilable | **Resolved 2026-09-24** — owner chose (b): labelled in place as a historical artifact, records corrected here and in `implementation-notes.md` |
 | (j) `src/loop.test.ts:3813`/`:3817` assert the same value twice | **Deferred deliberately** — a `src/` edit would void the two current verdicts for a cosmetic duplicate |
 | (k) FR-006 asked for one `## Lessons` line and two landed | **Recorded, not scope creep** — both are true and both concern this work item's defect classes |
 
@@ -222,11 +222,16 @@ acceptance.
    remove failed: gh: label remove failed — network")` and `toContain("LABEL REMOVE FAILED gh-1:
    …")`), `:3935`, and the template-prefixed `:3821`.
 4. **Ask (i) — a pre-existing uncompilable file outside the build.** WI-6's
-   `docs/work/WI-6/evidence/canary-red-driver.ts:106` is a `QueueLoopDeps` literal carrying neither
-   `setIssueLabel` nor `readIssueLabels` (`grep -n 'setIssueLabel\|readIssueLabels'` → exit 1), so
-   it has not compiled since WI-14 made `setIssueLabel` required. It is outside `tsconfig.json`'s
-   `include` (`["src","scripts","vitest.config.ts"]`) and was last touched by `aa6f2e0` (WI-6):
-   **pre-existing, unrelated to WI-15, and surfaced to the owner rather than fixed here.**
+   `docs/work/WI-6/evidence/canary-red-driver.ts:114` is a `QueueLoopDeps` literal that still carries
+   the two properties WI-13 retired (`runTriage`, `triage`) and is missing **six** required deps
+   added since (WI-13: `branchConflictsWithMain`, `runMerger`, `pushBranch`; WI-14: `commentOnIssue`,
+   `setIssueLabel`; WI-15: `readIssueLabels`). It is outside `tsconfig.json`'s `include`
+   (`["src","scripts","vitest.config.ts"]`) and was last touched by `aa6f2e0` (WI-6): **pre-existing
+   and unrelated to WI-15.** *Corrected 2026-09-24 — this entry previously said the literal carried
+   "neither `setIssueLabel` nor `readIssueLabels`" and had "not compiled since WI-14". It carries two
+   of the six, and it broke at WI-13 (`cca5e53`), which retired `--triage`; that commit's
+   deleted-property errors are the ones a compiler prints first, and TypeScript hides the six missing
+   deps behind them. Proving commands are in the correction note in `implementation-notes.md`.*
 5. **The checkpoint verdicts describe `c66e268`, and the stage-4 verdicts describe `d54d8ae`.**
    The specification PASS and the code-quality APPROVED both apply to `c66e268`; `0035506` is
    docs-only (three narration closures and the acceptance entry, none touching `src/`). By this

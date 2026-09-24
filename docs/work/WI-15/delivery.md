@@ -93,10 +93,15 @@ assertion — not a compile error, as the plan predicted.
 3. **A deferred negative assertion** — `src/loop.test.ts:3792` asserts against a hard-coded label
    name, so a rename would leave it passing vacuously. Well-founded deferral: sibling assertions at
    `:3744`, `:3753`, `:3821` and `:3935` pin the rendered text and would fail loudly on a rename.
-4. **`docs/work/WI-6/evidence/canary-red-driver.ts:106` does not compile** — a `QueueLoopDeps`
-   literal carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable since WI-14, outside
-   `tsconfig.json`'s include, last touched by `aa6f2e0`. **Pre-existing; WI-15 deepens existing rot
-   rather than creating it**, and it is surfaced to the owner rather than fixed here.
+4. **`docs/work/WI-6/evidence/canary-red-driver.ts:114` does not compile** — a `QueueLoopDeps`
+   literal still carrying the two properties WI-13 retired (`runTriage`, `triage`) and missing
+   **six** required deps added since (WI-13: `branchConflictsWithMain`, `runMerger`, `pushBranch`;
+   WI-14: `commentOnIssue`, `setIssueLabel`; WI-15: `readIssueLabels`), outside `tsconfig.json`'s
+   include, last touched by `aa6f2e0`. **Broken since WI-13 (`cca5e53`), not WI-14.** *Corrected
+   2026-09-24 — this entry named two of the six and dated the break one work item late; proving
+   commands in the correction note in `implementation-notes.md`.* **Pre-existing; WI-15 deepens
+   existing rot rather than creating it.** Labelled in place rather than repaired (owner decision,
+   2026-09-24): its header now says it is a historical artifact that must not be run.
 5. **Two deferred test assertions** — `src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
    subsumed by `:3818`. Not corrected because a `src/` edit would void both current verdicts for a
    cosmetic duplicate.
@@ -243,7 +248,7 @@ surfaced in Pending actions).
 | 3 | Merge | **a human reviewer** | hard constraint 1 — the harness's own repository keeps human merge regardless |
 | 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
 | 5 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
-| 6 | `canary-red-driver.ts` uncompilable | owner decision | pre-existing since WI-14 (risk 4) |
+| 6 | ~~`canary-red-driver.ts` uncompilable~~ | **done** | owner chose (b) 2026-09-24 — labelled in place as a historical artifact; the records corrected (six missing deps, broken since WI-13, not WI-14) |
 | 7 | FR-006 "one line" vs two `## Lessons` lines | owner decision | spec text one line behind delivery (risk 6) |
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
 | 9 | Personal-vs-project skill drift (`code-review` four-axis, `finishing-a-development-branch` missing the repo-context section) | owner decision | whether a `## Lessons` line belongs in `CLAUDE.md` or `~/.claude/CLAUDE.md` |
