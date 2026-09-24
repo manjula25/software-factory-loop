@@ -256,9 +256,22 @@ Findings it did raise:
 
 - **(a)** Row 10's own rule is under-applied at home — risk 6 and `verification.md` entry (k) were
   not corrected in place alongside risks 4–5.
-- **(b) Not asked for:** the `smells.md` baseline was **swapped** rather than moved (row 9 asked
-  only for "the four axes actually run"); `agents/openai.yaml` is new and row 9 names no file; the
-  `CLAUDE.md` lifecycle rule adds a third normative clause beyond row 10's "keep both".
+- **(b) Not asked for:** the `smells.md` baseline was **swapped** rather than moved; `agents/openai.yaml`
+  is new; the `CLAUDE.md` lifecycle rule adds a third normative clause beyond row 10's "keep both".
+
+  *Corrected 2026-09-24 — the first two of these were relayed from this axis with the reasoning that
+  "row 9 asked only for the four axes actually run". That reasoning reads row 9, which is the
+  follow-up's own summary, rather than the owner instruction it summarizes. The instruction, verbatim
+  and dated 2026-09-24, is **"bring the repo's code-review up to what was run"** — and "what was run"
+  is the whole skill directory, of which `smells.md` and `agents/openai.yaml` are parts; the four-axis
+  `SKILL.md` references `smells.md` by path, so the file could not be omitted from a skill brought up
+  to it. Neither file is out of scope. What survives from this finding, and is the part worth keeping,
+  is the **consequence** nobody flagged at the time: the personal `smells.md` carries a different
+  twelve than the baseline the repo had inlined — a 12-for-12 swap that drops `Mysterious Name` and
+  `Refused Bequest` and adds three others — so bringing the skill up to what was run silently changed
+  the prompts every future review in this repository is given. That is a factual change to the review
+  process, recorded at the time only as a file relocation. Still the owner's call; see the open
+  question in `delivery.md` row 9.*
 - **(c) Looks implemented, is wrong:** three false claims inside `implementation-notes.md` — the
   frontmatter described as "defined **two** … promised four" (it read "along two axes"; the real
   drift was record-vs-skill), "the **six** sibling skills that ship one" (seven at `0b46971`), and
