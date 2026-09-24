@@ -249,9 +249,9 @@ surfaced in Pending actions).
 | 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
 | 5 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
 | 6 | ~~`canary-red-driver.ts` uncompilable~~ | **done** | owner chose (b) 2026-09-24 — labelled in place as a historical artifact; the records corrected (six missing deps, broken since WI-13, not WI-14) |
-| 7 | FR-006 "one line" vs two `## Lessons` lines | owner decision | spec text one line behind delivery (risk 6) |
+| 7 | ~~FR-006 "one line" vs the `## Lessons` lines~~ | **done** | owner chose 2026-09-24 to leave it as is — the spec is a planning artifact and the delivery has moved past it; no edit made |
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
-| 9 | Personal-vs-project skill drift (`code-review` four-axis, `finishing-a-development-branch` missing the repo-context section) | owner decision | whether a `## Lessons` line belongs in `CLAUDE.md` or `~/.claude/CLAUDE.md` |
+| 9 | ~~Personal-vs-project skill drift~~ | **done** | owner chose 2026-09-24 to bring the repo's `code-review` up to the four axes actually run; the other 15 shared skills left as-is. This row named two skills — re-measured, **all 16** shared skills differ. Evidence in `implementation-notes.md` |
 | 10 | Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place) | owner decision | noted in `review.md` |
 
 ### PR body as opened, then corrected

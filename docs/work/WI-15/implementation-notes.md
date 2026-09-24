@@ -632,3 +632,64 @@ compile without being verified — the fixture state that run depended on is gon
 reproduced from the driver either way. A file that looks runnable and is not is worse than one that
 says what it is. Option (c) — repair it *and* re-run it live in Docker against a re-seeded fixtures
 repo — stays open if the owner ever wants that driver back.
+
+### Follow-up — 2026-09-24 (same branch): the skill drift is wider than the pending list recorded
+
+Pending row 9 named two skills that drift between the personal `~/.claude/skills/` copies and this
+repository's committed `.claude/skills/`. Re-measured rather than read off the row, **all 16 shared
+skills differ** — the row named a sample and stated it as the extent:
+
+```
+$ comm -12 <(ls -1 ~/.claude/skills | sort) <(ls -1 .claude/skills | sort) | wc -l
+16
+$ for s in $(comm -12 …); do diff -rq ~/.claude/skills/$s .claude/skills/$s >/dev/null || echo "DIFFERS: $s"; done
+DIFFERS: code-review          DIFFERS: diagnosing-bugs       DIFFERS: domain-modeling
+DIFFERS: finishing-a-development-branch          DIFFERS: grilling        DIFFERS: handoff
+DIFFERS: implement            DIFFERS: ponytail              DIFFERS: setup-agentic-workflow
+DIFFERS: tdd                  DIFFERS: to-prd                DIFFERS: to-spec
+DIFFERS: to-tickets           DIFFERS: using-git-worktrees   DIFFERS: verification-before-completion
+DIFFERS: writing-plans
+```
+
+**Neither lineage is simply older**, which is why "16 differ" is not by itself a defect. The project
+copies carry repo-specific text the personal ones lack — the GitHub Issues tracker line, the
+spec-resolution order, `harness-prd-v2.md`, the `## Project context` section in
+`finishing-a-development-branch` (`:17`). The personal copies carry material the project ones lack —
+`smells.md`, `agents/` subagent definitions, and the fourth review axis. Two lineages that both
+moved. Tracked copies were last touched by `9830b7a` / `5c04780`, before any work item ran.
+
+**Why this mattered enough to act on.** WI-15's stage-4 review ran **four** axes. The repository's
+committed `code-review` defined **two**, and its frontmatter promised four — a hybrid whose
+description contradicted its own body. So `review.md` documented a process a teammate reading
+`.claude/skills/` could not reproduce; they would have run a narrower review and had no way to know
+the record described a wider one.
+
+**Action taken — owner decision, 2026-09-24: bring the committed copy up to what was actually run.**
+`code-review/SKILL.md`'s body is now four-axis, keeping every repo-specific adaptation it already
+carried and the house section format. Two files added alongside it: `smells.md` (the reference the
+four-axis skill points at, which the two-axis body had inlined instead) and `agents/openai.yaml`
+(matching the six sibling skills that ship one). The other **15 shared skills were left alone** —
+repo-adapted text versus personal extra tooling is a legitimate difference, not rot, and the owner
+scoped this to the one skill whose divergence made a record unreproducible.
+
+Verified after the edit — all four axes named, house headings intact, no reference dangling:
+
+```
+$ for a in "repository standards" "specification fidelity" "evidence and risk integrity" "unnecessary complexity"; do
+    echo "$(grep -ic "$a" .claude/skills/code-review/SKILL.md)  $a"; done
+3  repository standards      1  specification fidelity
+1  evidence and risk integrity      2  unnecessary complexity
+$ grep -n '^## ' .claude/skills/code-review/SKILL.md      # Required inputs … Next recommended skill, 8 sections
+```
+
+**One dangling optional reference, kept deliberately.** `.claude/skills/code-review/SKILL.md` lists
+`docs/agents/project-policy.md` under *Optional inputs*; this repository does not have that file
+(only `issue-tracker.md` and `workflow.md`). It is kept because the four-axis skill that ran names
+it, `ponytail` names it too, and it is a template `setup-agentic-workflow` ships
+(`templates/project-policy.md`) that this repo simply never instantiated. Flagged rather than
+silently dropped, and rather than invented into existence.
+
+**Non-claim.** No test or typecheck covers `.claude/skills/` — it is outside `src/` and outside
+`tsconfig.json`'s include, and there is no lint step in this repository in which to hang a check. The
+evidence above is inspection and path resolution, which is the strongest evidence this surface admits;
+a green `npm test` would say nothing about it and is not offered as though it did.
