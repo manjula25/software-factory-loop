@@ -9,13 +9,18 @@ re-run (Part 2 says why). Later probes are appended by the task that runs them, 
 command, exit code and verbatim output; where the source record summarizes instead of printing,
 the gap is labelled rather than filled in.
 
-The file holds **nine** probe blocks in **two** sets:
+The file holds **nine** gh probe blocks in **two** sets, plus **one local reproduction** (Part 3,
+two arms):
 
 - **Part 1 — the T2 shape probes: four blocks (1, 2, 3, 3b).** They establish the JSON *shape*
   the `readIssueLabels` parse is written against, and were run during T2.
 - **Part 2 — the pre-grilling probes: five blocks.** They were run before grilling and are
   **copied verbatim** from `docs/work/WI-15/prd.md` § "Facts verified before grilling
   (2026-09-23)"; none was re-run for this file.
+- **Part 3 — the local `execFileSync` stdio reproduction: two arms (a, b).** It makes **no
+  gh call** and touches **no sandbox** — it spawns local `node` children only. It is the durable
+  evidence for the two stdio claims the wiring comments rest on, which the adjacent review found
+  recorded nowhere.
 
 **Which "five" the specification means.** The specification's evidence boundary names "the five
 recorded probe commands" — that phrase refers to the **pre-grilling** set (Part 2). The T2 shape
@@ -210,3 +215,198 @@ Environment, quoted from the record's preamble (which also states the authorizat
   grilling probe 2 really was "label in repo, not on the issue" — not "label deleted". That
   distinction is what makes probe 2's silent success the correct-outcome case rather than a
   masking of the label-deleted case.
+
+---
+
+# Part 3 — the local `execFileSync` stdio reproduction (2026-09-24)
+
+**This is a local reproduction: no GitHub call, no sandbox, no `gh` binary.** It spawns local
+`node` children only, from `/tmp`; no repository file is touched and no script is left in the
+tree. It exists because two load-bearing claims in the `src/loop.ts` wiring comments — that
+`stdio: ["ignore", "inherit", "pipe"]` makes `execFileSync` return `null`, and that piping fd 2 is
+what puts the subprocess's stderr into the thrown error's `message` — were, until this block,
+asserted in prose with no recorded reproduction anywhere (adjacent finding 3 of checkpoint 1's
+spec review, ledger line ~119). This block is that reproduction run for real.
+
+Environment: **Node v24.18.0** (`node --version`, printed by the script itself as its first line
+and independently by the invoking shell).
+
+## The children
+
+Two real spawned processes, written to `/tmp` as throwaway files — the failing child's stderr
+text appears nowhere in its own argv (its argv is just the script path), so the "message contains
+the stderr text" check below is able to fail. That detail is deliberate; see the confound note.
+
+`/tmp/wi15-echo-stdout.mjs`:
+
+```js
+console.log("STDOUT-PAYLOAD");
+```
+
+`/tmp/wi15-fail-stderr.mjs`:
+
+```js
+console.error("BOOM-STDERR");
+process.exit(3);
+```
+
+## The reproduction script
+
+`/tmp/wi15-stdio-repro.mjs`, run from `/tmp`:
+
+```js
+import { execFileSync } from "node:child_process";
+
+const STDOUT_CHILD = "/tmp/wi15-echo-stdout.mjs";
+const FAIL_CHILD = "/tmp/wi15-fail-stderr.mjs";
+
+console.log("node:", process.version);
+
+// (a) stdout inherited vs stdout piped — the stdio the read seam was wired with
+//     first, versus the one it ships with. `encoding: "utf8"` mirrors the wiring.
+const viaInherit = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "inherit", "pipe"],
+  encoding: "utf8",
+});
+const viaPipe = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "pipe", "pipe"],
+  encoding: "utf8",
+});
+console.log("(a) stdio inherit stdout -> value:", JSON.stringify(viaInherit), "| typeof:", typeof viaInherit);
+console.log("(a) stdio pipe    stdout -> value:", JSON.stringify(viaPipe), "| typeof:", typeof viaPipe);
+
+// The same call with no `encoding`, for completeness: the piped return is a Buffer
+// (JSON.parse still accepts it; the value is not null either way).
+const viaPipeNoEncoding = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "pipe", "pipe"],
+});
+console.log("(a) pipe, no encoding -> value:", JSON.stringify(viaPipeNoEncoding), "| typeof:", typeof viaPipeNoEncoding);
+
+try {
+  const parsed = JSON.parse(viaInherit);
+  console.log("(a) JSON.parse(inherit return) ->", JSON.stringify(parsed));
+  console.log("(a) parsed.labels ->", JSON.stringify(parsed.labels));
+} catch (err) {
+  console.log("(a) JSON.parse(inherit return).labels THREW:", err.constructor.name + ": " + err.message);
+}
+
+// (b) the failing child, stderr piped (the wiring) — the load-bearing arm.
+try {
+  execFileSync(process.execPath, [FAIL_CHILD], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+  console.log("(b) fd 2 piped -> no throw (unexpected)");
+} catch (err) {
+  console.log("(b) fd 2 piped -> threw:", err.constructor.name, "| err.status:", err.status);
+  console.log("(b) fd 2 piped -> err.stderr:", JSON.stringify(err.stderr));
+  console.log("(b) fd 2 piped -> err.message contains BOOM-STDERR:", err.message.includes("BOOM-STDERR"));
+  console.log("(b) fd 2 piped -> err.message:", JSON.stringify(err.message));
+}
+
+// (b2) contrast — the same child with fd 2 ignored and with fd 2 inherited.
+for (const fd2 of ["ignore", "inherit"]) {
+  try {
+    execFileSync(process.execPath, [FAIL_CHILD], { stdio: ["ignore", "pipe", fd2], encoding: "utf8" });
+    console.log(`(b2) fd 2 ${fd2} -> no throw (unexpected)`);
+  } catch (err) {
+    console.log(`(b2) fd 2 ${fd2} -> err.stderr: ${JSON.stringify(err.stderr)}`);
+    console.log(`(b2) fd 2 ${fd2} -> err.message contains BOOM-STDERR: ${err.message.includes("BOOM-STDERR")}`);
+    console.log(`(b2) fd 2 ${fd2} -> err.message: ${JSON.stringify(err.message)}`);
+  }
+}
+```
+
+Command:
+
+```
+cd /tmp && node /tmp/wi15-stdio-repro.mjs; echo "--- exit=$? ---"
+```
+
+Exit code: the script exits `0`; the shell's marker line prints `--- exit=0 ---`. (The child's
+non-zero status is caught by the reproduction and shown as `err.status: 3`, not propagated.)
+
+Verbatim output:
+
+```
+node: v24.18.0
+STDOUT-PAYLOAD
+(a) stdio inherit stdout -> value: null | typeof: object
+(a) stdio pipe    stdout -> value: "STDOUT-PAYLOAD\n" | typeof: string
+(a) pipe, no encoding -> value: {"type":"Buffer","data":[83,84,68,79,85,84,45,80,65,89,76,79,65,68,10]} | typeof: object
+(a) JSON.parse(inherit return) -> null
+(a) JSON.parse(inherit return).labels THREW: TypeError: Cannot read properties of null (reading 'labels')
+(b) fd 2 piped -> threw: Error | err.status: 3
+(b) fd 2 piped -> err.stderr: "BOOM-STDERR\n"
+(b) fd 2 piped -> err.message contains BOOM-STDERR: true
+(b) fd 2 piped -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs\nBOOM-STDERR\n"
+(b2) fd 2 ignore -> err.stderr: null
+(b2) fd 2 ignore -> err.message contains BOOM-STDERR: false
+(b2) fd 2 ignore -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs"
+BOOM-STDERR
+(b2) fd 2 inherit -> err.stderr: null
+(b2) fd 2 inherit -> err.message contains BOOM-STDERR: false
+(b2) fd 2 inherit -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs"
+--- exit=0 ---
+```
+
+**About the two bare lines.** `STDOUT-PAYLOAD` (after the `node:` line) and `BOOM-STDERR` (before
+the `fd 2 inherit` group) carry no `(a)`/`(b)` prefix because they are the **children's own
+writes**, going straight to the invoking terminal under the `inherit` arms — that is precisely
+what `inherit` means, and it is why neither appears in a return value or a caught error. Their
+**position** in the interleaving is timing-dependent, so this block does not claim it; the
+parent's own lines (every line with an `(a)`/`(b)`/`(b2)` prefix) were checked for stability
+first and are byte-identical across three consecutive runs (identical `md5sum` of the filtered
+output). The recorded block above is the real run, transcribed, not a reordered tidying of it.
+
+## Arm (a) — the `inherit`-stdout trap
+
+Both claims about the read seam's original stdio are confirmed on this Node:
+
+- `stdio: ["ignore", "inherit", "pipe"]` → the return value is **`null`** (`typeof: object`
+  because `typeof null === "object"`; `JSON.stringify` prints `null`). The stdout went to the
+  terminal instead — the bare `STDOUT-PAYLOAD` line.
+- `stdio: ["ignore", "pipe", "pipe"]` **with the wiring's `encoding: "utf8"`** → the return value
+  is the stdout **string** `"STDOUT-PAYLOAD\n"`.
+- `JSON.parse(null)` → `null`, and the subsequent `.labels` read throws
+  **`TypeError: Cannot read properties of null (reading 'labels')`** — i.e. on every call, which
+  is the FR-001 defeat the checkpoint-1 spec review found and the reason the shipped wiring pipes
+  stdout.
+
+One nuance the record keeps rather than smooths: **`encoding` is doing work in that second claim.**
+Without it, the piped return is a `Buffer` (`{"type":"Buffer","data":[…]}`, the third `(a)` line),
+**not** a string — the "returns the stdout string" claim is true of the shipped call *because* it
+passes `encoding: "utf8"`, as `src/loop.ts:2786` does. The defect the claim is about does not
+depend on this: the `inherit` arm returns `null` either way, and `JSON.parse` accepts both the
+string and the Buffer, so the shipper's parse is correct while the un-encoded variant would also
+have worked. Recorded because the difference is real and a future reader should not take
+"returns a string" as unconditional.
+
+## Arm (b) — fd 2 piped, and why the recorded reason is useful
+
+Confirmed: with `stdio: ["ignore","pipe","pipe"]`, a child that writes to stderr and exits `3`
+throws an `Error` whose **`message` contains that stderr text** (`err.message` ends
+`…/tmp/wi15-fail-stderr.mjs\nBOOM-STDERR\n`), and `err.stderr` carries it too. That is the
+mechanism by which the removal path's recorded reason (`harness-failed label remove failed:
+<reason>`) is the subprocess's own words rather than a bare exit status.
+
+The contrast arms make the mechanism **attributable** rather than merely co-observed, which is
+what "piping fd 2 is *what puts* the text there" requires:
+
+| fd 2 | `err.stderr` | `err.message` contains `BOOM-STDERR` |
+|---|---|---|
+| `"pipe"` (shipped) | `"BOOM-STDERR\n"` | **true** |
+| `"ignore"` | `null` | **false** |
+| `"inherit"` | `null` | **false** |
+
+With `ignore` the text is dropped; with `inherit` it reaches the operator's console (the bare
+`BOOM-STDERR` line) but **not** the thrown error. Both claims in the wiring comments therefore
+hold as written, on this Node, observed rather than assumed.
+
+**The confound this reproduction had to shed, recorded because it is the work item's own defect
+class.** The first version of this probe passed the failing child as
+`node -e 'console.error("BOOM-STDERR"); process.exit(3)'` and asked whether the message contained
+`BOOM-STDERR`. It "passed" for the `fd 2 ignore` case too — because Node's `Command failed: …`
+message **echoes the child's argv**, and the script text containing `BOOM-STDERR` *was* the argv.
+The check could not fail; its result was guaranteed rather than informative, exactly the vacuous-
+evidence trap already under `CLAUDE.md`'s `## Lessons`. Moving the child into a script file (so
+argv is just a path) is what made the contrast real, and the arms above are the re-run after that
+correction. Without the `(b2)` contrast, the original check would have "confirmed" a mechanism it
+had never tested.

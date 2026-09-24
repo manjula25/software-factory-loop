@@ -2204,7 +2204,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         `${outcome.failure ?? "unknown failure"}` +
           `${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}` +
           `${outcome.escalationCommentFailure !== undefined ? ` (escalation comment failed: ${outcome.escalationCommentFailure})` : ""}` +
-          `${outcome.escalationLabelFailure !== undefined ? ` (harness-failed label add failed: ${outcome.escalationLabelFailure})` : ""}` +
+          `${outcome.escalationLabelFailure !== undefined ? ` (${HARNESS_FAILED_LABEL} label add failed: ${outcome.escalationLabelFailure})` : ""}` +
           (outcome.escalation !== undefined && outcome.escalation.notifyHandle === undefined
             ? "; notify handle not configured"
             : ""),
@@ -2525,7 +2525,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     // posture — loud on stderr, never fatal (the PR is the deliverable) and
     // never a reason to lose the success exit code.
     if (result.outcome.escalationLabelFailure !== undefined) {
-      stderr.push(`harness-failed label remove failed: ${result.outcome.escalationLabelFailure}`);
+      stderr.push(`${HARNESS_FAILED_LABEL} label remove failed: ${result.outcome.escalationLabelFailure}`);
     }
     // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
     // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,
@@ -2561,7 +2561,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   // WI-14 T2 (FR-004): the label-add recording, same line pattern as the
   // escalation-comment failure above — loud on stderr, never fatal.
   if (result.outcome.escalationLabelFailure !== undefined) {
-    stderr.push(`harness-failed label add failed: ${result.outcome.escalationLabelFailure}`);
+    stderr.push(`${HARNESS_FAILED_LABEL} label add failed: ${result.outcome.escalationLabelFailure}`);
   }
   if (result.outcome.escalation !== undefined && result.outcome.escalation.notifyHandle === undefined) {
     stderr.push("notify handle not configured");

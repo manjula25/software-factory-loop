@@ -101,7 +101,7 @@ both green.**
   copied `setIssueLabel`'s stdio line verbatim. The implementer executed the brief faithfully.
 - **Not changed, deliberately:** FR-005 read strictly ("no second literal") holds for the
   label-path argument and console sites; the name also survives inside operator-facing message
-  text (`src/loop.ts:2184`, `:2505`, `:2541`) and JSDoc, where FR-004 freezes the wording and T1's
+  text (`src/loop.ts:2207`, `:2528`, `:2564`) and JSDoc, where FR-004 freezes the wording and T1's
   scope was correct. `readLabels` / `readLabelsThrows` are declared and unused until T3, as the
   plan intends.
 
