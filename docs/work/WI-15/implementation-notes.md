@@ -832,3 +832,147 @@ that no longer works. So nothing was removed:
 
 Left alone deliberately: `delivery.md:46` and `implementation-notes.md:327`/`:350` describe what the
 drivers did as *history* without instructing anyone to run them, so they are accurate as written.
+
+## Correction — appended 2026-09-24 (this ledger is not rewritten)
+
+The follow-up review's specification-fidelity axis found **two claims above that are false**, not
+merely stale, and one scope change the record never named. They stay standing where they were
+written, because this file's job is to record what was believed at each checkpoint; the corrections
+follow here, per the rule this same branch writes into `CLAUDE.md` (standing claims corrected in
+place, the chronological ledger appended to).
+
+**1. The claim about the committed `code-review` frontmatter is wrong on both halves.** Lines
+661-665 say the committed skill "defined **two**, and its frontmatter promised four — a hybrid whose
+description contradicted its own body." Measured at the merge commit:
+
+```
+$ git show 0b46971:.claude/skills/code-review/SKILL.md | sed -n '3p'
+description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards …
+$ git show 0b46971:.claude/skills/code-review/SKILL.md | grep -c four
+0
+```
+
+The frontmatter said **two axes**; it never promised four, and there was no hybrid — description and
+body agreed. What actually drifted was **the record against the skill**: `review.md` documents four
+axes having run while the committed skill defined two. That is still the real defect, and still why
+row 9 was worth acting on. The sentence simply misdescribes the artifact — and its error shape is
+the one this work item keeps meeting: attributing to one file what was measured about a different
+pairing.
+
+**2. "six sibling skills" is wrong; seven shipped one at the merge.**
+
+```
+$ git ls-tree -r --name-only 0b46971 .claude/skills | grep -c 'agents/openai.yaml'
+7
+```
+
+Line 671 says "matching the six sibling skills that ship one". Seven did at `0b46971` —
+`finishing-a-development-branch`, `setup-agentic-workflow`, `to-spec`, `to-tickets`,
+`using-git-worktrees`, `verification-before-completion`, `writing-plans` — and with `code-review`
+added, eight do now.
+
+**3. An unrecorded scope change: the smell baseline was swapped, not shrunk.** Line 669 calls
+`smells.md` "the reference the four-axis skill points at, which the two-axis body had inlined
+instead". It is more than a relocation. The inlined baseline named twelve Fowler smells, each with a
+*what it is → how to fix* clause; the personal `smells.md` carries twelve different, shorter prompts.
+Net effect — `Mysterious Name` and `Refused Bequest` are no longer named, while `Long parameter
+list`, `Parallel inheritance hierarchies` and `Comments compensating for unclear structure` are.
+Twelve for twelve, so the complexity axis read it as "a strict shrink" and the specification axis
+read it as two smells lost; both are describing the same swap from opposite ends and neither
+description is complete. Row 9's authority covered **the axes**, not the smell set, so this is a
+scope change that no requirement asked for. Recorded, not corrected: the resolution is the owner's
+call, and it changes what every future review in this repository is prompted by.
+
+**Also corrected in this pass, in place rather than here.** The same review's standards axis found
+the range writing down the standing-claim rule and then not applying it to three artifacts the rule
+names by title — `delivery.md`, `review.md`, `verification.md` each carried claims this branch had
+falsified (source identity `eaf006e`, "every later commit is docs-only", `never pushed`, "no merge
+was performed"). Those are standing claims, so they were corrected where they stood, each carrying
+the command that proves the new figure. This ledger is the one artifact of the four that was left
+standing — deliberately.
+## Correction — appended 2026-09-24 (second pass; this ledger is not rewritten)
+
+The first follow-up pass corrected four claims. Re-measuring the corrected artifacts found three more
+errors, plus two defects that the first pass introduced. All are recorded here; the standing claims
+they touch (`delivery.md`, `review.md`, `verification.md`) were corrected in place.
+
+**4. The PR's range ended at the wrong commit.** The records pinned PR #20 at `0d371ef..aa1d2ca` —
+"16 commits, 12 paths, +2527/-44". `aa1d2ca` is not the PR's head. The delivery-actions commit
+`cd6e547` was pushed on top of it, so the merged PR is **17 commits, 12 paths, +2581/-44**:
+
+```
+$ git ls-remote origin 'refs/pull/20/head'
+cd6e5474576c5b6436c292bf57f47f92cf52d2e9	refs/pull/20/head
+$ git diff --shortstat 0d371ef..aa1d2ca
+ 12 files changed, 2527 insertions(+), 44 deletions(-)
+$ git diff --shortstat 0d371ef..cd6e547
+ 12 files changed, 2581 insertions(+), 44 deletions(-)
+$ git rev-list --count 0d371ef..cd6e547
+17
+```
+
+2527 + 54 = 2581, and the 54 lines are `cd6e547`'s own additions to `delivery.md`. This is why the
+record appeared to disagree with the GitHub API, which reported `additions: 2581` for PR #20 — checked
+with `gh pr view 20 --json additions,deletions,changedFiles`. The instinct to reconcile the two as an
+unexplained discrepancy was wrong: GitHub was right and the record had named a commit that is not the
+PR. The quoted `gh pr view` read-back in §Executed stays verbatim, because it is a faithful snapshot
+of the PR *as created* — at `aa1d2ca`, 16 commits — and it is labelled as such now.
+
+**5. The missing-dep count is eight, not six — and not seven either.** `704f443` corrected the driver's
+diagnosis to "six missing deps". Six is what TypeScript prints: an intersection-type failure is
+reported through **one constituent only**, and the list is truncated ("…and 2 more"), so the compiler
+never sees `QueueDeps`' `refreshRemoteRefs` or the inline `runPlan`. Enumerating every constituent's
+required members and diffing them against the literal's keys gives eight:
+
+```
+$ sed -n '/^export interface LoopDeps/,/^}/p' src/loop.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u   # 19
+$ sed -n '/^export interface QueueDeps/,/^}/p' src/queue.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u   # 7
+$ sed -n '114,212p' docs/work/WI-6/evidence/canary-red-driver.ts \
+    | grep -oP '^\s{2}(?:async\s+)?\K[a-zA-Z_]+(?=\s*[(:,])' | sort -u              # 20 present
+$ comm -23 <(cat loopdeps.txt queuedeps.txt <(printf 'runPlan\n') | sort -u) present.txt
+branchConflictsWithMain
+commentOnIssue
+pushBranch
+readIssueLabels
+refreshRemoteRefs
+runMerger
+runPlan
+setIssueLabel
+```
+
+*The first attempt at this command was wrong and is recorded because it nearly became evidence.* It
+matched member declarations with `^\s{2}[a-zA-Z_]+`, which captures `async` and `readonly` as names
+and the real member as a following token — so `deleteBranch`, plainly present in the literal as
+`async deleteBranch(repoDir, branchToDelete)`, was reported **absent**. The corrected pattern uses
+`(?:readonly\s+|async\s+)?\K` to skip modifiers. A command whose output contradicts what is visibly
+in the file is not evidence of anything.
+
+**6. Two line-number citations in `verification.md` were stale.** `:3935` and `:3821` referred to the
+pre-deletion tree. `72faee7` removed two assertions at `:3814`/`:3817`, moving everything below the
+cut up by two:
+
+```
+$ sed -n '3819p;3933p' src/loop.test.ts
+    expect(report.stderr).toContain(`harness-failed label remove failed: ${REASON}`);
+    expect(text).toContain("LABEL REMOVE FAILED gh-1: gh: label remove failed — network");
+```
+
+Corrected to `:3933` and `:3819`. This is the same drift already corrected in `delivery.md` risk 3 —
+the first pass fixed one artifact and did not check whether the same citation appeared in the other.
+
+**7. Two defects introduced by the first correction pass itself.**
+
+- **A printed command whose output no command produces.** The §Branch and base correction printed
+  `git branch -r --contains 39d1b26` → `origin/worktree-wi-15`. That line was copied from an earlier
+  section of the record instead of re-run. The real output is `origin/HEAD -> origin/main` and
+  `origin/main`: the branch was deleted from the remote when PR #20 merged. This is the exact defect
+  class the work item exists to remove, committed inside the correction written to remove it.
+- **A table split in two.** The same correction inserted its prose into the middle of §Branch and
+  base's six-row table, orphaning the `Status` row below the notes. `git show HEAD:docs/work/WI-15/delivery.md`
+  shows the committed section was a six-row table and nothing else, so the breakage was introduced
+  here, not inherited.
+
+Both are now fixed, and both are the reason the second pass re-ran every command it had printed
+rather than reading the figures off the first pass's text.

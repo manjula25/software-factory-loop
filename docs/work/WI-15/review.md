@@ -1,9 +1,10 @@
 # WI-15 — Code Review
 
-Four axes, each a read-only reviewer with no access to the others' context, run twice: once at
-`5946199` and again at `d54d8ae` after the first round's corrections. Verdicts are kept separate and
-never merged — a change can follow every standard and still implement the wrong thing, and reporting
-one axis' result as another's is how that goes unnoticed.
+Four axes, each a read-only reviewer with no access to the others' context, run three times: at
+`5946199`, again at `d54d8ae` after the first round's corrections, and a third pass over the
+follow-up branch's range `d54d8ae..0a54a66` (see *Round 3* at the end). Verdicts are kept separate
+and never merged — a change can follow every standard and still implement the wrong thing, and
+reporting one axis' result as another's is how that goes unnoticed.
 
 ## Candidate identity
 
@@ -12,7 +13,7 @@ one axis' result as another's is how that goes unnoticed.
 | **Fixed point** | `39d1b26` (`main`; the merge-base, and the T0 planning-chain commit) |
 | **Round-1 candidate** | `5946199` — `39d1b26..5946199`, 11 commits, **8** changed paths |
 | **Round-2 candidate** | `d54d8ae` — `39d1b26..d54d8ae`, 12 commits, the same **8** paths |
-| **Source identity** | `eaf006e` — the last commit touching `src/` |
+| **Source identity** | `eaf006e` — the last commit touching `src/` **within the reviewed range** |
 | **Post-review correction** | `e12d8f4` — docs-only; see *After the verdicts* below |
 | **Branch / worktree** | `worktree-wi-15`, `.claude/worktrees/wi-15` |
 
@@ -29,7 +30,25 @@ docs/work/WI-15/specification.md
 docs/work/WI-15/verification.md
 ```
 
-So every commit after `eaf006e` is docs-only, and both rounds reviewed the same `src/` tree.
+So every commit after `eaf006e` — **within the reviewed range** — is docs-only, and both rounds
+reviewed the same `src/` tree.
+
+*Corrected 2026-09-24.* Both statements above previously stood unqualified — "the last commit
+touching `src/`", "every commit after `eaf006e` is docs-only". The follow-up branch
+`wi-15-followup` then changed `src/` itself: `72faee7` deletes two assertions from
+`src/loop.test.ts` (the delivery record's risk 5). Unscoped, both sentences are false of the branch
+as it now stands, and the command printed above proves their opposite when run at the current tip:
+
+```
+$ git log -1 --format='%H %s' -- src/      # at the round-2 candidate d54d8ae
+eaf006e … fix(wi-15): spec-review findings …
+$ git log -1 --format='%H %s' -- src/      # at the follow-up tip
+72faee7 test(wi-15): drop the duplicate and subsumed assertions the review flagged
+```
+
+The verdicts below still describe the `src/` tree they name — `eaf006e`'s — and the two deleted
+assertions are an assertion deletion, not a behavior change. What changed is the branch the sentence
+described, not what the rounds reviewed.
 
 ## Changed-path accounting
 
@@ -115,13 +134,18 @@ independently by two axes each, which is the strongest signal either could carry
   they would have voided already described a delivered tree once this branch merged. Coverage
   preserved, proven by mutation rather than argued — see the note in `implementation-notes.md`.
 - **`docs/work/WI-6/evidence/canary-red-driver.ts:114`** — a `QueueLoopDeps` literal still carrying
-  the two properties WI-13 retired (`runTriage`, `triage`) and missing **six** required deps added
-  since (`branchConflictsWithMain`, `runMerger`, `pushBranch` — WI-13; `commentOnIssue`,
-  `setIssueLabel` — WI-14; `readIssueLabels` — WI-15), outside `tsconfig.json`'s include.
-  Pre-existing; WI-15 deepens existing rot rather than creating it. *Corrected 2026-09-24 — this
-  entry said "carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable since WI-14",
-  naming two of the six and dating the break one work item late. Proving commands in the correction
-  note in `implementation-notes.md`.*
+  the two properties WI-13 retired (`runTriage`, `triage`) and missing **eight** required deps added
+  since: `branchConflictsWithMain`, `commentOnIssue`, `pushBranch`, `readIssueLabels`,
+  `refreshRemoteRefs`, `runMerger`, `runPlan`, `setIssueLabel` — six from `LoopDeps` (`runMerger`,
+  `branchConflictsWithMain`, `pushBranch` — WI-13; `commentOnIssue`, `setIssueLabel` — WI-14;
+  `readIssueLabels` — WI-15), one from `QueueDeps` (`refreshRemoteRefs`, WI-7), one from the inline
+  `runPlan` constituent (WI-13). Outside `tsconfig.json`'s include.
+  Pre-existing; WI-15 deepens existing rot rather than creating it. *Corrected twice, 2026-09-24 —
+  this entry first said "carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable since
+  WI-14", naming two and dating the break one work item late; then said **six**, which is what
+  TypeScript reports, because an intersection failure is reported through one constituent only and
+  the list is truncated ("…and 2 more"). Enumerating all three constituents against the literal's
+  keys gives eight. `delivery.md` risk 4 carries the proving commands.*
 - **The corrections-section redundancy** (complexity recommended deleting the table and the spec
   parenthetical) — kept deliberately. Both are the audit trail for the round-1 blocking finding;
   deleting review-finding evidence to satisfy a taste axis is the wrong trade. The divergence from
@@ -173,3 +197,135 @@ Two things that answer did *not* settle, stated rather than smoothed over:
 **What this re-check is not.** It is a targeted verification of six rows by the axis that found five
 of them — not a fifth axis verdict, and not a re-review of the branch. The four round-2 verdicts
 describe `d54d8ae`, and the correction commit and this record both postdate them.
+## Round 3 — the follow-up branch, `d54d8ae..0a54a66`
+
+Round 2's verdicts describe `d54d8ae` and the delivered PR. The follow-up branch
+`wi-15-followup` then added six commits on top of the merge `0b46971`, and one of them —
+`72faee7` — changes `src/`: it deletes the two assertions risk 5 deferred. A `src/` change is
+outside everything round 2 reviewed, so a fresh four-axis pass was run over the follow-up range.
+Same four axes, same isolation, no access to each other's context.
+
+| | |
+|---|---|
+| **Fixed point** | `d54d8ae` (the round-2 candidate; also the merge-base) |
+| **Candidate** | `0a54a66` — `d54d8ae..0a54a66`, 11 commits, 13 changed paths |
+| **Authority** | none. The follow-up has **no approved specification** — see the fidelity axis below |
+
+| Axis | Verdict |
+|---|---|
+| Repository standards | **FAIL** — one hard violation |
+| Specification fidelity | **UNVERIFIED** — no approved specification exists for this range |
+| Unnecessary complexity | **PASS** — five non-blocking recommendations |
+| Evidence and risk integrity | **FAIL** — two blocking findings |
+
+### Repository standards — FAIL
+
+**Hard violation: the range does not apply the rule it writes down.** `CLAUDE.md` gains (via
+`0cd33bb`) the rule that a *standing claim* is corrected in place, and names `delivery.md`,
+`review.md` and `verification.md` as the artifacts it governs. `72faee7` — a commit in this same
+range — makes `git log -1 --format='%H %s' -- src/` return `72faee7` rather than `eaf006e`, and
+those three artifacts were left carrying the claim it falsified. Several were self-falsifying: the
+sentence sat directly above the command that disproves it. The axis called it "a selective
+application rather than an unconsidered one", because the rule *was* applied elsewhere in the same
+range.
+
+*Remediated in this pass.* All of the named claims — `delivery.md` §Verification,
+`delivery.md:53`'s vitest row, the "never pushed" branch row, "nothing was merged",
+`review.md:15`/`:32`, `verification.md:10`/`:24`/`:48` — were corrected in place, each carrying the
+command that proves the new figure.
+
+Judgement calls, none blocking: the four-verdict summary is restated in four artifacts (suppressed
+for the corrections table, which `review.md` endorses keeping deliberately); three files added by
+the range lacked a final newline (fixed in this pass); `SKILL.md:21` cites
+`docs/agents/project-policy.md`, which does not exist (suppressed — `implementation-notes.md`
+flags it deliberately and two sibling skills cite it too); `CLAUDE.md`'s lesson about 16 drifting
+skills while only `code-review` was fixed (suppressed on owner authority, `delivery.md` row 9).
+Clean: module table honest, no lint step invented, branch and worktree follow `workflow.md`.
+
+### Specification fidelity — UNVERIFIED, not a pass
+
+The axis refused to grade this, and was right to. The tail's four commits touch no file any
+FR-001…FR-006 criterion names, and the follow-up has no approved specification at all: its nearest
+authority is `delivery.md` rows 1–10, several of whose justifications ("widened WI-6 pointer",
+rows 5, 7, 9, 10) rest on session instructions that exist in no file. Those rows were themselves
+rewritten by the follow-up (`704f443`, `dbc2bc8`, `a82127b`), so a row saying "owner chose
+2026-09-24" is the follow-up recording itself. Per the review contract, a missing specification
+does not receive a specification pass.
+
+Findings it did raise:
+
+- **(a)** Row 10's own rule is under-applied at home — risk 6 and `verification.md` entry (k) were
+  not corrected in place alongside risks 4–5.
+- **(b) Not asked for:** the `smells.md` baseline was **swapped** rather than moved (row 9 asked
+  only for "the four axes actually run"); `agents/openai.yaml` is new and row 9 names no file; the
+  `CLAUDE.md` lifecycle rule adds a third normative clause beyond row 10's "keep both".
+- **(c) Looks implemented, is wrong:** three false claims inside `implementation-notes.md` — the
+  frontmatter described as "defined **two** … promised four" (it read "along two axes"; the real
+  drift was record-vs-skill), "the **six** sibling skills that ship one" (seven at `0b46971`), and
+  row 6's Notes cell recording one labelled file where three were labelled.
+
+*Items (c)'s first two were corrected in the earlier pass by appended ledger note; the smell swap
+was recorded rather than corrected and is still the owner's open call.*
+
+### Unnecessary complexity — PASS
+
+Five non-blocking `delete`/`shrink` recommendations, none asking for a code or behavior change:
+the verbatim PR-body quotation in `delivery.md` (~40 of ~45 lines duplicating this record's own
+Summary); the round-2 restatement in `implementation-notes.md`'s stage-4 section; risks 4–5
+re-enumerating what the ledger note already lists; a doubled reason clause in `CLAUDE.md`'s ledger
+rule; and the "earlier, blunter attempt" paragraph (lowest confidence). Explicit no-change results
+were returned for the four-axis table, `smells.md`, `agents/openai.yaml`, the three WI-6 banner
+lengths, the two new `## Lessons` lines, and the `src/loop.test.ts` deletion.
+
+**Held, not applied.** These are taste recommendations against artifacts whose job is to be
+re-readable, and each proposed deletion removes context a different reader needs. Recorded as
+available, not taken.
+
+### Evidence and risk integrity — FAIL
+
+Gates were run at HEAD and all three record figures matched: `npm run typecheck` exit 0;
+`npm test` → `285 passed (10 files)`; `npx vitest run src/loop.test.ts` → `164 passed`. The axis
+verified the two-line deletion against out-of-tree mutation probes (both `1 failed | 163 passed`),
+confirmed subsumption from source, and reproduced all four TypeScript positions.
+
+**Blocking findings — both the vacuous-evidence class this work item exists to remove:**
+
+1. `delivery.md` §Verification prints `git log -1 --format='%H %s' -- src/` → `eaf006e`; at HEAD
+   that command returns `72faee7`.
+2. Inside the range's own corrections: risk 3 cited siblings at `:3821`/`:3935`, which are **blank
+   lines** at HEAD, and risk 4 cited a last-touch of `aa6f2e0` where HEAD gives `704f443`.
+
+*Both remediated in this pass.* Also corrected: `delivery.md:23`'s "`0d371ef..HEAD` — the PR's real
+figures (12 files, +2527/-44)", which the axis flagged as "anchored to creation time, off by 54
+insertions".
+
+**Where this record disagrees with the axis, on measurement.** The axis reported the driver's
+missing-dep count as **seven** — six from `LoopDeps` plus `runPlan`. Enumerating all three
+constituents against the literal's keys gives **eight**: it additionally omits `refreshRemoteRefs`
+from `QueueDeps`, required since WI-7. The axis reached seven by adding only the constituent it
+thought of, which is the same one-constituent blindness it had just diagnosed in the compiler.
+Eight is the measured figure; `delivery.md` risk 4 carries the command.
+
+**Adjacent observations.** Two the range had not recorded: `delivery.md`'s "real figures" anchor,
+and the in-flight `git branch -r --contains` claim — *mine*, printed without being run, and
+corrected in this pass. And one about this session rather than the branch: **"Tree changed under
+me, not by me."** The worktree was clean when the axis started and had seven modified files by
+18:56; every write it made was under `/tmp`, and it correctly declined to restore files it did not
+own. The causes were my corrections landing while it read. The axis's figures are still sound — it
+measured `src/`, which none of my edits touched — but a review whose candidate moves under it
+cannot certify the moved files, and this one does not claim to.
+
+### What round 3's verdicts do and do not cover
+
+They describe `d54d8ae..0a54a66`. Every correction made in response — the ones remediating the two
+FAIL axes, the additional errors this record lists, and the `CLAUDE.md` lesson edit — **postdates
+all four verdicts**. By this repository's own standard those verdicts therefore do not certify the
+corrected tree.
+
+That is stated rather than papered over, and the honest consequence is that the follow-up branch
+carries a remediation pass with **no verdict of its own**. What can be said without a further
+review: both blocking findings are the printed-command class, the corrections to them were
+re-measured rather than adjusted, and the `src/` tree is untouched by every one of them —
+`git diff --stat` across this pass touches `docs/` and `.claude/skills/` only, plus three
+`CLAUDE.md` lesson lines. Whether that is enough to skip a fourth pass over a docs-only delta is
+the owner's call, not this record's.

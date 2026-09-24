@@ -3,8 +3,11 @@
  * this directory, not as code to execute: it was written against `src/` at WI-6
  * (`aa6f2e0`) and has not typechecked since WI-13 retired `--triage` (`cca5e53`)
  * — it still carries the two removed properties `runTriage`/`triage`, and is
- * missing six deps required since. Do not run it. The logs beside it are the
- * evidence. See the correction note in `docs/work/WI-15/implementation-notes.md`.
+ * missing eight required deps added since: `branchConflictsWithMain`,
+ * `commentOnIssue`, `pushBranch`, `readIssueLabels`, `refreshRemoteRefs`,
+ * `runMerger`, `runPlan` and `setIssueLabel`. Do not run it. The logs beside it
+ * are the evidence. See the correction note in
+ * `docs/work/WI-15/implementation-notes.md`.
  *
  * WI-6 T7 plan step 2 — the canary-red scenario, live, ZERO LLM spend
  * (FR-005/006/007: post-merge canary → auto-revert → halt → @-notify).
