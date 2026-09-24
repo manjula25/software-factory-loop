@@ -1,0 +1,5 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Review a fixed candidate across four independent axes"
+policy:
+  allow_implicit_invocation: true

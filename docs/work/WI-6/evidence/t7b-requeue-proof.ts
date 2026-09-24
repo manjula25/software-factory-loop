@@ -1,9 +1,15 @@
 /**
+ * HISTORICAL ARTIFACT — NOT RUNNABLE. Same one-dep break as `requeue-proof.ts`:
+ * written against `src/` at WI-6 (`aa6f2e0`), not typechecked since WI-7
+ * (`7d84b10`) made `refreshRemoteRefs` a required acquisition dep. Do not run it.
+ * `t7b-requeue-proof.log` beside it is the evidence. See the note in
+ * `docs/work/WI-15/implementation-notes.md`.
+ *
  * WI-6 T7b — re-queue proof after the REAL-agent canary-red revert (FR-006/D4).
  * Same shape as requeue-proof.ts (T7 step 3), against gh-20 / merged PR #21:
  * real listOpenIssues + splitQueue with the production gh/git wiring, no stubs.
  *
- *   npx tsx docs/work/WI-6/evidence/t7b-requeue-proof.ts
+ *   npx tsx docs/work/WI-6/evidence/t7b-requeue-proof.ts   # HISTORICAL — no longer typechecks
  *
  * Expectation: merged PR #21 covers gh-20 (so without the revert guard it
  * would be skipped-merged), mainRevertsPr says main reverted #21, and

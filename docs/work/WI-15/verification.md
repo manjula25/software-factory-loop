@@ -7,7 +7,7 @@
 | **Gates run at** | `0035506` — the completion gates below were executed here |
 | **First review candidate** | `5946199` — the four stage-4 review axes first ran here |
 | **Re-review candidate** | `d54d8ae` — all four axes re-ran here after the first corrections |
-| **Source identity** | `eaf006e` — the last commit touching `src/` |
+| **Source identity** | `eaf006e` — the last commit touching `src/` **within the delivered range** |
 | **Base** | `39d1b26` (`main`) |
 | **Branch** | `worktree-wi-15`, worktree `.claude/worktrees/wi-15` |
 | **Range at `0035506`** | `39d1b26..0035506`, 10 commits, **7** changed paths — `CLAUDE.md`, `docs/work/WI-15/{evidence/label-state-probes.log,implementation-notes.md,implementation-plan.md,specification.md}`, `src/loop.test.ts`, `src/loop.ts` |
@@ -21,8 +21,9 @@ tree it did not describe.
 **No row names a "current candidate."** A record cannot cite the commit that contains it, so such a
 row is either a placeholder or a self-reference: the first version of this table carried one, and
 the standards and complexity axes both flagged it independently at `d54d8ae`. Counts are given only
-for candidates this record can name. Every commit after `5946199` is docs-only and adds one commit
-but no new path, so re-derive the current figures rather than reading them here:
+for candidates this record can name. Every commit after `5946199` **within the delivered range** is
+docs-only and adds one commit but no new path, so re-derive the current figures rather than reading
+them here:
 
 ```
 $ git log --oneline 39d1b26..HEAD | wc -l
@@ -33,7 +34,7 @@ $ git diff --name-only 39d1b26...HEAD | wc -l
 commits follows `eaf006e` — beginning with the spec amendment `f988101`, the docs-hygiene fix
 `5bd9a8a`, the attribution fix `c66e268`, and the checkpoint-3 acceptance `0035506`, then the
 verification record `5946199`, the corrections `d54d8ae`, and this record's own commit — and none
-touches a `src/` path. Verified rather than asserted:
+touches a `src/` path **within that range**. Verified rather than asserted:
 
 ```
 $ git log -1 --format='%H %s' -- src/
@@ -45,8 +46,29 @@ $ git diff --stat 39d1b26...0035506 -- src/loop.test.ts src/loop.ts   # the whol
  2 files changed, 186 insertions(+), 43 deletions(-)
 ```
 
-So the code the gates below exercise is `eaf006e`'s, unchanged by every later commit. **This
-record's own commit is likewise docs-only.**
+So the code the gates below exercise is `eaf006e`'s, unchanged by every later commit **in the
+delivered range**. **This record's own commit is likewise docs-only.**
+
+*Corrected 2026-09-24.* The source-identity row, the "every commit after `5946199` is docs-only"
+sentence, the "none touches a `src/` path" clause and the sentence above previously stood
+**unqualified**. They were true of the range they were measured on — `39d1b26..cd6e547`, the WI-15
+delivery — but the follow-up branch `wi-15-followup` then changed `src/` itself: `72faee7` deletes
+two assertions from `src/loop.test.ts` (the delivery record's risk 5). Read unqualified against the
+current branch, all four are false, and the command this record prints proves their opposite:
+
+```
+$ git log -1 --format='%H %s' -- src/      # at the delivered tip cd6e547
+eaf006e … fix(wi-15): spec-review findings …
+$ git log -1 --format='%H %s' -- src/      # at the follow-up tip
+72faee7 test(wi-15): drop the duplicate and subsumed assertions the review flagged
+```
+
+**What this does and does not change.** The gates below were run at `0035506` against `eaf006e`'s
+`src/` tree, and that is still exactly what they evidence. What no longer holds is the extension of
+that evidence to the branch as it now stands: `src/loop.test.ts` has since changed, so these gates
+are **not** fresh for the follow-up tree. The follow-up re-ran the suite at its own tip —
+`npm test` → 285 passed (10 files), exit 0 — and that run, not this record, is the evidence for the
+follow-up tree.
 
 ## Claim
 
@@ -197,7 +219,7 @@ acceptance.
 | (f) A read failure renders on the removal lines though no removal was attempted | **Closed** — recorded under Remaining risks, with the test that pins it |
 | (g) The deferred test-fixture vacuity at `src/loop.test.ts:3792` | **Deferred, well-founded** — see Remaining risks |
 | (h) FR-003's last criterion is live-only | **Stated, not omitted** — under Explicit non-claims |
-| (i) `docs/work/WI-6/evidence/canary-red-driver.ts:106` is uncompilable | **Deferred to the owner as a follow-up** — see Remaining risks |
+| (i) `docs/work/WI-6/evidence/canary-red-driver.ts:114` is uncompilable | **Resolved 2026-09-24** — owner chose (b): labelled in place as a historical artifact, records corrected here and in `implementation-notes.md` |
 | (j) `src/loop.test.ts:3813`/`:3817` assert the same value twice | **Deferred deliberately** — a `src/` edit would void the two current verdicts for a cosmetic duplicate |
 | (k) FR-006 asked for one `## Lessons` line and two landed | **Recorded, not scope creep** — both are true and both concern this work item's defect classes |
 
@@ -220,13 +242,30 @@ acceptance.
    convenient: sibling assertions pin the rendered text against hard-coded literals and would fail
    loudly on a rename — `src/loop.test.ts:3744` and `:3753` (`toContain("harness-failed label
    remove failed: gh: label remove failed — network")` and `toContain("LABEL REMOVE FAILED gh-1:
-   …")`), `:3935`, and the template-prefixed `:3821`.
+   …")`), `:3933`, and the template-prefixed `:3819`.
+
+   *Corrected 2026-09-24 — the last two previously read `:3935` and `:3821`. This record was written
+   at `0035506`; the follow-up branch's `72faee7` then deleted two assertions at `:3814`/`:3817`, so
+   every line below the cut moved up by two. `:3744`/`:3753` sit above it and are unaffected.
+   Re-measured, not adjusted by arithmetic: `sed -n '3819p;3933p' src/loop.test.ts` returns the
+   template-prefixed assertion and the `LABEL REMOVE FAILED` one. Same correction, same cause, as
+   risk 3 in `delivery.md`.*
 4. **Ask (i) — a pre-existing uncompilable file outside the build.** WI-6's
-   `docs/work/WI-6/evidence/canary-red-driver.ts:106` is a `QueueLoopDeps` literal carrying neither
-   `setIssueLabel` nor `readIssueLabels` (`grep -n 'setIssueLabel\|readIssueLabels'` → exit 1), so
-   it has not compiled since WI-14 made `setIssueLabel` required. It is outside `tsconfig.json`'s
-   `include` (`["src","scripts","vitest.config.ts"]`) and was last touched by `aa6f2e0` (WI-6):
-   **pre-existing, unrelated to WI-15, and surfaced to the owner rather than fixed here.**
+   `docs/work/WI-6/evidence/canary-red-driver.ts:114` is a `QueueLoopDeps` literal that still carries
+   the two properties WI-13 retired (`runTriage`, `triage`) and is missing **eight** required deps
+   added since: `branchConflictsWithMain`, `commentOnIssue`, `pushBranch`, `readIssueLabels`,
+   `refreshRemoteRefs`, `runMerger`, `runPlan`, `setIssueLabel` — six from `LoopDeps`, one from
+   `QueueDeps` (`refreshRemoteRefs`, since WI-7), one from the inline `runPlan` constituent. It is
+   outside `tsconfig.json`'s `include` (`["src","scripts","vitest.config.ts"]`) and was last touched
+   by `aa6f2e0` (WI-6) at the PR head `cd6e547`: **pre-existing and unrelated to WI-15.**
+   *Corrected 2026-09-24 — this entry previously said the literal carried "neither `setIssueLabel`
+   nor `readIssueLabels`" and had "not compiled since WI-14". It carries two of the eight, and it
+   broke at WI-13 (`cca5e53`), which retired `--triage`; that commit's deleted-property errors are
+   the ones a compiler prints first, and TypeScript hides the missing deps behind them. It then said
+   **six**, which is the count TypeScript reports — an intersection failure is reported through one
+   constituent only, and the list is truncated ("…and 2 more"). Enumerating all three constituents
+   against the literal's keys gives eight; proving commands are in `delivery.md` risk 4 and the
+   correction note in `implementation-notes.md`.*
 5. **The checkpoint verdicts describe `c66e268`, and the stage-4 verdicts describe `d54d8ae`.**
    The specification PASS and the code-quality APPROVED both apply to `c66e268`; `0035506` is
    docs-only (three narration closures and the acceptance entry, none touching `src/`). By this

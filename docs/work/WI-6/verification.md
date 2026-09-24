@@ -277,6 +277,13 @@ repro `tests/fixed-issues/test_gh_18.py`) — genuinely green on its own tree.
 Command: `npx tsx docs/work/WI-6/evidence/canary-red-driver.ts`. Full log:
 `evidence/t7-canary-red.log` (**exit 1** — the halt).
 
+> **Historical — do not re-run.** That command ran on 2026-09-18 and produced the log beside it; the
+> log stands unchanged and this record is not wrong about what happened. The *driver* is what has
+> moved: it no longer compiles against today's `src/` — it carries `runTriage`/`triage` (retired in
+> WI-13, `cca5e53`) and is missing six deps made required since — so it now opens with a
+> `HISTORICAL ARTIFACT — NOT RUNNABLE` banner. Measured rot, proving commands, and the owner's
+> decision to label rather than repair it: `docs/work/WI-15/implementation-notes.md`.
+
 Zero-LLM boundary (documented in the driver header): stubbed =
 `runFixRun` (returns the pre-authored branch + authored RED/GREEN blocks —
 the fresh-sandbox verification gate still runs FOR REAL in Docker),
@@ -311,6 +318,11 @@ exists to catch (FR-005).
 Command: `npx tsx docs/work/WI-6/evidence/requeue-proof.ts` — the REAL
 `listOpenIssues` + `splitQueue` (no stubs) against the post-revert state.
 Log: `evidence/t7-requeue-proof.log`, exit 0:
+
+> **Historical — do not re-run.** Run on 2026-09-18; the log stands. The script no longer compiles:
+> WI-7 (`7d84b10`) made `refreshRemoteRefs` a required acquisition dep and this file was never
+> updated. That one missing dep is the entire break — adding it clears both reported errors, measured
+> rather than inferred. It now carries the same `HISTORICAL ARTIFACT — NOT RUNNABLE` banner.
 
 ```
 merged cover: PR #19 (fix/gh-18) — without the revert guard, gh-18 would be skipped-merged
@@ -473,6 +485,10 @@ own words); no `fix/gh-20`/`loop/review`/canary branches left.
 splitQueue, exit 0): merged PR #21 covers gh-20 (would be skipped-merged without
 the guard), `mainRevertsPr(#21): true`, gh-20 back in `eligible` — FR-006/D4
 end-to-end behind a real agent-authored merge.
+
+> **Historical — do not re-run**: the same one-dep break as `requeue-proof.ts` above (WI-7's
+> `7d84b10` made `refreshRemoteRefs` required). The `.log` beside it stands; the script does not
+> compile.
 
 **Cleanup.** origin/main force-reset (`--force-with-lease`) to `88984fd`; issue
 #20 closed as a test artifact with an explanatory comment; no scenario branches.

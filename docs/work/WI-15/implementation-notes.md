@@ -544,3 +544,481 @@ The forward reference two paragraphs up is therefore **fulfilled, not pending** 
 ordering caveat applies one level down: the corrections in `e12d8f4` and the record `review.md` both
 postdate the four `d54d8ae` verdicts, which `review.md` states in its own closing section rather than
 letting a reader discover it. No `src/` path moved at any point after `eaf006e`.
+
+---
+
+### Correction — 2026-09-24 (follow-up branch `wi-15-followup`): the WI-6 driver's rot is older and wider than this ledger recorded
+
+A follow-up pass **re-measured** `docs/work/WI-6/evidence/canary-red-driver.ts` rather than reading
+the claim above, and the claim was wrong on both of its particulars. What checkpoint 1 (`:121`),
+checkpoint 3 (`:370`, `:451`) and `verification.md`'s remaining risk 4 all said was:
+
+> a `QueueLoopDeps` literal carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable
+> since WI-14
+
+| Recorded | Measured |
+|---|---|
+| Two deps missing | **Six** missing |
+| Broken since WI-14 | Broken since **WI-13** (`cca5e53`) |
+
+**The six, by the work item that made each required:** `branchConflictsWithMain`, `runMerger`,
+`pushBranch` (WI-13); `commentOnIssue`, `setIssueLabel` (WI-14); `readIssueLabels` (WI-15). The file
+also still carries two properties WI-13 deleted: `runTriage` and `triage`.
+
+The missing set, re-derived by direction comparison — 19 `LoopDeps` members minus the literal's 20
+(the extra ones being `QueueDeps` members):
+
+```
+$ sed -n '/^export interface LoopDeps {/,/^}/p' src/loop.ts | grep -oE '^  (readonly )?[a-zA-Z_]+' | sed 's/readonly //' | sort -u > /tmp/a
+$ sed -n '/^const deps: QueueLoopDeps = {/,/^};/p' docs/work/WI-6/evidence/canary-red-driver.ts | grep -oE '^  (async )?[a-zA-Z_]+' | sed 's/async //' | sort -u > /tmp/b
+$ comm -23 /tmp/a /tmp/b
+  branchConflictsWithMain
+  commentOnIssue
+  pushBranch
+  readIssueLabels
+  runMerger
+  setIssueLabel
+```
+
+The date, from the deletion that broke it:
+
+```
+$ git log --oneline -S'runTriage' -- src/loop.ts | head -1
+cca5e53 feat(WI-13): planner pass wired, --triage retired with loud startup error (FR-001, FR-009)
+```
+
+Compiling the file shows only those two deleted properties:
+
+```
+$ npx tsc --noEmit --ignoreConfig --skipLibCheck --strict --target ES2022 \
+    --module NodeNext --moduleResolution NodeNext --types node \
+    docs/work/WI-6/evidence/canary-red-driver.ts
+docs/work/WI-6/evidence/canary-red-driver.ts(209,3): error TS2353: Object literal may only specify known properties, and 'runTriage' does not exist in type 'QueueLoopDeps'.
+docs/work/WI-6/evidence/canary-red-driver.ts(220,85): error TS2353: Object literal may only specify known properties, and 'triage' does not exist in type 'QueueRunInput'.
+```
+
+(Line numbers are on the delivered file. On the file as first measured, before the banner shifted
+it, the same two errors read `(201,3)` and `(212,85)` — which is why the records corrected alongside
+this note point at `:114`.)
+
+**Why the earlier reading saw only two.** TypeScript prints the *excess*-property error for an object
+literal and **suppresses** the missing-property error behind it, so the two deleted properties mask
+all six missing deps. Isolated — a literal with one excess property and every required property
+absent — the missing list does not appear at all:
+
+```
+$ npx tsc … zz-probe.ts      # const x: QueueLoopDeps = { zzz: 1 };
+zz-probe.ts(2,28): error TS2353: Object literal may only specify known properties, and 'zzz' does not exist in type 'QueueLoopDeps'.
+```
+
+The check *does* fire on this type once nothing masks it — the control for the paragraph above, so it
+is not read as "the check never runs":
+
+```
+$ npx tsc … zz-probe.ts      # const x: QueueLoopDeps = {};
+zz-probe.ts(2,7): error TS2322: Type '{}' is not assignable to type 'QueueLoopDeps'.
+  Type '{}' is missing the following properties from type 'LoopDeps': env, runFixRun, createFixSandbox, deleteBranch, and 15 more.
+```
+
+Both probes were written into `docs/work/WI-6/evidence/` so their relative imports resolve exactly as
+the driver's do, and deleted immediately; `git status` after them showed nothing but the owner's
+pre-existing modification to `docs/work/reports/harness-functionality-guide.html`.
+
+**Disposition — owner decision (b), 2026-09-24: labelled, not repaired.** The driver's header now
+opens with a `HISTORICAL ARTIFACT — NOT RUNNABLE` banner, and the three records that carried the wrong
+diagnosis are corrected in place, each noting what it said before. Repair was declined deliberately:
+compiling would mean writing six stubs for deps that did not exist when WI-6 ran, and the result would
+compile without being verified — the fixture state that run depended on is gone, so its logs cannot be
+reproduced from the driver either way. A file that looks runnable and is not is worse than one that
+says what it is. Option (c) — repair it *and* re-run it live in Docker against a re-seeded fixtures
+repo — stays open if the owner ever wants that driver back.
+
+### Follow-up — 2026-09-24 (same branch): the skill drift is wider than the pending list recorded
+
+Pending row 9 named two skills that drift between the personal `~/.claude/skills/` copies and this
+repository's committed `.claude/skills/`. Re-measured rather than read off the row, **all 16 shared
+skills differ** — the row named a sample and stated it as the extent:
+
+```
+$ comm -12 <(ls -1 ~/.claude/skills | sort) <(ls -1 .claude/skills | sort) | wc -l
+16
+$ for s in $(comm -12 …); do diff -rq ~/.claude/skills/$s .claude/skills/$s >/dev/null || echo "DIFFERS: $s"; done
+DIFFERS: code-review          DIFFERS: diagnosing-bugs       DIFFERS: domain-modeling
+DIFFERS: finishing-a-development-branch          DIFFERS: grilling        DIFFERS: handoff
+DIFFERS: implement            DIFFERS: ponytail              DIFFERS: setup-agentic-workflow
+DIFFERS: tdd                  DIFFERS: to-prd                DIFFERS: to-spec
+DIFFERS: to-tickets           DIFFERS: using-git-worktrees   DIFFERS: verification-before-completion
+DIFFERS: writing-plans
+```
+
+**Neither lineage is simply older**, which is why "16 differ" is not by itself a defect. The project
+copies carry repo-specific text the personal ones lack — the GitHub Issues tracker line, the
+spec-resolution order, `harness-prd-v2.md`, the `## Project context` section in
+`finishing-a-development-branch` (`:17`). The personal copies carry material the project ones lack —
+`smells.md`, `agents/` subagent definitions, and the fourth review axis. Two lineages that both
+moved. Tracked copies were last touched by `9830b7a` / `5c04780`, before any work item ran.
+
+**Why this mattered enough to act on.** WI-15's stage-4 review ran **four** axes. The repository's
+committed `code-review` defined **two**, and its frontmatter promised four — a hybrid whose
+description contradicted its own body. So `review.md` documented a process a teammate reading
+`.claude/skills/` could not reproduce; they would have run a narrower review and had no way to know
+the record described a wider one.
+
+**Action taken — owner decision, 2026-09-24: bring the committed copy up to what was actually run.**
+`code-review/SKILL.md`'s body is now four-axis, keeping every repo-specific adaptation it already
+carried and the house section format. Two files added alongside it: `smells.md` (the reference the
+four-axis skill points at, which the two-axis body had inlined instead) and `agents/openai.yaml`
+(matching the six sibling skills that ship one). The other **15 shared skills were left alone** —
+repo-adapted text versus personal extra tooling is a legitimate difference, not rot, and the owner
+scoped this to the one skill whose divergence made a record unreproducible.
+
+Verified after the edit — all four axes named, house headings intact, no reference dangling:
+
+```
+$ for a in "repository standards" "specification fidelity" "evidence and risk integrity" "unnecessary complexity"; do
+    echo "$(grep -ic "$a" .claude/skills/code-review/SKILL.md)  $a"; done
+3  repository standards      1  specification fidelity
+1  evidence and risk integrity      2  unnecessary complexity
+$ grep -n '^## ' .claude/skills/code-review/SKILL.md      # Required inputs … Next recommended skill, 8 sections
+```
+
+**One dangling optional reference, kept deliberately.** `.claude/skills/code-review/SKILL.md` lists
+`docs/agents/project-policy.md` under *Optional inputs*; this repository does not have that file
+(only `issue-tracker.md` and `workflow.md`). It is kept because the four-axis skill that ran names
+it, `ponytail` names it too, and it is a template `setup-agentic-workflow` ships
+(`templates/project-policy.md`) that this repo simply never instantiated. Flagged rather than
+silently dropped, and rather than invented into existence.
+
+**Non-claim.** No test or typecheck covers `.claude/skills/` — it is outside `src/` and outside
+`tsconfig.json`'s include, and there is no lint step in this repository in which to hang a check. The
+evidence above is inspection and path resolution, which is the strongest evidence this surface admits;
+a green `npm test` would say nothing about it and is not offered as though it did.
+
+### Follow-up — 2026-09-24 (same branch): the two deferred test assertions, closed with a mutation probe
+
+Pending row 5 deferred two assertions in the (g) test — a duplicate and a subsumed one — on the
+reasoning that "a `src/` edit void[s] both current verdicts." That reasoning expired when the branch
+merged: the round-2 verdicts describe `d54d8ae`, a tree that is now delivered, so a further edit
+voids nothing that was not already historical. Closed on the owner's decision.
+
+The change is two deletions, `src/loop.test.ts` only:
+
+```
+$ git diff -- src/loop.test.ts
+-    expect(outcome.escalationLabelFailure).toBe(REASON);
+-    expect(outcome.merged).toEqual(baseline.merged);
+$ git diff --quiet -- src/loop.ts && echo "src/loop.ts IDENTICAL to HEAD"
+src/loop.ts IDENTICAL to HEAD
+```
+
+**The claim to defend is "coverage preserved", not "fewer lines".** Deleting an assertion is exactly
+the move that can silently remove a guard, so it was probed rather than argued. Three probes, each
+run against the working tree and reverted immediately.
+
+**Probe 0 — was the deleted `merged` assertion vacuous?** If `baseline.merged` were `undefined`, the
+line would have compared `undefined` to `undefined` and deleting it would prove nothing either way. It
+is not:
+
+```
+$ # temporary `throw` in the (g) test, reverted immediately
+PROBE baseline.merged={"prUrl":"https://github.com/manjula25/loop-fixtures-py/pull/9","mergeCommit":"m0ckmerge","canaryGreen":true} outcome.merged={…same…} equal=true
+```
+
+**Probe 1 — the surviving duplicate still guards the field.** `src/loop.ts:831` mutated to record
+nothing on a failed read (`return {};`). The deleted line was a byte-identical duplicate of the
+survivor at the destructure, so the survivor must fail:
+
+```
+× (g) a throwing label read: the removal is skipped and the read is recorded on the existing line
+AssertionError: expected undefined to be 'could not read the issue\'s labels: g…'
+Tests  1 failed | 163 passed (164)
+```
+
+**Probe 2 — the surviving whole-outcome comparison subsumes the deleted `merged` assertion.**
+`src/loop.ts:831` mutated to also return `merged: undefined`, which the spread at the canary-green
+return places *after* `merged`, so only the read-failing run diverges:
+
+```
+× (g) a throwing label read: the removal is skipped and the read is recorded on the existing line
+AssertionError: expected { branch: 'fix/gh-1', …(2) } to deeply equal { branch: 'fix/gh-1', …(2) }
+Tests  1 failed | 163 passed (164)
+```
+
+Exactly one test failed, on the `expect(rest).toEqual(baseline)` line — so `rest` does carry `merged`
+and the comparison is a real guard on it, not a tautology.
+
+An earlier, blunter attempt is recorded because it was the wrong probe and looked like a result:
+forcing `merged: undefined` at the canary-green return itself failed **20+** tests, which shows the
+field is load-bearing across the file but says nothing about whether `rest` covers it. A probe that
+breaks everything cannot answer a question about one comparison.
+
+**Restoration and verification.** `cp /tmp/loop.ts.orig src/loop.ts`; `git diff --quiet -- src/loop.ts`
+→ identical to HEAD, and `git diff --check` is clean (an intermediate edit left four trailing spaces
+on a blank line, since removed). Then:
+
+```
+$ npm run typecheck        # exit 0, no diagnostics
+$ npx vitest run src/loop.test.ts   → 164 passed (1 file)
+$ npm test                 → 285 passed (10 files)
+```
+
+**Non-claim.** This follow-up branch now carries a `src/` change, and the four-axis verdicts in
+`review.md` describe `d54d8ae`. They do not cover it. A review of the new one-commit range is the
+owner's call and **has not been run** — the verification above is the full extent of the evidence
+behind this edit.
+
+### Follow-up — 2026-09-24 (same branch): the WI-6 pointers, and a third unrunnable file
+
+Checkpoint 1 (`:121`) ruled amending WI-6's record out of scope: *"Amending it is out of scope and
+would mean editing another work item's delivered evidence."* The owner has now authorized it, and
+that entry is left standing as the historical position, as the checkpoint ledger's rule requires.
+This note records the reversal.
+
+**Scope re-measured rather than read off the earlier note** — the same discipline that produced the
+six-deps finding, applied one directory wider. The WI-6 evidence directory holds four `.ts` files;
+**three** do not compile:
+
+```
+$ for f in docs/work/WI-6/evidence/*.ts; do npx tsc --noEmit --ignoreConfig --skipLibCheck --strict \
+    --target ES2022 --module NodeNext --moduleResolution NodeNext --types node "$f"; done
+canary-red-driver.ts     exit=1 errors=2
+requeue-proof.ts         exit=1 errors=2
+review-exercise.ts       exit=0 errors=0
+t7b-requeue-proof.ts     exit=1 errors=2
+```
+
+Two of those were not known when item 6 was closed. Both are a **smaller and differently-dated break
+than the driver's** — one dep, not six:
+
+```
+$ npx tsc … docs/work/WI-6/evidence/requeue-proof.ts
+requeue-proof.ts(93,37): error TS2741: Property 'refreshRemoteRefs' is missing in type '{ … }' but required in type 'QueueDeps'.
+requeue-proof.ts(108,32): error TS2345: Argument of type '{ … }' is not assignable to parameter of type 'QueueDeps & Pick<LoopDeps, "deleteBranch">'.
+$ git log --oneline -S'refreshRemoteRefs' -- src/queue.ts | tail -1
+7d84b10 feat(WI-7): acquisition-time remote refresh — fetch/prune before dedup (FR-001)
+```
+
+Adding that one dep and nothing else clears both errors — probed, not assumed. `t7b-requeue-proof.ts`
+is the same shape: same single missing dep, errors at `(88,37)` and `(103,32)`. So both broke at
+**WI-7**, not WI-13, not WI-14, and by one dep rather than six.
+
+All four line numbers above are on the delivered files, after the banners landed. Before the banners
+the same errors read `(84,37)`/`(99,32)` and `(82,37)`/`(97,32)` — and the first figures written into
+this note were those pre-banner ones, carried over from the measuring run by exactly the mistake the
+item-6 note already records: adding a header shifts every line beneath it. They were re-measured
+rather than adjusted by arithmetic, which is the second time in this work item that counting the
+lines a banner adds gave the wrong answer.
+
+A first attempt at that probe is recorded because it was misleading: run from `/tmp`, it produced
+four `TS1309: cannot use 'await' at the top level` errors that were artifacts of the probe's own
+directory — `/tmp` has no `package.json`, so the copy was treated as CommonJS. A probe has to run
+under the same module settings as the file it probes, or it measures itself:
+
+```
+$ npx tsc … docs/work/WI-6/evidence/zz-probe-requeue.ts   # in place, refreshRemoteRefs added
+(clean)
+$ rm docs/work/WI-6/evidence/zz-probe-requeue.ts          # deleted immediately; git status clean
+```
+
+**What changed — annotations that keep the history rather than delete it.** These runs genuinely
+happened and their logs are real evidence; the reader's actual failure mode is *re-running* a command
+that no longer works. So nothing was removed:
+
+- `requeue-proof.ts` and `t7b-requeue-proof.ts` now open with the same `HISTORICAL ARTIFACT — NOT
+  RUNNABLE` header the driver carries, and their embedded run commands are marked HISTORICAL.
+- `verification.md`'s three command sites — `:277` (the driver), `:311` (requeue-proof), `:472`
+  (t7b) — each carry a **Historical — do not re-run** note naming what broke and when. The command
+  lines themselves stay, because deleting them would erase that the run happened.
+
+Left alone deliberately: `delivery.md:46` and `implementation-notes.md:327`/`:350` describe what the
+drivers did as *history* without instructing anyone to run them, so they are accurate as written.
+
+## Correction — appended 2026-09-24 (this ledger is not rewritten)
+
+The follow-up review's specification-fidelity axis found **two claims above that are false**, not
+merely stale, and one scope change the record never named. They stay standing where they were
+written, because this file's job is to record what was believed at each checkpoint; the corrections
+follow here, per the rule this same branch writes into `CLAUDE.md` (standing claims corrected in
+place, the chronological ledger appended to).
+
+**1. The claim about the committed `code-review` frontmatter is wrong on both halves.** Lines
+661-665 say the committed skill "defined **two**, and its frontmatter promised four — a hybrid whose
+description contradicted its own body." Measured at the merge commit:
+
+```
+$ git show 0b46971:.claude/skills/code-review/SKILL.md | sed -n '3p'
+description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards …
+$ git show 0b46971:.claude/skills/code-review/SKILL.md | grep -c four
+0
+```
+
+The frontmatter said **two axes**; it never promised four, and there was no hybrid — description and
+body agreed. What actually drifted was **the record against the skill**: `review.md` documents four
+axes having run while the committed skill defined two. That is still the real defect, and still why
+row 9 was worth acting on. The sentence simply misdescribes the artifact — and its error shape is
+the one this work item keeps meeting: attributing to one file what was measured about a different
+pairing.
+
+**2. "six sibling skills" is wrong; seven shipped one at the merge.**
+
+```
+$ git ls-tree -r --name-only 0b46971 .claude/skills | grep -c 'agents/openai.yaml'
+7
+```
+
+Line 671 says "matching the six sibling skills that ship one". Seven did at `0b46971` —
+`finishing-a-development-branch`, `setup-agentic-workflow`, `to-spec`, `to-tickets`,
+`using-git-worktrees`, `verification-before-completion`, `writing-plans` — and with `code-review`
+added, eight do now.
+
+**3. An unrecorded scope change: the smell baseline was swapped, not shrunk.** Line 669 calls
+`smells.md` "the reference the four-axis skill points at, which the two-axis body had inlined
+instead". It is more than a relocation. The inlined baseline named twelve Fowler smells, each with a
+*what it is → how to fix* clause; the personal `smells.md` carries twelve different, shorter prompts.
+Net effect — `Mysterious Name` and `Refused Bequest` are no longer named, while `Long parameter
+list`, `Parallel inheritance hierarchies` and `Comments compensating for unclear structure` are.
+Twelve for twelve, so the complexity axis read it as "a strict shrink" and the specification axis
+read it as two smells lost; both are describing the same swap from opposite ends and neither
+description is complete. Row 9's authority covered **the axes**, not the smell set, so this is a
+scope change that no requirement asked for. Recorded, not corrected: the resolution is the owner's
+call, and it changes what every future review in this repository is prompted by.
+
+**Also corrected in this pass, in place rather than here.** The same review's standards axis found
+the range writing down the standing-claim rule and then not applying it to three artifacts the rule
+names by title — `delivery.md`, `review.md`, `verification.md` each carried claims this branch had
+falsified (source identity `eaf006e`, "every later commit is docs-only", `never pushed`, "no merge
+was performed"). Those are standing claims, so they were corrected where they stood, each carrying
+the command that proves the new figure. This ledger is the one artifact of the four that was left
+standing — deliberately.
+## Correction — appended 2026-09-24 (second pass; this ledger is not rewritten)
+
+The first follow-up pass corrected four claims. Re-measuring the corrected artifacts found three more
+errors, plus two defects that the first pass introduced. All are recorded here; the standing claims
+they touch (`delivery.md`, `review.md`, `verification.md`) were corrected in place.
+
+**4. The PR's range ended at the wrong commit.** The records pinned PR #20 at `0d371ef..aa1d2ca` —
+"16 commits, 12 paths, +2527/-44". `aa1d2ca` is not the PR's head. The delivery-actions commit
+`cd6e547` was pushed on top of it, so the merged PR is **17 commits, 12 paths, +2581/-44**:
+
+```
+$ git ls-remote origin 'refs/pull/20/head'
+cd6e5474576c5b6436c292bf57f47f92cf52d2e9	refs/pull/20/head
+$ git diff --shortstat 0d371ef..aa1d2ca
+ 12 files changed, 2527 insertions(+), 44 deletions(-)
+$ git diff --shortstat 0d371ef..cd6e547
+ 12 files changed, 2581 insertions(+), 44 deletions(-)
+$ git rev-list --count 0d371ef..cd6e547
+17
+```
+
+2527 + 54 = 2581, and the 54 lines are `cd6e547`'s own additions to `delivery.md`. This is why the
+record appeared to disagree with the GitHub API, which reported `additions: 2581` for PR #20 — checked
+with `gh pr view 20 --json additions,deletions,changedFiles`. The instinct to reconcile the two as an
+unexplained discrepancy was wrong: GitHub was right and the record had named a commit that is not the
+PR. The quoted `gh pr view` read-back in §Executed stays verbatim, because it is a faithful snapshot
+of the PR *as created* — at `aa1d2ca`, 16 commits — and it is labelled as such now.
+
+**5. The missing-dep count is eight, not six — and not seven either.** `704f443` corrected the driver's
+diagnosis to "six missing deps". Six is what TypeScript prints: an intersection-type failure is
+reported through **one constituent only**, and the list is truncated ("…and 2 more"), so the compiler
+never sees `QueueDeps`' `refreshRemoteRefs` or the inline `runPlan`. Enumerating every constituent's
+required members and diffing them against the literal's keys gives eight:
+
+```
+$ sed -n '/^export interface LoopDeps/,/^}/p' src/loop.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u   # 19
+$ sed -n '/^export interface QueueDeps/,/^}/p' src/queue.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u   # 7
+$ sed -n '114,212p' docs/work/WI-6/evidence/canary-red-driver.ts \
+    | grep -oP '^\s{2}(?:async\s+)?\K[a-zA-Z_]+(?=\s*[(:,])' | sort -u              # 20 present
+$ comm -23 <(cat loopdeps.txt queuedeps.txt <(printf 'runPlan\n') | sort -u) present.txt
+branchConflictsWithMain
+commentOnIssue
+pushBranch
+readIssueLabels
+refreshRemoteRefs
+runMerger
+runPlan
+setIssueLabel
+```
+
+*The first attempt at this command was wrong and is recorded because it nearly became evidence.* It
+matched member declarations with `^\s{2}[a-zA-Z_]+`, which captures `async` and `readonly` as names
+and the real member as a following token — so `deleteBranch`, plainly present in the literal as
+`async deleteBranch(repoDir, branchToDelete)`, was reported **absent**. The corrected pattern uses
+`(?:readonly\s+|async\s+)?\K` to skip modifiers. A command whose output contradicts what is visibly
+in the file is not evidence of anything.
+
+**6. Two line-number citations in `verification.md` were stale.** `:3935` and `:3821` referred to the
+pre-deletion tree. `72faee7` removed two assertions at `:3814`/`:3817`, moving everything below the
+cut up by two:
+
+```
+$ sed -n '3819p;3933p' src/loop.test.ts
+    expect(report.stderr).toContain(`harness-failed label remove failed: ${REASON}`);
+    expect(text).toContain("LABEL REMOVE FAILED gh-1: gh: label remove failed — network");
+```
+
+Corrected to `:3933` and `:3819`. This is the same drift already corrected in `delivery.md` risk 3 —
+the first pass fixed one artifact and did not check whether the same citation appeared in the other.
+
+**7. Two defects introduced by the first correction pass itself.**
+
+- **A printed command whose output no command produces.** The §Branch and base correction printed
+  `git branch -r --contains 39d1b26` → `origin/worktree-wi-15`. That line was copied from an earlier
+  section of the record instead of re-run. The real output is `origin/HEAD -> origin/main` and
+  `origin/main`: the branch was deleted from the remote when PR #20 merged. This is the exact defect
+  class the work item exists to remove, committed inside the correction written to remove it.
+- **A table split in two.** The same correction inserted its prose into the middle of §Branch and
+  base's six-row table, orphaning the `Status` row below the notes. `git show HEAD:docs/work/WI-15/delivery.md`
+  shows the committed section was a six-row table and nothing else, so the breakage was introduced
+  here, not inherited.
+
+Both are now fixed, and both are the reason the second pass re-ran every command it had printed
+rather than reading the figures off the first pass's text.
+
+## Correction — appended 2026-09-24 (third pass; this ledger is not rewritten)
+
+**8. The commit messages on this branch assert things this ledger's corrections now deny, and they
+cannot be corrected in place.** A commit message is immutable history. Nine commits sat on
+`wi-15-followup` when this note was written — the note's own commit (`1fb2b3a`) makes ten, and a
+commit cannot describe itself. Of those nine, the following carry a claim the records have since
+corrected:
+
+| Commit | What its message asserts | What the records now say |
+|---|---|---|
+| `dbc2bc8` | `chore(wi-15): bring the committed code-review skill up to the four axes actually run` | The instruction was **"bring the repo's code-review up to what was run"** — the whole skill directory. "The four axes" under-describes it, and the narrowing is what made `smells.md` and `agents/openai.yaml` look like unauthorized extras. `delivery.md` row 9, `review.md` round 3 |
+| `704f443` | `docs(wi-15): correct the WI-6 driver diagnosis — six missing deps, broken since WI-13` | **Eight** missing deps. The six came from TypeScript reporting an intersection through one constituent only. `delivery.md` row 6, risk 4, `verification.md` |
+| `0cd33bb` | `docs(wi-15): write down the correction-recording rule — both behaviors, chosen by artifact` | Accurate. Listed only to show the sweep was over all nine, not just the two known-suspect ones |
+| `7f14f52`, `f912a81` | The two corrections themselves | Accurate at the time of writing |
+
+The remaining **four** commits — `72faee7`, `a82127b`, `0a54a66`, `0dad330` — were read against the
+current records and carry no claim those records contradict. Five in the table plus four here is the
+nine that existed; the count is stated rather than implied because the first draft of this note said
+"the remaining five" and named four, and a count that disagrees with its own enumeration is the
+vacuous-evidence class this work item exists to remove. Corrected in place, following the precedent
+of item 7 above: a defect introduced by a correction pass, not a belief held at a checkpoint, is not
+part of what a chronological ledger exists to preserve.
+
+```
+$ git log --format='%h %s' origin/main..HEAD
+f912a81 docs(wi-15): close the smell-list question — owner keeps the twelve that ran
+7f14f52 docs(wi-15): relay the owner instruction verbatim into row 9 and the round-3 scope finding
+0dad330 docs(wi-15): correct the follow-up records — wrong PR endpoint, eight deps, round-3 verdicts
+0a54a66 docs(wi-15): mark the two WI-6 requeue proofs unrunnable, line numbers re-measured
+a82127b docs(wi-15): close the pending list — merge landed, the main-push row is void
+72faee7 test(wi-15): drop the duplicate and subsumed assertions the review flagged
+0cd33bb docs(wi-15): write down the correction-recording rule — both behaviors, chosen by artifact
+dbc2bc8 chore(wi-15): bring the committed code-review skill up to the four axes actually run
+704f443 docs(wi-15): correct the WI-6 driver diagnosis — six missing deps, broken since WI-13
+```
+
+**Why this is a note and not an amend.** Rewriting `dbc2bc8` or `704f443` would change every SHA
+after them and discard the record of *when* the error was believed — which is the one thing a
+chronological ledger exists to preserve, and the reason this ledger is appended to rather than
+rewritten. The reader who reaches `dbc2bc8` by `git log` and stops there is the reader this note is
+for: without it, the commit message is the only artifact they will have seen, and it is the one
+artifact no correction can reach.
+
+Nothing in this note changes a delivered file. It exists so that "the record" and "the history"
+cannot be read as disagreeing when they are read separately.

@@ -20,11 +20,38 @@ line, no new vocabulary. The label's name is defined once as `HARNESS_FAILED_LAB
 `already exists` check on label *creation* is deliberately kept (prd decision 5) and named as the
 exception in the spec, the code comment and the `CLAUDE.md` row.
 
-**Scope:** the pull request is `0d371ef..HEAD` — **12 files, +2527/-44** (the deviation note under
-Executed external actions explains why this is larger than the branch range). The `src/` change alone
-is **186 insertions / 43 deletions across exactly two files**; everything else is this work item's
-mandated lifecycle records, the recorded `gh` probes, and the three planning-chain inputs T0
-committed to local `main`.
+**Scope:** the pull request is `0d371ef..cd6e547` — **12 files, +2581/-44, 17 commits** (the
+deviation note under Executed external actions explains why this is larger than the branch range).
+The `src/` change alone is **186 insertions / 43 deletions across exactly two files**; everything
+else is this work item's mandated lifecycle records, the recorded `gh` probes, and the three
+planning-chain inputs T0 committed to local `main`.
+
+*Corrected 2026-09-24.* This line previously read "`0d371ef..HEAD` — **12 files, +2527/-44**". Two
+errors, both in the endpoint rather than the arithmetic:
+
+- **`HEAD` is not the PR.** At the current follow-up tip the same range measures 19 files,
+  +3045/-126. The PR's endpoint is the branch tip it was merged from, `cd6e547`.
+- **`+2527` is the churn at `aa1d2ca`, not at the PR head.** `cd6e547` is one commit later and adds
+  54 lines to this very file — 2527 + 54 = 2581. That 54-line gap is the whole of what looked like a
+  disagreement with GitHub, which reported `additions: 2581` for PR #20. GitHub was right; this
+  record had named the wrong commit. Verified:
+
+```
+$ git diff --shortstat 0d371ef..aa1d2ca
+ 12 files changed, 2527 insertions(+), 44 deletions(-)
+$ git diff --shortstat 0d371ef..cd6e547
+ 12 files changed, 2581 insertions(+), 44 deletions(-)
+$ git rev-list --count 0d371ef..cd6e547
+17
+$ git ls-remote origin 'refs/pull/20/head'
+cd6e5474576c5b6436c292bf57f47f92cf52d2e9	refs/pull/20/head
+$ gh pr view 20 --json additions,deletions,changedFiles --jq '"\(.changedFiles) files, +\(.additions)/-\(.deletions)"'
+12 files, +2581/-44
+```
+
+GitHub's `additions` and `git diff --shortstat` agree exactly once the endpoint is right. The
+`+2527` figure was not a GitHub discrepancy to be reconciled; it was a stale endpoint to be
+corrected.
 
 ## Plan artifacts
 
@@ -44,14 +71,27 @@ committed to local `main`.
 
 ## Verification
 
-Run fresh at `0035506`; `src/` is byte-identical at every later commit, all of which are docs-only
-(`git log -1 --format='%H %s' -- src/` → `eaf006e`). Re-run independently at HEAD by three of the
-four review axes.
+Run fresh at `0035506`; within the delivered range `39d1b26..cd6e547`, `src/` is byte-identical at
+every later commit, all of which are docs-only (`git log -1 --format='%H %s' -- src/` → `eaf006e`).
+Re-run independently at HEAD by three of the four review axes.
+
+*Corrected 2026-09-24.* This paragraph previously read "`src/` is byte-identical at every later
+commit, all of which are docs-only (`git log -1 --format='%H %s' -- src/` → `eaf006e`)" with no
+range scope. The follow-up branch `wi-15-followup` then changed `src/` itself — `72faee7` deletes
+two assertions from `src/loop.test.ts` (risk 5) — so unscoped the sentence was false of the branch
+as it now stands, and the command it prints proved the opposite of the sentence it sat beside:
+
+```
+$ git log -1 --format='%H %s' -- src/      # at the delivered tip cd6e547
+eaf006e … fix(wi-15): spec-review findings …
+$ git log -1 --format='%H %s' -- src/      # at the follow-up tip
+72faee7 test(wi-15): drop the duplicate and subsumed assertions the review flagged
+```
 
 | Command | Exit | Observed |
 |---|---|---|
 | `npm run typecheck` | 0 | `tsc --noEmit`, no diagnostics |
-| `npx vitest run src/loop.test.ts` | 0 | 164 passed (1 file) — 2 new tests, no existing assertion changed |
+| `npx vitest run src/loop.test.ts` | 0 | 164 passed (1 file) — 2 new tests, no existing assertion changed **at `0035506`** (see below) |
 | `npm test` | 0 | 285 passed (10 files) |
 
 The RED was reproduced independently in a throwaway copy: pre-T3 `src/loop.ts` beside the HEAD test
@@ -92,18 +132,66 @@ assertion — not a compile error, as the plan predicted.
    distinguishes the cases; the line deliberately does not.
 3. **A deferred negative assertion** — `src/loop.test.ts:3792` asserts against a hard-coded label
    name, so a rename would leave it passing vacuously. Well-founded deferral: sibling assertions at
-   `:3744`, `:3753`, `:3821` and `:3935` pin the rendered text and would fail loudly on a rename.
-4. **`docs/work/WI-6/evidence/canary-red-driver.ts:106` does not compile** — a `QueueLoopDeps`
-   literal carrying neither `setIssueLabel` nor `readIssueLabels`, uncompilable since WI-14, outside
-   `tsconfig.json`'s include, last touched by `aa6f2e0`. **Pre-existing; WI-15 deepens existing rot
-   rather than creating it**, and it is surfaced to the owner rather than fixed here.
-5. **Two deferred test assertions** — `src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
+   `:3744`, `:3753`, `:3819` and `:3933` pin the rendered text and would fail loudly on a rename.
+   *Corrected 2026-09-24 — the last two previously read `:3821` and `:3935`, measured before the
+   follow-up's two-line deletion in this file shifted every line beneath it; `:3744` and `:3753` sit
+   above the cut and are unaffected. Re-measured, not adjusted: `sed -n '3819p;3933p'
+   src/loop.test.ts` returns the two `toContain` assertions.*
+4. **`docs/work/WI-6/evidence/canary-red-driver.ts:114` does not compile** — a `QueueLoopDeps`
+   literal still carrying the two properties WI-13 retired (`runTriage`, `triage`) and missing
+   **eight** required deps added since: `branchConflictsWithMain`, `commentOnIssue`, `pushBranch`,
+   `readIssueLabels`, `refreshRemoteRefs`, `runMerger`, `runPlan`, `setIssueLabel` — six from
+   `LoopDeps` (WI-13: `branchConflictsWithMain`, `runMerger`, `pushBranch`; WI-14: `commentOnIssue`,
+   `setIssueLabel`; WI-15: `readIssueLabels`), one from `QueueDeps` (`refreshRemoteRefs`, required
+   since WI-7), and one from the inline `& { runPlan(…) }` constituent (required since WI-13). It is
+   outside `tsconfig.json`'s include, and was last touched by `aa6f2e0` **at the PR head `cd6e547`**
+   — at this follow-up branch's tip the last touch is `704f443`, the banner correction itself.
+   **Broken since WI-13 (`cca5e53`), not WI-14.**
+
+   *Corrected 2026-09-24 — this entry first said "carrying neither `setIssueLabel` nor
+   `readIssueLabels`, uncompilable since WI-14" (two named, break dated one work item late), then
+   "**six** required deps" (undercount by two). The six was read off TypeScript's own message, which
+   reports an intersection failure through **one constituent only** and truncates the list — hence
+   "…and 2 more". Enumerating all three constituents against the literal gives eight.* The set is
+   reproducible — required members per constituent, minus the literal's keys:
+
+```
+$ sed -n '/^export interface LoopDeps/,/^}/p' src/loop.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u    # 19 members
+$ sed -n '/^export interface QueueDeps/,/^}/p' src/queue.ts \
+    | grep -oP '^\s{2}(?:readonly\s+|async\s+)?\K[a-zA-Z_]+(?=\s*[(:<])' | sort -u    # 7 members
+$ sed -n '114,212p' docs/work/WI-6/evidence/canary-red-driver.ts \
+    | grep -oP '^\s{2}(?:async\s+)?\K[a-zA-Z_]+(?=\s*[(:,])' | sort -u                # 20 keys present
+# plus `runPlan` from the inline constituent; set difference is the eight listed above
+```
+
+   **Pre-existing; WI-15 deepens existing rot rather than creating it.** Labelled in place rather
+   than repaired (owner decision, 2026-09-24): its header now says it is a historical artifact that
+   must not be run.
+   **Extended 2026-09-24:** the same class covers `docs/work/WI-6/evidence/requeue-proof.ts` and
+   `t7b-requeue-proof.ts`, which were not known when this risk was written. Both are a *one-dep*
+   break — `refreshRemoteRefs`, required since WI-7 (`7d84b10`) — not the driver's eight, and both
+   now carry the same banner. WI-6's `verification.md` command sites (`:277`, `:311`, `:472`) each
+   carry a *Historical — do not re-run* note; the command lines are kept, because the runs really
+   happened and their logs are the evidence. Proving commands in `implementation-notes.md`.
+5. **Two deferred test assertions** — **closed 2026-09-24** (owner decision) on the follow-up
+   branch: the duplicate and the subsumed assertion are both deleted, `src/loop.test.ts` only,
+   `src/loop.ts` byte-identical. *Was:* "`src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
    subsumed by `:3818`. Not corrected because a `src/` edit would void both current verdicts for a
-   cosmetic duplicate.
-6. **FR-006's spec text says "one line" under `## Lessons`; two landed.** Both are true and both
-   concern this work item's defect classes, and `CLAUDE.md`'s standing self-learning rule asks for a
-   line per caught mistake — so the spec text is one line behind the delivery rather than the
-   delivery being out of scope.
+   cosmetic duplicate" — a reason that stopped applying once the branch merged, since the verdicts
+   then described a delivered tree either way. Coverage-preserving, and proven rather than asserted:
+   with the read-failure path mutated to record nothing, the surviving
+   `expect(escalationLabelFailure).toBe(REASON)` still fails; with `merged` mutated to differ, the
+   surviving `expect(rest).toEqual(baseline)` still fails. Proving commands in
+   `implementation-notes.md`.
+6. **FR-006's spec text says "one line" under `## Lessons`; WI-15's delivery landed two.** Both are
+   true and both concern this work item's defect classes, and `CLAUDE.md`'s standing self-learning
+   rule asks for a line per caught mistake — so the spec text is one line behind the delivery rather
+   than the delivery being out of scope. *Scoped 2026-09-24: "two" counts the lines this work item
+   landed. The follow-up branch then added two more lessons of its own (the stale-file re-measure
+   and the enumerating-the-whole-drift lesson), so `CLAUDE.md` now carries seven `## Lessons` lines
+   in total. The divergence this risk records is still WI-15's two — the count is now stated against
+   its scope rather than left for a reader to measure against the file.*
 7. **`node_modules` shows as untracked** — `.gitignore`'s `node_modules/` trailing slash matches real
    directories but not this worktree's symlink. It is not in the tree
    (`git ls-tree -r --name-only HEAD | grep -c '^node_modules'` → 0) and not in the range; recorded so
@@ -132,11 +220,42 @@ were reached independently by two axes each.
 
 | | |
 |---|---|
-| Branch | `worktree-wi-15` (no upstream configured — never pushed) |
-| Base | `main` @ `39d1b26` — also the merge-base, so the range is clean |
+| Branch | `worktree-wi-15` — upstream `origin/worktree-wi-15`; pushed, then merged (see §Executed) |
+| Base | `main` @ `39d1b26` at branch time — also the merge-base, so the delivered range is clean. `main` has since moved to `0b46971` |
 | Remote | `origin` → `git@github.com:manjula25/software-factory-loop.git` |
 | Worktree | `.claude/worktrees/wi-15` |
 | Status | clean except the documented `node_modules` symlink (risk 7) |
+
+*Corrected 2026-09-24.* The Branch row previously read "`worktree-wi-15` (no upstream configured —
+never pushed)", and the Base row gave `main` @ `39d1b26` without noting that `main` had moved. Both
+were accurate when this section was written — before the push this record itself later executed —
+and both went stale the moment §Executed and §Pending actions recorded that push and the human
+merge. The table contradicted the sections beneath it. Verified:
+
+```
+$ git rev-parse main origin/main
+0b46971544e50feee3bdacb1ec16cc1167f6678b
+0b46971544e50feee3bdacb1ec16cc1167f6678b
+$ git branch -r --contains 39d1b26
+  origin/HEAD -> origin/main
+  origin/main
+$ git ls-remote origin | grep -c worktree-wi-15
+0
+```
+
+*Corrected again, 2026-09-24.* The first version of this note printed `git branch -r --contains
+39d1b26` → `origin/worktree-wi-15`. That output was copied out of an earlier section of this record
+instead of being re-run, and it is stale: the branch was merged and deleted on the remote, so only
+`origin/main` remains. The push happened — §Executed records it, and PR #20's head survives as
+`refs/pull/20/head` → `cd6e547` — but the ref it created is gone. A printed command whose output was
+not re-measured is the exact defect this whole work item exists to repair, committed here inside the
+correction meant to fix it.
+
+*Fixed 2026-09-24.* The two correction notes above were first inserted **into the middle of this
+table**, orphaning its `Status` row below the prose and splitting the table in two. The row is back
+where it was; the notes follow the table. The committed version of this section was a six-row table
+and nothing else — `git show HEAD:docs/work/WI-15/delivery.md` — so the breakage was introduced by
+this correction, not inherited.
 
 ## Commit range
 
@@ -159,7 +278,10 @@ e12d8f4 docs(wi-15): correct the six re-review findings in the verification reco
 9cee32a docs(wi-15): stage-4 review record — four axes, two rounds
 ```
 
-Only `9c19268`, `9970111`, `3c0571b` and `eaf006e` touch `src/`; every later commit is docs-only.
+Within the delivered range, only `9c19268`, `9970111`, `3c0571b` and `eaf006e` touch `src/`; every
+later commit there is docs-only. *Corrected 2026-09-24 — this sentence previously stood unqualified.
+The follow-up branch added `72faee7`, which touches `src/loop.test.ts` (risk 5); the proving command
+is printed in §Verification above.*
 
 **This record's own commit is not in the range above.** A delivery record cannot count the commit
 that adds it. It is docs-only, so it adds one commit and no new path: the delivered range is
@@ -176,8 +298,14 @@ $ git diff --name-only 39d1b26...HEAD | wc -l
 `main`. The owner authorized this exact scope explicitly, before either action ran.
 
 Per this repository's hard constraint 1 and the project copy of this skill, delivery is a pull
-request and nothing else. **No merge, no deployment, no tracker transition was requested, and none
-was performed** — merging belongs to a human reviewer.
+request and nothing else. **The harness requested no merge, no deployment, and no tracker
+transition, and performed none** — merging belongs to a human reviewer.
+
+*Corrected 2026-09-24.* This paragraph previously read "**No merge … was requested, and none was
+performed**", which a reader now takes as a statement about the work item's outcome. It is not. It
+states what the *harness* did and asked for; a **human** then merged PR #20 as `0b46971`, recorded
+in §Pending actions row 3. The harness still merged nothing, and hard constraint 1 held throughout —
+the distinction the original wording collapsed.
 
 ## Executed external actions and observed results
 
@@ -195,8 +323,30 @@ base=main  head=worktree-wi-15  mergeable=MERGEABLE  mergeState=CLEAN
 files=12  +2527 -44  commits=16
 ```
 
-**`main` was not pushed and not modified.** The merge-base of `origin/main` and this branch is
-`0d371ef`, unchanged. Nothing was merged; `mergedAt` is null.
+*Noted 2026-09-24 — this read-back is kept verbatim and is a faithful snapshot of PR #20 as created,
+at head `aa1d2ca`. It is no longer the PR's final shape:* the delivery-actions commit `cd6e547` was
+pushed on top of it, so the merged PR carries **17 commits and +2581/-44**. The figures differ by
+exactly that commit. `gh pr view 20` today returns `12 files, +2581/-44`; see the Scope note above
+for the proving commands.
+
+**At the time of that read-back, `main` had not been pushed and not been modified.** The merge-base
+of `origin/main` and this branch was `0d371ef`, unchanged, and nothing had been merged; `mergedAt`
+was null.
+
+*Corrected 2026-09-24 — the paragraph above previously stood in the present tense, without "at the
+time of that read-back".* Both then and now the quoted `gh pr view` output above is a faithful
+read-back of PR #20 at creation, and it is kept verbatim as what was observed then. What has since
+changed: a human merged PR #20 as `0b46971`, and local `main` and `origin/main` are both that
+commit. Verified:
+
+```
+$ git rev-parse main origin/main HEAD
+0b46971544e50feee3bdacb1ec16cc1167f6678b      # main
+0b46971544e50feee3bdacb1ec16cc1167f6678b      # origin/main
+0a54a6684e4b4c1663800eaa63cd4c88bb8fe641      # this branch
+$ git merge-base --is-ancestor main origin/main && echo "main is an ancestor of origin/main"
+main is an ancestor of origin/main
+```
 
 ### A deviation: the PR carries the T0 planning commit, which the plan intended to be already on main
 
@@ -205,10 +355,26 @@ the implementation range alone." T0 did commit them — `39d1b26` is on local `m
 **never pushed**, because this plan recorded "Not pushed — pushing is a separate, explicitly
 authorized delivery action", and no authorization for it was given until now.
 
-So the PR's range is `0d371ef..aa1d2ca` — **16 commits, 12 paths, +2527/-44** — not the
+So the PR's range is `0d371ef..cd6e547` — **17 commits, 12 paths, +2581/-44** — not the
 `39d1b26..HEAD` figure of 14 commits / 10 paths that this record's earlier sections describe. The two
 extra paths are `docs/work/WI-15/prd.md` and `docs/work/WI-15/slices.md`; `specification.md` is in
-both ranges. Verified:
+both ranges.
+
+*Corrected 2026-09-24.* This sentence previously read "`0d371ef..aa1d2ca` — **16 commits, 12 paths,
++2527/-44**". `aa1d2ca` is the commit *before* the PR's head: the delivery-actions commit `cd6e547`
+was pushed on top of it, so the PR carries 17 commits and 2581 insertions. Same root cause as the
+Scope line above; the paths and the deviation itself are unchanged. Verified:
+
+```
+$ git diff --shortstat 0d371ef..cd6e547
+ 12 files changed, 2581 insertions(+), 44 deletions(-)
+$ git rev-list --count 0d371ef..cd6e547
+17
+$ git diff --name-only 0d371ef..cd6e547 | wc -l
+12
+```
+
+Original verification, still accurate for the merge-base and the extra two paths:
 
 ```
 $ git merge-base origin/main HEAD
@@ -234,20 +400,68 @@ not against any client repo. The `cli/cli` probes recorded in
 engaged — that repository is public and carries no client data — but the scope overrun is real and is
 surfaced in Pending actions).
 
+### The follow-up's own actions (2026-09-24) — a second, separate delivery
+
+The follow-up branch `wi-15-followup` is a **second delivery, not part of PR #20's range**. Its two
+external actions were authorized in the owner's words *"push it and open a pr"* and executed:
+
+| Action | Command | Observed |
+|---|---|---|
+| Push the branch | `git push -u origin wi-15-followup` | `* [new branch] wi-15-followup -> wi-15-followup`; upstream set |
+| Open the PR | `gh pr create --base main --head wi-15-followup …` | [PR #21](https://github.com/manjula25/software-factory-loop/pull/21) |
+
+Read back from GitHub rather than taken from the create command, then reconciled against the pushed
+ref measured locally — both figures agree exactly:
+
+```
+$ gh pr view 21 --json state,baseRefName,headRefName,mergeable,additions,deletions,changedFiles
+PR #21  state=OPEN  base=main  head=wi-15-followup  mergeable=MERGEABLE
+13 files, +1084/-145
+
+$ git fetch -q origin wi-15-followup
+$ git diff --shortstat origin/main..origin/wi-15-followup
+ 13 files changed, 1084 insertions(+), 145 deletions(-)
+$ git ls-remote origin 'refs/heads/wi-15-followup'
+0fee38a736a05347947e6dce0788365bf9514aca	refs/heads/wi-15-followup
+```
+
+**Not merged, and not merged by the harness.** `mergeable=MERGEABLE` is GitHub's computation, not an
+action. Hard constraint 1 holds unchanged: the harness's own repository keeps human merge regardless,
+so PR #21 needs a human.
+
+Gates re-run **at the pushed candidate `0fee38a`**, not read off the earlier follow-up run, because
+`src/loop.test.ts` is in this range:
+
+```
+$ npm run typecheck   → tsc --noEmit, exit 0
+$ npm test            → Test Files 10 passed (10); Tests 285 passed (285), exit 0
+```
+
 ## Pending actions
 
 | # | Action | Needs | Notes |
 |---|---|---|---|
 | 1 | ~~Push `worktree-wi-15` to `origin`~~ | **done** | executed with authorization; observed above |
 | 2 | ~~Open the PR against `main`~~ | **done** | [PR #20](https://github.com/manjula25/software-factory-loop/pull/20) |
-| 3 | Merge | **a human reviewer** | hard constraint 1 — the harness's own repository keeps human merge regardless |
-| 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
-| 5 | `src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions | owner decision | deferred; a `src/` edit voids both verdicts |
-| 6 | `canary-red-driver.ts` uncompilable | owner decision | pre-existing since WI-14 (risk 4) |
-| 7 | FR-006 "one line" vs two `## Lessons` lines | owner decision | spec text one line behind delivery (risk 6) |
+| 3 | ~~Merge~~ | **done** | human-merged as PR #20 on 2026-09-24 — merge commit `0b46971`. Hard constraint 1 held: the harness's own repository kept human merge throughout |
+| 4 | ~~Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range~~ | **void — no action needed** | the PR merged before this ran, so there is no open range left to shrink. Local `main` and `origin/main` are both `0b46971`, and `git merge-base --is-ancestor main origin/main` is true. The deviation this row existed to resolve is now historical only |
+| 5 | ~~`src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions~~ | **done** | owner chose 2026-09-24 to fix it; both lines deleted. The deferral's reason had expired — the verdicts described a delivered tree once the branch merged. Coverage proved by mutation (risk 5) |
+| 6 | ~~`canary-red-driver.ts` uncompilable~~ | **done** | owner chose (b) 2026-09-24 — labelled in place as a historical artifact; the records corrected (**eight** missing deps, broken since WI-13, not WI-14). **Widened** by a later owner instruction (2026-09-24, "fix the WI-6 pointer too"): the same class covers `requeue-proof.ts` and `t7b-requeue-proof.ts`, a *one-dep* break (`refreshRemoteRefs`, required since WI-7), so **three** files are labelled, not one — see risk 4 |
+| 7 | ~~FR-006 "one line" vs the `## Lessons` lines~~ | **done** | owner chose 2026-09-24 to leave it as is — the spec is a planning artifact and the delivery has moved past it; no edit made |
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
-| 9 | Personal-vs-project skill drift (`code-review` four-axis, `finishing-a-development-branch` missing the repo-context section) | owner decision | whether a `## Lessons` line belongs in `CLAUDE.md` or `~/.claude/CLAUDE.md` |
-| 10 | Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place) | owner decision | noted in `review.md` |
+| 9 | ~~Personal-vs-project skill drift~~ | **done** | Owner instruction, 2026-09-24, verbatim: **"bring the repo's code-review up to what was run"** — given in reply to the controller's measurement that the repo's committed `code-review` inlines its smell baseline and carries two axes, while every review this repo has run since WI-13 used a four-axis skill pointing at a separate `smells.md`. "What was run" is the whole skill directory, so the delivered change is three files — `SKILL.md` (the four axes), `smells.md` (the file the four-axis SKILL.md references by path), and `agents/openai.yaml`. The other 15 shared skills left as-is. This row named two skills — re-measured, **all 16** shared skills differ. Evidence in `implementation-notes.md`. *Corrected 2026-09-24 (**in place** — this is a standing claim): this row previously read "owner chose 2026-09-24 to bring the repo's `code-review` up to **the four axes** actually run", which under-describes both the instruction and what shipped. The instruction says "what was run", not "the axes"; narrowing it to the axes made the `smells.md` and `agents/` files look like unauthorized extras when they are the rest of the skill the instruction names. What the narrowing obscured is a real consequence rather than a scope overrun: the personal `smells.md` carries a different twelve prompts than the baseline the repo inlined, so `Mysterious Name` and `Refused Bequest` are no longer among the prompts a committed-skill review receives. Recorded at `review.md` round 3.* **Decided 2026-09-24 (owner): keep the twelve that ran** — the swap stands, `Mysterious Name` and `Refused Bequest` stay out. The deciding reason is the instruction itself: "what was run" is the twelve that were run, so restoring the repo's original twelve would leave the committed skill describing a review nobody has performed — the exact mismatch this row exists to close. The loss is now a recorded choice rather than an unrecorded side effect. No file changed as a result of this decision, so `smells.md` needs no re-verification. |
+| 10 | ~~Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place)~~ | **done** | owner chose 2026-09-24 to keep **both**, selected by artifact — standing claims corrected in place, the chronological ledger appended to. Rule written into `CLAUDE.md` under *The lifecycle*; `review.md`'s deferral updated |
+
+Rows 11–15 concern the **follow-up** branch (`wi-15-followup`), which is a separate delivery from
+PR #20's range.
+
+| # | Action | Needs | Notes |
+|---|---|---|---|
+| 11 | ~~Push `wi-15-followup` to `origin`~~ | **done** | owner instruction *"push it and open a pr"*, 2026-09-24; observed above |
+| 12 | ~~Open a PR for `wi-15-followup` against `main`~~ | **done** | [PR #21](https://github.com/manjula25/software-factory-loop/pull/21), read back and reconciled |
+| 13 | Merge PR #21 | **a human** | open. Hard constraint 1 — the harness never merges its own repository, whatever a profile says |
+| 14 | The five non-blocking complexity suggestions (`delete`/`shrink`, `src/loop.ts`) | **held, not applied** | recorded in `review.md` as held. Applying them touches behavior-bearing code after verification, which would owe a fresh verification round; the owner has not asked for them |
+| 15 | Delete the `wi-15-followup` branch and its worktree | **owner authorization per action** | destructive; not requested, not done. The branch is the record of this delivery until PR #21 merges |
 
 ### PR body as opened, then corrected
 
@@ -255,6 +469,13 @@ The body was sent with the PR and then edited once, to fix the scope figure: the
 said "9 files, 1705 insertions / 57 deletions", which is the `39d1b26..HEAD` branch range and **not**
 the PR's range. The deviation above explains the difference. The body now states the PR's real
 figures (12 files, +2527/-44) and notes that the range includes the T0 planning commit.
+
+*Superseded 2026-09-24.* The body edit fixed the right problem — the branch range was not the PR's
+range — but pinned the figures at `aa1d2ca`, which was not the PR's head. The live body of PR #20
+still reads "**12 files, +2527/-44, 16 commits.** Range `0d371ef..aa1d2ca`", while the merged PR is
+**12 files, +2581/-44, 17 commits** over `0d371ef..cd6e547`. The body is a published artifact on a
+merged PR; it is **not** edited here, because editing it is an outward-facing write that nobody
+authorized. Recorded instead as an inaccuracy that stands in the PR's own description.
 
 Original text as sent:
 

@@ -1,95 +1,84 @@
 ---
 name: code-review
-description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+description: Use when reviewing a fixed non-empty candidate against repository standards, specification, evidence integrity, and unnecessary complexity.
 ---
 
-Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
+# Code Review
 
-- **Standards** — does the code conform to this repo's documented coding standards?
-- **Spec** — does the code faithfully implement the originating issue / PRD / spec?
+Four axes, each a read-only reviewer with no access to the others' context, kept separate and never
+merged — a change can follow every standard and still implement the wrong thing, and reporting one
+axis' result as another's is how that goes unnoticed. `review.md` carries all four verdicts.
 
-Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
+The tracker is GitHub Issues on `manjula25/software-factory-loop` (policy:
+`docs/agents/issue-tracker.md`); work items are referenced as `WI-<n>`.
 
-The tracker is GitHub Issues on `manjula25/software-factory-loop` (policy: `docs/agents/issue-tracker.md`); work items are referenced as `WI-<n>`. The originating spec is the work item's `docs/work/{WORK_ITEM}/specification.md`, and product-level questions resolve against `harness-prd-v2.md`.
+## Required inputs
+
+A valid non-empty fixed point, exact candidate identity, and access to every changed file.
+
+## Optional inputs
+
+Approved specification, `docs/agents/project-policy.md`, repository standards, verification record,
+and [the smell reference](smells.md).
+
+## Required companion skills
+
+None.
+
+## Output
+
+`docs/work/{WORK_ITEM_ID}/review.md` with candidate identities, changed-path accounting, separate
+axis verdicts, classified findings, and unverified evidence.
 
 ## Process
 
-### 1. Pin the fixed point
+1. Pin the fixed point. Whatever the user named — a commit SHA, branch, tag, or `main` — resolve it
+   (`git rev-parse <fixed-point>`) and confirm the range `git diff <fixed-point>...HEAD` is
+   non-empty, along with `git log <fixed-point>..HEAD --oneline`. Both immutable identities are
+   pinned here. A bad ref or an empty diff fails **here**, not inside four reviewers.
+2. Enumerate and account for every changed file. Read repository policy, standards, approved
+   artifacts, and relevant source rather than reviewing a summary alone.
+3. Identify the specification, in this order: an issue reference in the commit messages (fetch via
+   `docs/agents/issue-tracker.md`); a path the user passed; the work item's
+   `docs/work/{WORK_ITEM}/specification.md`. Product-level questions resolve against
+   `harness-prd-v2.md`. If no specification exists, that axis is **unverified** — never a pass.
+4. Identify the standards sources: anything in this repo that documents how code should be written.
+   On top of them the standards axis always carries the smell baseline in [smells.md](smells.md),
+   under two binding rules — **this repo's documented standards override the baseline**, and every
+   baseline smell is a judgement call, never a hard violation. Skip anything tooling already
+   enforces.
+5. Run the four axes as separate read-only reviewers, one per axis, dispatched in a single message
+   so they run concurrently, with no access to each other's context:
 
-Whatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If they didn't specify one, ask for it.
+   | Axis | The question | Carries |
+   |---|---|---|
+   | **Repository standards** | Does the change conform to this repo's documented standards? | the diff, the standards sources, [the smell baseline](smells.md) |
+   | **Specification fidelity** | Does it implement what the originating spec asked? | the diff, the specification |
+   | **Evidence and risk integrity** | Do the record's claims match what its own commands produce? | the diff, the verification record, the verification commands in `docs/agents/workflow.md` — and the authority to **run** them |
+   | **Unnecessary complexity** | Is anything built that the specification does not need? | the diff, the specification |
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+   The evidence axis reads figures by **running** the commands, not by trusting the record. A
+   printed command that does not produce the table beneath it is the failure this axis exists to
+   catch, and it is the axis most likely to find a blocking finding.
+6. Keep the verdicts separate. Never merge or rerank them, and never report one axis' result as
+   another's. Classify findings by severity, distinguishing blocking findings, adjacent
+   observations, and missing evidence.
+7. Write `review.md` for the exact candidate. If candidate identity changes, discard the verdicts
+   and review the new range.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
+## Completion criterion
 
-### 2. Identify the spec source
+Every changed file is accounted for, all four axes have evidence-backed separate verdicts, blocking
+findings and unverified gaps are explicit, and the review applies to the exact candidate.
 
-Look for the originating spec, in this order:
+## Stop conditions
 
-1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.) — fetch via the workflow in `docs/agents/issue-tracker.md`.
-2. A path the user passed as an argument.
-3. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+Stop when the fixed point is invalid, range is empty, ancestry is invalid, candidate changes, changed
+paths cannot be inspected, required policy is unavailable, or evidence needed for a verdict is
+missing.
 
-### 3. Identify the standards sources
+## Next recommended skill
 
-Anything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.
-
-On top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:
-
-- **The repo overrides.** A documented repo standard always wins; where it endorses something the baseline would flag, suppress the smell.
-- **Always a judgement call.** Each smell is a labelled heuristic ("possible Feature Envy"), never a hard violation — and, like any standard here, skip anything tooling already enforces.
-
-Each smell reads *what it is* → *how to fix*; match it against the diff:
-
-- **Mysterious Name** — a function, variable, or type whose name doesn't reveal what it does or holds. → rename it; if no honest name comes, the design's murky.
-- **Duplicated Code** — the same logic shape appears in more than one hunk or file in the change. → extract the shared shape, call it from both.
-- **Feature Envy** — a method that reaches into another object's data more than its own. → move the method onto the data it envies.
-- **Data Clumps** — the same few fields or params keep travelling together (a type wanting to be born). → bundle them into one type, pass that.
-- **Primitive Obsession** — a primitive or string standing in for a domain concept that deserves its own type. → give the concept its own small type.
-- **Repeated Switches** — the same `switch`/`if`-cascade on the same type recurs across the change. → replace with polymorphism, or one map both sites share.
-- **Shotgun Surgery** — one logical change forces scattered edits across many files in the diff. → gather what changes together into one module.
-- **Divergent Change** — one file or module is edited for several unrelated reasons. → split so each module changes for one reason.
-- **Speculative Generality** — abstraction, parameters, or hooks added for needs the spec doesn't have. → delete it; inline back until a real need shows.
-- **Message Chains** — long `a.b().c().d()` navigation the caller shouldn't depend on. → hide the walk behind one method on the first object.
-- **Middle Man** — a class or function that mostly just delegates onward. → cut it, call the real target direct.
-- **Refused Bequest** — a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.
-
-### 4. Spawn both sub-agents in parallel
-
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.
-
-**Standards sub-agent prompt** — include:
-
-- The full diff command and commit list.
-- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full — the sub-agent has no other access to it.
-- The brief: "Report — per file/hunk where relevant — (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls — documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words."
-
-**Spec sub-agent prompt** — include:
-
-- The diff command and commit list.
-- The path or fetched contents of the spec.
-- The brief: "Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
-
-If the spec is missing, skip the Spec sub-agent and note this in the final report.
-
-### 5. Aggregate
-
-Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
-
-End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
-
-## Why two axes
-
-A change can pass one axis and fail the other:
-
-- Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**
-- Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
-
-Reporting them separately stops one axis from masking the other.
-
-## Next step
-
-Once `review.md` is committed under `docs/plans/{PLAN_ID}/` and its findings are resolved, ship the branch.
-
-To proceed, run the `finishing-a-development-branch` skill.
+Recommend `finishing-a-development-branch` only when blocking findings are resolved and verification
+remains fresh. A commit landing after the verdicts means those verdicts describe the earlier
+candidate — say so in `review.md` rather than leaving a reader to assume they cover the later tree.

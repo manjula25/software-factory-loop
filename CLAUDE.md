@@ -145,6 +145,15 @@ when a work item actually starts, not before. One exception: the planning-chain 
 derived from `harness-prd-v2.md`, not new product requirements, and the PRD still wins on
 any disagreement.
 
+**Correcting a record already written.** Two behaviors, chosen by the artifact rather than by taste.
+A **standing claim** — `delivery.md`, `review.md`, `verification.md`, and anything else a reader
+treats as current — is **corrected in place**, because a wrong claim left standing is a wrong answer,
+not a historical one. A **chronological ledger** — `implementation-notes.md` — gets an **appended
+note**, because its job is to record what was believed at each checkpoint, and rewriting it would
+erase when the error happened, which is the one thing it is for. Either way the correction states
+what the record previously claimed and carries the command that proves the new figure: a correction
+no one can re-run is just a second claim.
+
 ## Self-learning
 
 When corrected, or on catching a mistake, add the lesson as a one-line rule under `## Lessons`
@@ -158,3 +167,9 @@ before continuing. Project-specific lessons belong here; lessons that apply ever
 - A live run from a git worktree needs the untracked `.env` copied in first — a worktree carries only tracked files, and `main()` calls `loadEnv(process.cwd())` (2026-09-23: WI-14 T5; the credentials were genuinely absent from `wi-14`).
 - A subprocess classifier's reachability must be probed across **all** its cases before it is called dead code: probing the label-absent case alone looked like proof the classifier was unreachable, but the label-not-in-the-repo case is the one that fires it (2026-09-23, WI-15).
 - A check that cannot fail is not evidence: `grep "a|b"` without `-E` is a **literal** search in basic regex, so an implementer's "no matches" was guaranteed rather than informative — the deletion it claimed to prove was real, but the evidence for it was vacuous (2026-09-23, WI-15).
+- A stale file's rot is re-measured against the interface it imports today, never read off the record that last described it: an object literal carrying a property that no longer exists makes TypeScript report *that* error and **hide every missing property behind it**, so WI-15's recorded "two deps missing, uncompilable since WI-14" was really eight deps missing, broken since WI-13 (2026-09-24, `docs/work/WI-6/evidence/canary-red-driver.ts`).
+- A compiler's own count is not the whole set when the type is an intersection: TypeScript reports a missing-member failure through **one constituent only** and truncates the list ("…and 2 more"), so `QueueLoopDeps`'s real shortfall was 6 from `LoopDeps` + `refreshRemoteRefs` + `runPlan` = 8, while the error message — and every record that quoted it — said six, and a reviewer who added only the constituent they thought of said seven (2026-09-24, WI-15).
+- Pin a commit range to the commit the claim is *about*, never to `HEAD` or to whichever commit you happen to be standing on: WI-15's PR figures were measured at `aa1d2ca` while the PR's head was `cd6e547`, so a correct-looking `+2527` looked like a disagreement with GitHub's `+2581` — the 54 lines were the commit nobody had named (2026-09-24).
+- A correction that prints a command must re-run it: copying a command's output out of the text being corrected reproduces the stale figure *inside the correction*, which is how `git branch -r --contains` came to claim a branch that had already been deleted on merge (2026-09-24, WI-15 §Branch and base).
+- A record that names *examples* of a drift is not stating its extent — enumerate the whole set before quoting the sample: WI-15's pending list said two skills drifted between `~/.claude/skills/` and the committed `.claude/skills/`, and every one of the 16 shared skills did (2026-09-24, `.claude/skills/code-review`).
+- A numeral written beside the list it counts must be checked against that list, not composed from memory: WI-15's commit-sweep note said "the remaining five commits" in the same sentence that named four, and it said "nine commits sit on the branch" about a branch whose own note commit made ten — a count that disagrees with its own enumeration passes every reader who trusts the number and fails every reader who counts (2026-09-24, `docs/work/WI-15/implementation-notes.md` item 8).
