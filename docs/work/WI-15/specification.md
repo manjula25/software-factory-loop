@@ -145,8 +145,9 @@ None. Every decision this requirement set depends on was settled in the grilling
 
 ## Amendments
 
-**2026-09-24 — FR-005's success criterion (owner-authorized); FR-002's title and boundary, and
-the stale status headers (the controller's own calls, on the same reasoning).**
+**2026-09-24 — FR-005's success criterion (owner-authorized); FR-005's Behavior clause, FR-002's
+title and boundary, the non-functional evidence-boundary paragraph, and the stale status headers
+(the controller's own calls, on the same reasoning).**
 The specification review of the delivered implementation found FR-005's criterion — "no second
 literal of the label name remains in the source" — **unsatisfiable as written**: the label name
 legitimately survives in comments, JSDoc and the test fixtures, and stripping those would destroy
@@ -159,10 +160,16 @@ path" becomes "in the label removal path", which is the Behavior clause it alrea
 its boundary now names the kept create-time exception explicitly.
 
 **Authority, attributed exactly.** The owner was asked about **FR-005's criterion alone**, and
-directed it be amended. The FR-002 title and boundary change, and the correction of the stale
-status headers in this file and in `implementation-plan.md`, were the **controller's own calls**
-on the same reasoning. They are not presented here as owner decisions, and the heading above
-attributes them accordingly.
+directed it be amended. Everything else in this section is the **controller's own calls** on the
+same reasoning, and none of it is presented here as an owner decision: FR-005's **Behavior** clause
+gaining the verb "to name the label to the operator in the harness's own output"; FR-002's title and
+boundary; the reworded non-functional evidence-boundary paragraph ("nine blocks in two sets … plus a
+local `stdio` reproduction"); and the correction of the stale status headers in this file and in
+`implementation-plan.md`. The heading above attributes them accordingly.
+*(Enumeration completed 2026-09-24 after the stage-4 specification-fidelity review observed that the
+heading listed only three of these edits. The gap was understatement — a controller call left
+unnamed, never an owner decision overstated — but the section's stated job is to say what changed
+and by whose authority, and it did not say all of it.)*
 
 **No behavioral requirement changed.** Nothing the harness does is different, and the review found
 no behavior defect in the label path. The three message sites the review flagged —

@@ -4,12 +4,19 @@
 
 | | |
 |---|---|
-| **Candidate** | `0035506` (HEAD at the time of writing) |
+| **Gates run at** | `0035506` — the completion gates below were executed here |
+| **Reviewed candidate** | `5946199` — the four stage-4 review axes ran here |
+| **Corrected candidate** | the commit carrying the corrections below (docs-only) |
 | **Source identity** | `eaf006e` — the last commit touching `src/` |
 | **Base** | `39d1b26` (`main`) |
 | **Branch** | `worktree-wi-15`, worktree `.claude/worktrees/wi-15` |
-| **Range** | `39d1b26..0035506`, 10 commits |
-| **Changed paths** | 7 — `CLAUDE.md`, `docs/work/WI-15/{evidence/label-state-probes.log,implementation-notes.md,implementation-plan.md,specification.md}`, `src/loop.test.ts`, `src/loop.ts` |
+| **Range at `0035506`** | `39d1b26..0035506`, 10 commits, **7** changed paths — `CLAUDE.md`, `docs/work/WI-15/{evidence/label-state-probes.log,implementation-notes.md,implementation-plan.md,specification.md}`, `src/loop.test.ts`, `src/loop.ts` |
+| **Range at `5946199`** | `39d1b26..5946199`, 11 commits, **8** changed paths — the seven above plus `docs/work/WI-15/verification.md`, this file |
+
+The path count moves by one because a verification record cannot count its own commit: at
+`0035506` this file did not yet exist. The range and path list are given for the gate candidate and
+for the reviewed one rather than as a single figure, so neither reads as a claim about a tree it did
+not describe.
 
 **What "source identity" means here, and why it is stated separately.** Four commits follow
 `eaf006e` — the spec amendment `f988101`, the docs-hygiene fix `5bd9a8a`, the attribution fix
@@ -69,13 +76,13 @@ assertions.
 
 | FR | Claim | Proving evidence | Result |
 |---|---|---|---|
-| FR-001 | The removal decides from the issue's labels; a missing label is a no-op | `src/loop.ts:833` (`if (!labels.includes(HARNESS_FAILED_LABEL)) return {}`); test **(f)** `src/loop.test.ts:3769` — `readLabels: []` → `expect(deps.setIssueLabel).not.toHaveBeenCalled()` | pass |
+| FR-001 | The removal decides from the issue's labels; a missing label is a no-op | `src/loop.ts:833-836` (`if (!labels.includes(HARNESS_FAILED_LABEL)) {` at `:833`, `return {};` at `:836`); test **(f)** `src/loop.test.ts:3769` — `readLabels: []` → `expect(deps.setIssueLabel).not.toHaveBeenCalled()` | pass |
 | FR-001 | A source with no GitHub issue is neither read nor removed | `src/loop.ts:821-823` (the `url === undefined` guard precedes the read); test **(e)** `src/loop.test.ts:3757` — extended with `expect(deps.readIssueLabels).not.toHaveBeenCalled()` | pass |
 | FR-002 | No error text is interpreted in the **removal** path | Diff-level deletion proof plus the regex sweep below (this section) | pass (diff-verified, not test-verified) |
 | FR-002 | A failed removal on a confirmed-present label is recorded verbatim, never excused | `src/loop.ts:838-842` (bare call, no classifier); test **(d)** `src/loop.test.ts:3720` — throw recorded, `setIssueLabel` called exactly once (never retried), run green | pass |
 | FR-003 | A throwing read is recorded verbatim, prefixed, and the removal skipped | `src/loop.ts:827-832` (reason `:830`, prefix `:831`); test **(g)** `src/loop.test.ts:3796` — `readLabelsThrows` → `setIssueLabel` not called, `escalationLabelFailure` equals `could not read the issue's labels: …` | pass |
 | FR-004 | One field, one line, no new vocabulary | No field added — `git diff 39d1b26...0035506 -- src/loop.ts \| grep -E '^[-+].*LoopOutcome'` is **empty**, so the interface is untouched and `escalationLabelFailure` is only ever *used* in the diff, never declared; test **(g)** asserts the read failure on the **existing** lines — `src/loop.test.ts:3821` (`harness-failed label remove failed: …`) and `:3828` (`LABEL REMOVE FAILED gh-1: …`) | pass |
-| FR-005 | One source of truth for the label name | `src/loop.ts:64` is the only non-comment occurrence of the literal in `src/` (sweep below) | pass (review-evidenced, structural) |
+| FR-005 | One source of truth for the label name | `src/loop.ts:64` is the only non-comment occurrence of the literal in **`src/loop.ts`**; the 16 in `src/loop.test.ts` are fixture string literals, which the amended criterion excludes (full enumeration below) | pass (review-evidenced, structural) |
 | FR-006 | Docs honesty in the same delivery | `CLAUDE.md:31` (module row) and `:159-160` (two `## Lessons` lines), both in the range; `docs/agents/workflow.md` untouched | pass (review-evidenced) |
 
 ### FR-002's absence claim — the proving sweep (ask (a))
@@ -121,25 +128,39 @@ forgiveness the grilling probed. The `errText` occurrences remaining at `:3006`/
 
 ### FR-005's sweep
 
-Enumerate every occurrence of the literal in `src/`, then classify each by hand rather than
-trusting a filter to do it:
+Enumerate every occurrence of the literal, then classify each — rather than trusting a filter to do
+the classifying:
 
 ```
-$ grep -rn "harness-failed" src/
+$ grep -rn "harness-failed" src/ | wc -l
+29
+$ grep -rc "harness-failed" src/ | grep -v ':0'
+src/loop.ts:13
+src/loop.test.ts:16
 ```
 
-| File | Occurrences | Classification |
-|---|---|---|
-| `src/loop.ts` | `:64` — `export const HARNESS_FAILED_LABEL = "harness-failed";` | **code — the single definition** |
-| `src/loop.ts` | `:1958` — a `/** … */` JSDoc line | comment |
-| `src/loop.test.ts` | `:156`, `:3563`, `:3576`, `:3614`, `:3620`, `:3631`, `:3662`, `:3695`, `:3744`, `:3792`, `:3821`, `:3846` | fixture and expected-output text |
+All 29, accounted for:
 
-**Exactly one non-comment occurrence in `src/loop.ts`, and it is the definition at `:64`.** The
-first version of this sweep — `grep … | grep -vE ':\s*(\*|//)' | grep -c …` — was discarded: the
-comment filter is leaky (`:1958`'s JSDoc has two spaces after the colon, so `\s*` then `\*` does
-not match it and the line survives the filter), and counting lines that also contain
-`HARNESS_FAILED_LABEL` would have returned `1` whether or not a stray literal existed. It agreed
-with the right answer for the wrong reason, which is not evidence; the enumeration above is.
+| File | Lines | Count | Classification |
+|---|---|---|---|
+| `src/loop.ts` | `:64` | 1 | **code — the single definition** |
+| `src/loop.ts` | `:225`, `:318`, `:782`, `:800`, `:1157`, `:1228`, `:1664`, `:1826`, `:1958`, `:2198`, `:2751`, `:2985` | 12 | comment / JSDoc |
+| `src/loop.test.ts` | `:156`, `:281`, `:1857`, `:3557`, `:3652` | 5 | comment |
+| `src/loop.test.ts` | `:3563`, `:3576`, `:3614`, `:3620`, `:3631`, `:3662`, `:3695`, `:3744`, `:3792`, `:3821`, `:3846` | 11 | fixture and expected-output text |
+
+**Exactly one non-comment occurrence in `src/loop.ts`, and it is the definition at `:64`.**
+
+**Correction, 2026-09-24 — this section's first version was not the enumeration it claimed to be.**
+It printed `grep -rn "harness-failed" src/` above a 14-row table whose rows were in fact the output
+of `grep … | grep -vE ':\s*(\*|//)'` — the very filter the surrounding prose declared inadmissible.
+The two do not correspond: the command yields **29** lines, the table held **14**. The 15 omitted
+were 11 `src/loop.ts` comment lines and 4 `src/loop.test.ts` comment lines; the table's `:1958` row
+was itself a line that filter failed to drop. The table therefore could not have been incomplete
+whatever the tree contained — a table that cannot fail is not evidence, which is this work item's
+own defect class committed inside the record that certifies the work. The evidence-and-risk review
+at `5946199` found it. **No conclusion changes:** that reviewer re-derived the same result
+independently from `grep -rn "harness-failed" src/loop.ts` read line by line, and the enumeration
+above is that check performed in full.
 
 The literal survives in comments, JSDoc and test fixtures, which the amended criterion (see
 `specification.md` `## Amendments`) names as documentation and fixture text and excludes
@@ -175,7 +196,7 @@ acceptance.
 2. **The read-failure rendering is deliberate and slightly counter-intuitive (ask (f)).** A failed
    **read** renders on lines that say *remove failed*, even though no removal was attempted —
    because FR-004 requires one field and one line. Test **(g)** pins both halves at once:
-   `expect(deps.setIssueLabel).not.toHaveBeenCalled()` (`src/loop.test.ts:3813`) beside
+   `expect(deps.setIssueLabel).not.toHaveBeenCalled()` (`src/loop.test.ts:3812`) beside
    `expect(report.stderr).toContain("harness-failed label remove failed: …")` (`:3821`). The reason
    text distinguishes the two cases; the line deliberately does not.
 3. **Ask (g) — a negative assertion can pass vacuously.** `src/loop.test.ts:3792` asserts
@@ -204,6 +225,26 @@ acceptance.
    `git status --short` shows `?? node_modules`. It is not in the tree (`git ls-tree -r --name-only
    HEAD | grep -c '^node_modules'` → 0) and is not part of the range; noted so the delivery step
    can be read as intentionally clean rather than accidentally so.
+
+## Corrections applied after review (2026-09-24)
+
+The stage-4 review ran four axes at candidate `5946199`. Three returned PASS; the
+**evidence-and-risk-integrity axis returned FAIL** on one blocking finding — the FR-005 sweep above,
+which presented a filtered result as a hand-classified full enumeration. The conclusion was
+independently re-derived and holds, so no code changed; the corrections below are all in this
+artifact, and all four axes were re-run at the corrected candidate.
+
+| Correction | Where | Found by |
+|---|---|---|
+| The FR-005 sweep rebuilt as a real 29-occurrence enumeration, with the false claim about it recorded rather than quietly replaced | `### FR-005's sweep` above | the evidence/risk axis (blocking) |
+| FR-005's evidence row said "the only non-comment occurrence … in `src/`"; true of `src/loop.ts`, false of all of `src/` (16 fixture literals live in `src/loop.test.ts`) | FR → evidence map | the evidence/risk axis |
+| `src/loop.ts:833` cited for text spanning two lines; the `return {}` is at `:836` | FR → evidence map | the evidence/risk axis |
+| `expect(deps.setIssueLabel).not.toHaveBeenCalled()` cited at `src/loop.test.ts:3813`; it is at **`:3812`** (`:3813` is the `escalationLabelFailure` assertion) | Remaining risk 2 | the controller, from a line-numbered `grep` after deriving the pointer from a ranged `sed` |
+
+The last row is the same class of error as the first: a pointer produced by a looser method than the
+one claimed. It is listed separately only because the reviewer did not find it; and it is a third
+instance of the pattern this work item keeps meeting — a check that could not have failed, a filter
+that agreed for the wrong reason, and now a pointer derived from a range instead of a line.
 
 ## Explicit non-claims
 
