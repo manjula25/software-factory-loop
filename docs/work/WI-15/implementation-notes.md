@@ -980,8 +980,10 @@ rather than reading the figures off the first pass's text.
 ## Correction — appended 2026-09-24 (third pass; this ledger is not rewritten)
 
 **8. The commit messages on this branch assert things this ledger's corrections now deny, and they
-cannot be corrected in place.** A commit message is immutable history. Nine commits sit on
-`wi-15-followup`; the following carry a claim the records have since corrected:
+cannot be corrected in place.** A commit message is immutable history. Nine commits sat on
+`wi-15-followup` when this note was written — the note's own commit (`1fb2b3a`) makes ten, and a
+commit cannot describe itself. Of those nine, the following carry a claim the records have since
+corrected:
 
 | Commit | What its message asserts | What the records now say |
 |---|---|---|
@@ -990,8 +992,13 @@ cannot be corrected in place.** A commit message is immutable history. Nine comm
 | `0cd33bb` | `docs(wi-15): write down the correction-recording rule — both behaviors, chosen by artifact` | Accurate. Listed only to show the sweep was over all nine, not just the two known-suspect ones |
 | `7f14f52`, `f912a81` | The two corrections themselves | Accurate at the time of writing |
 
-The remaining five commits — `72faee7`, `a82127b`, `0a54a66`, `0dad330` — were read against the
-current records and carry no claim those records contradict.
+The remaining **four** commits — `72faee7`, `a82127b`, `0a54a66`, `0dad330` — were read against the
+current records and carry no claim those records contradict. Five in the table plus four here is the
+nine that existed; the count is stated rather than implied because the first draft of this note said
+"the remaining five" and named four, and a count that disagrees with its own enumeration is the
+vacuous-evidence class this work item exists to remove. Corrected in place, following the precedent
+of item 7 above: a defect introduced by a correction pass, not a belief held at a checkpoint, is not
+part of what a chronological ledger exists to preserve.
 
 ```
 $ git log --format='%h %s' origin/main..HEAD
