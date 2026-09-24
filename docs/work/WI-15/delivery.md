@@ -252,7 +252,7 @@ surfaced in Pending actions).
 | 7 | ~~FR-006 "one line" vs the `## Lessons` lines~~ | **done** | owner chose 2026-09-24 to leave it as is — the spec is a planning artifact and the delivery has moved past it; no edit made |
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
 | 9 | ~~Personal-vs-project skill drift~~ | **done** | owner chose 2026-09-24 to bring the repo's `code-review` up to the four axes actually run; the other 15 shared skills left as-is. This row named two skills — re-measured, **all 16** shared skills differ. Evidence in `implementation-notes.md` |
-| 10 | Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place) | owner decision | noted in `review.md` |
+| 10 | ~~Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place)~~ | **done** | owner chose 2026-09-24 to keep **both**, selected by artifact — standing claims corrected in place, the chronological ledger appended to. Rule written into `CLAUDE.md` under *The lifecycle*; `review.md`'s deferral updated |
 
 ### PR body as opened, then corrected
 

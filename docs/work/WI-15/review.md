@@ -122,7 +122,10 @@ independently by two axes each, which is the strongest signal either could carry
 - **The corrections-section redundancy** (complexity recommended deleting the table and the spec
   parenthetical) — kept deliberately. Both are the audit trail for the round-1 blocking finding;
   deleting review-finding evidence to satisfy a taste axis is the wrong trade. The divergence from
-  WI-9's "corrections by addition, nothing rewritten" house style is noted for the owner.
+  WI-9's "corrections by addition, nothing rewritten" house style is **settled 2026-09-24: both
+  behaviors are kept**, chosen by the artifact — standing claims (`delivery.md`, `review.md`,
+  `verification.md`) are corrected in place, a chronological ledger (`implementation-notes.md`) gets
+  an appended note. The rule is written down in `CLAUDE.md` under *The lifecycle*.
 - **FR-006's "one line" vs the two `## Lessons` lines delivered** — both true, both this work item's
   defect classes, and `CLAUDE.md`'s standing self-learning rule asks for a line per caught mistake.
   The spec text is one line behind the delivery; routed to the owner rather than amended unilaterally.

@@ -145,6 +145,15 @@ when a work item actually starts, not before. One exception: the planning-chain 
 derived from `harness-prd-v2.md`, not new product requirements, and the PRD still wins on
 any disagreement.
 
+**Correcting a record already written.** Two behaviors, chosen by the artifact rather than by taste.
+A **standing claim** — `delivery.md`, `review.md`, `verification.md`, and anything else a reader
+treats as current — is **corrected in place**, because a wrong claim left standing is a wrong answer,
+not a historical one. A **chronological ledger** — `implementation-notes.md` — gets an **appended
+note**, because its job is to record what was believed at each checkpoint, and rewriting it would
+erase when the error happened, which is the one thing it is for. Either way the correction states
+what the record previously claimed and carries the command that proves the new figure: a correction
+no one can re-run is just a second claim.
+
 ## Self-learning
 
 When corrected, or on catching a mistake, add the lesson as a one-line rule under `## Lessons`
