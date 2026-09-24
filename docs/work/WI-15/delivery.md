@@ -252,8 +252,8 @@ surfaced in Pending actions).
 |---|---|---|---|
 | 1 | ~~Push `worktree-wi-15` to `origin`~~ | **done** | executed with authorization; observed above |
 | 2 | ~~Open the PR against `main`~~ | **done** | [PR #20](https://github.com/manjula25/software-factory-loop/pull/20) |
-| 3 | Merge | **a human reviewer** | hard constraint 1 — the harness's own repository keeps human merge regardless |
-| 4 | Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range | **separate authorization** | matches T0's stated intent; writes directly to the shared `main` branch, so it is not folded into the delivery above |
+| 3 | ~~Merge~~ | **done** | human-merged as PR #20 on 2026-09-24 — merge commit `0b46971`. Hard constraint 1 held: the harness's own repository kept human merge throughout |
+| 4 | ~~Push local `main` (`39d1b26`) to `origin/main`, shrinking the PR to the implementation range~~ | **void — no action needed** | the PR merged before this ran, so there is no open range left to shrink. Local `main` and `origin/main` are both `0b46971`, and `git merge-base --is-ancestor main origin/main` is true. The deviation this row existed to resolve is now historical only |
 | 5 | ~~`src/loop.test.ts:3817` / `:3814` duplicate+subsumed assertions~~ | **done** | owner chose 2026-09-24 to fix it; both lines deleted. The deferral's reason had expired — the verdicts described a delivered tree once the branch merged. Coverage proved by mutation (risk 5) |
 | 6 | ~~`canary-red-driver.ts` uncompilable~~ | **done** | owner chose (b) 2026-09-24 — labelled in place as a historical artifact; the records corrected (six missing deps, broken since WI-13, not WI-14) |
 | 7 | ~~FR-006 "one line" vs the `## Lessons` lines~~ | **done** | owner chose 2026-09-24 to leave it as is — the spec is a planning artifact and the delivery has moved past it; no edit made |
