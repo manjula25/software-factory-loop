@@ -766,3 +766,69 @@ $ npm test                 → 285 passed (10 files)
 `review.md` describe `d54d8ae`. They do not cover it. A review of the new one-commit range is the
 owner's call and **has not been run** — the verification above is the full extent of the evidence
 behind this edit.
+
+### Follow-up — 2026-09-24 (same branch): the WI-6 pointers, and a third unrunnable file
+
+Checkpoint 1 (`:121`) ruled amending WI-6's record out of scope: *"Amending it is out of scope and
+would mean editing another work item's delivered evidence."* The owner has now authorized it, and
+that entry is left standing as the historical position, as the checkpoint ledger's rule requires.
+This note records the reversal.
+
+**Scope re-measured rather than read off the earlier note** — the same discipline that produced the
+six-deps finding, applied one directory wider. The WI-6 evidence directory holds four `.ts` files;
+**three** do not compile:
+
+```
+$ for f in docs/work/WI-6/evidence/*.ts; do npx tsc --noEmit --ignoreConfig --skipLibCheck --strict \
+    --target ES2022 --module NodeNext --moduleResolution NodeNext --types node "$f"; done
+canary-red-driver.ts     exit=1 errors=2
+requeue-proof.ts         exit=1 errors=2
+review-exercise.ts       exit=0 errors=0
+t7b-requeue-proof.ts     exit=1 errors=2
+```
+
+Two of those were not known when item 6 was closed. Both are a **smaller and differently-dated break
+than the driver's** — one dep, not six:
+
+```
+$ npx tsc … docs/work/WI-6/evidence/requeue-proof.ts
+requeue-proof.ts(93,37): error TS2741: Property 'refreshRemoteRefs' is missing in type '{ … }' but required in type 'QueueDeps'.
+requeue-proof.ts(108,32): error TS2345: Argument of type '{ … }' is not assignable to parameter of type 'QueueDeps & Pick<LoopDeps, "deleteBranch">'.
+$ git log --oneline -S'refreshRemoteRefs' -- src/queue.ts | tail -1
+7d84b10 feat(WI-7): acquisition-time remote refresh — fetch/prune before dedup (FR-001)
+```
+
+Adding that one dep and nothing else clears both errors — probed, not assumed. `t7b-requeue-proof.ts`
+is the same shape: same single missing dep, errors at `(88,37)` and `(103,32)`. So both broke at
+**WI-7**, not WI-13, not WI-14, and by one dep rather than six.
+
+All four line numbers above are on the delivered files, after the banners landed. Before the banners
+the same errors read `(84,37)`/`(99,32)` and `(82,37)`/`(97,32)` — and the first figures written into
+this note were those pre-banner ones, carried over from the measuring run by exactly the mistake the
+item-6 note already records: adding a header shifts every line beneath it. They were re-measured
+rather than adjusted by arithmetic, which is the second time in this work item that counting the
+lines a banner adds gave the wrong answer.
+
+A first attempt at that probe is recorded because it was misleading: run from `/tmp`, it produced
+four `TS1309: cannot use 'await' at the top level` errors that were artifacts of the probe's own
+directory — `/tmp` has no `package.json`, so the copy was treated as CommonJS. A probe has to run
+under the same module settings as the file it probes, or it measures itself:
+
+```
+$ npx tsc … docs/work/WI-6/evidence/zz-probe-requeue.ts   # in place, refreshRemoteRefs added
+(clean)
+$ rm docs/work/WI-6/evidence/zz-probe-requeue.ts          # deleted immediately; git status clean
+```
+
+**What changed — annotations that keep the history rather than delete it.** These runs genuinely
+happened and their logs are real evidence; the reader's actual failure mode is *re-running* a command
+that no longer works. So nothing was removed:
+
+- `requeue-proof.ts` and `t7b-requeue-proof.ts` now open with the same `HISTORICAL ARTIFACT — NOT
+  RUNNABLE` header the driver carries, and their embedded run commands are marked HISTORICAL.
+- `verification.md`'s three command sites — `:277` (the driver), `:311` (requeue-proof), `:472`
+  (t7b) — each carry a **Historical — do not re-run** note naming what broke and when. The command
+  lines themselves stay, because deleting them would erase that the run happened.
+
+Left alone deliberately: `delivery.md:46` and `implementation-notes.md:327`/`:350` describe what the
+drivers did as *history* without instructing anyone to run them, so they are accurate as written.

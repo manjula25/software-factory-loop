@@ -1,10 +1,19 @@
 /**
+ * HISTORICAL ARTIFACT — NOT RUNNABLE. Kept as the recipe behind
+ * `t7-requeue-proof.log`, not as code to execute: it was written against `src/`
+ * at WI-6 (`aa6f2e0`) and has not typechecked since WI-7 (`7d84b10`) made
+ * `refreshRemoteRefs` a required acquisition dep. That one missing dep is the
+ * whole break — adding it clears both reported errors, measured rather than
+ * inferred. Do not run it. The log beside it is the evidence. See the note in
+ * `docs/work/WI-15/implementation-notes.md`.
+ *
  * WI-6 T7 plan step 3 — the re-queue proof (FR-006/D4): after a canary-red
  * revert, the reverted issue is ELIGIBLE AGAIN on the next run. Runs the real
  * acquisition + dedup mechanism (listOpenIssues + splitQueue with the same
  * real gh/git wiring as main()) against the post-revert fixtures state.
  *
- * Run AFTER canary-red-driver.ts has halted (merge reverted on main):
+ * Run AFTER canary-red-driver.ts has halted (merge reverted on main) — HISTORICAL,
+ * superseded by the banner above; this command no longer typechecks:
  *   npx tsx docs/work/WI-6/evidence/requeue-proof.ts
  *
  * Expectation: merged PR #N covers gh-18 (so without the revert guard it

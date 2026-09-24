@@ -102,6 +102,12 @@ assertion — not a compile error, as the plan predicted.
    commands in the correction note in `implementation-notes.md`.* **Pre-existing; WI-15 deepens
    existing rot rather than creating it.** Labelled in place rather than repaired (owner decision,
    2026-09-24): its header now says it is a historical artifact that must not be run.
+   **Extended 2026-09-24:** the same class covers `docs/work/WI-6/evidence/requeue-proof.ts` and
+   `t7b-requeue-proof.ts`, which were not known when this risk was written. Both are a *one-dep*
+   break — `refreshRemoteRefs`, required since WI-7 (`7d84b10`) — not the driver's six, and both now
+   carry the same banner. WI-6's `verification.md` command sites (`:277`, `:311`, `:472`) each carry
+   a *Historical — do not re-run* note; the command lines are kept, because the runs really happened
+   and their logs are the evidence. Proving commands in `implementation-notes.md`.
 5. **Two deferred test assertions** — **closed 2026-09-24** (owner decision) on the follow-up
    branch: the duplicate and the subsumed assertion are both deleted, `src/loop.test.ts` only,
    `src/loop.ts` byte-identical. *Was:* "`src/loop.test.ts:3817` duplicates `:3813`, and `:3814` is
