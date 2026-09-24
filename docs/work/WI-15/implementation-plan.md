@@ -102,11 +102,18 @@ exists to remove, so the shape is observed before any parse is written.
       const raw = execFileSync(
         "gh",
         ["issue", "view", issueNumberFromUrl(issueToRead.url), "--json", "labels"],
-        { cwd: dir, encoding: "utf8", stdio: ["ignore", "inherit", "pipe"] },
+        { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
       );
       return (JSON.parse(raw) as { labels: readonly { name: string }[] }).labels.map((l) => l.name);
     },
 ```
+
+**Correction (review, 2026-09-23):** this snippet originally printed
+`stdio: ["ignore", "inherit", "pipe"]`. That is defective: with stdout inherited, `execFileSync`
+returns `null`, `JSON.parse(null)` is `null`, and the `.labels` read throws on **every** call, so
+the read could never succeed. The shipped wiring pipes stdout (`["ignore", "pipe", "pipe"]`) and
+comments why; the correction came from the specification review, not from this plan — re-executing
+step 3 as first written would re-seed the bug.
 
 **Step 4 — the test seams.** In `src/loop.test.ts`: add `readIssueLabels` to `makeDeps` and to
 the queue-deps builder, both defaulting to **present** so every existing removal-arm assertion

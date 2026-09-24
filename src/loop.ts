@@ -1822,12 +1822,15 @@ export interface QueueSummary {
    */
   readonly closeFailures: [string, string][];
   /**
-   * [id, reason] — WI-14 T3 (FR-005): REMOVING the `harness-failed` label on a
-   * verified-delivered outcome failed. Like `closeFailures` this is a loud note
-   * of its own (`LABEL REMOVE FAILED` lines), never a `failed` entry — the fix
-   * is verified and delivered, the label is bookkeeping, and the queue
-   * continues. (A failed label ADD rides the FAILED line as a suffix instead:
-   * it only ever happens on a failure arm.)
+   * [id, reason] — WI-14 T3 (FR-005), amended WI-15 (FR-003): REMOVING the
+   * `harness-failed` label on a verified-delivered outcome failed — or the
+   * label READ the removal decides from threw, recorded with a `could not
+   * read the issue's labels:` prefix naming the failed step. Like
+   * `closeFailures` this is a loud note of its own (`LABEL REMOVE FAILED`
+   * lines), never a `failed` entry — the fix is verified and delivered, the
+   * label is bookkeeping, and the queue continues. (A failed label ADD rides
+   * the FAILED line as a suffix instead: it only ever happens on a failure
+   * arm.)
    */
   readonly labelFailures: [string, string][];
   /**
@@ -2764,18 +2767,18 @@ async function main(): Promise<void> {
       );
     },
     // WI-15 T2 (FR-001): the label READ the removal decides from — same
-    // number-from-url idiom as setIssueLabel beside it. `--json labels` prints
-    // the label objects (verified shape: T2's recorded probes in
+    // number-from-url idiom as setIssueLabel beside it. `--json labels`
+    // prints the label objects (verified shape: T2's recorded probes in
     // docs/work/WI-15/evidence/label-state-probes.log — an element carries
     // `name`, so the map is to names, not to `String`). stdout MUST be piped
     // here, unlike setIssueLabel's call above: this one consumes stdout, and
     // `inherit` makes execFileSync return null — JSON.parse(null) is null, so
     // the `.labels` read throws a TypeError on every single call and the read
-    // can never succeed. fd 2 stays piped so gh's stderr still lands in the thrown
-    // error's message, which is the text FR-003 records verbatim. A throw here
-    // is a real gh failure and propagates to the caller, which records it
-    // (FR-003). Not exercised by vitest — its correctness is code review + the
-    // recorded probes (same posture as closeIssue).
+    // can never succeed. fd 2 stays piped so gh's stderr still lands in the
+    // thrown error's message, which is the text FR-003 records verbatim.
+    // A throw here is a real gh failure and propagates to the caller, which
+    // records it (FR-003). Not exercised by vitest — its correctness is code
+    // review + the recorded probes (same posture as closeIssue).
     async readIssueLabels(dir: string, issueToRead: NormalizedIssue) {
       const raw = execFileSync(
         "gh",
