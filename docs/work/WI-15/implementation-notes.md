@@ -523,3 +523,24 @@ as describing **`c66e268` and nothing later**, and the prose that lands after th
 closures and this acceptance record — is covered by the lifecycle's stage-4 `code-review`, which
 reviews the whole range at final HEAD. Stating that plainly is the point; a ledger that claimed the
 `c66e268` verdicts certified a commit made after them would be this work item's defect class again.
+
+### Stage 4 — the review, as it actually went
+
+Appended rather than rewritten, so the paragraph above stands as what was true at `0035506`.
+
+The stage-4 `code-review` ran **twice**, four axes each time, and the record is `review.md`:
+
+| Round | Candidate | Outcome |
+|---|---|---|
+| 1 | `5946199` | standards PASS, specification PASS, complexity PASS, **evidence/risk FAIL** — one blocking finding: the FR-005 sweep printed a command that did not produce its table (29 lines vs 14 rows), which is this work item's own vacuous-evidence class committed inside the record certifying the work |
+| 2 | `d54d8ae` | **four PASS**, the evidence axis confirming the remedy by running the command itself and reproducing the RED in a throwaway copy |
+
+Round 2 raised six adjacent findings, all in `verification.md`, all corrected in `e12d8f4`
+(docs-only); the evidence axis re-checked those six rows and returned PASS, running the replacement
+commands rather than reading the figures. Three of the round-1 and round-2 findings were reached
+independently by two axes each.
+
+The forward reference two paragraphs up is therefore **fulfilled, not pending** — and the same
+ordering caveat applies one level down: the corrections in `e12d8f4` and the record `review.md` both
+postdate the four `d54d8ae` verdicts, which `review.md` states in its own closing section rather than
+letting a reader discover it. No `src/` path moved at any point after `eaf006e`.
