@@ -1,6 +1,8 @@
 # WI-15 — Implementation Plan
 
-**Status:** Draft — awaiting owner approval. No implementation has begun.
+**Status:** In force. Tasks T1–T4 are complete on `worktree-wi-15` and T5 (the verification record)
+is pending — see `implementation-notes.md`. The earlier "Draft — awaiting owner approval. No
+implementation has begun." header was stale and is corrected 2026-09-24.
 
 **Approved scope:** `docs/work/WI-15/specification.md` (FR-001..FR-006), approved 2026-09-23 by
 the owner's invocation of `writing-plans`; traced to `docs/work/WI-15/prd.md` decisions 1–9 and

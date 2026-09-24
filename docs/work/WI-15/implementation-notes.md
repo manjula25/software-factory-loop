@@ -273,12 +273,66 @@ actual state. Rewriting an approved artifact's status header is not FR-006's bus
 the record the work traces to would be worse than the stale label. Recorded as an observation for
 the delivery record.
 
+**Reversed 2026-09-24 — the stale headers were fixed, and the reversal is recorded here rather
+than smoothed.** The third specification review of this work item caught the contradiction: this
+ledger said the headers were deliberately left alone, and a later commit changed them anyway,
+with nothing recording the reversal. That is this work item's own defect class — a record making a
+claim that is not true of the tree it ships in — so the decision is left standing above and
+reversed here, visibly. **Why the first call was wrong:** the objection was that rewriting an
+approved artifact's status header is not FR-006's business, but FR-006 *is* docs honesty in the
+same delivery, and a delivery whose own plan file says "No implementation has begun." while T1–T4
+are complete is exactly the defect class WI-15 exists to remove. The stale text protected nothing;
+it was simply false. The framing "editing the record the work traces to" is the wrong one when the
+record is factually wrong — the fix is to correct it, and say so. Both are now corrected:
+`specification.md`'s status and approval lines, and `implementation-plan.md:3`.
+
+**Owner authorization for the FR-005 criterion amendment — provenance, stated as a limit.** On
+2026-09-24 the controller put the reviewer's two remedies to the owner with a recommendation to
+amend; **the owner chose to amend**. That exchange is the authorization, and it is recorded here
+and in `specification.md`'s `## Amendments`; there is no signed document behind it, and none is
+claimed. FR-002's title narrowing and the two header corrections were the **controller's own
+calls** under the same reasoning, labeled as such in the Amendments section rather than presented
+as owner decisions.
+
 ### Checkpoint 3 — T4 (docs honesty and evidence, FR-006)
 
-**Status: reviews pending** at candidate `a11d39b9a6aac8142bd147d5a078c7d47dfa07c7` — the T4
-commit as amended by the controller (see below). Base for the range: `39d1b26`.
+**Status: specification review returned FAIL at `a11d39b`; both blocking findings and the
+missing-evidence item are fixed, and the re-review runs at the candidate named at the end of this
+entry.** Base for the range: `39d1b26`.
 
-Commits: T1 `9c19268` → T2 `9970111` → T3 `3c0571b` → T4 `ba57d4c`, amended to `a11d39b`.
+Commits: T1 `9c19268` → T2 `9970111` → T3 `3c0571b` → T4 `ba57d4c`, amended to `a11d39b` →
+blocker fix pass `eaf006e` → spec amendment `f988101` → docs-hygiene fix (this commit).
+
+**The FAIL, and what it found.** The specification review at `a11d39b` returned **FAIL** on two
+blocking findings and one missing-evidence item — while finding **no behavior defect in the label
+path** and independently reproducing the controller's gate numbers exactly. Each blocker was
+verified at source by the controller before anything was changed:
+- **B1 (FR-005)** — three operator-facing message strings still hard-coded the label name
+  (`src/loop.ts:2207`, `:2528`, `:2564`), falsifying FR-005's "no second literal of the label name
+  remains in the source".
+- **B2 (FR-006)** — the `CLAUDE.md` module-row clause claimed "no subprocess error text interpreted
+  anywhere in the label path", false while `src/loop.ts:3008` still matches `/already exists/i`
+  (deliberately kept, prd decision 5).
+- **Missing evidence** — the checkpoint-1 disposition had **assigned the durable local `stdio`
+  reproduction to T4**, and the evidence log contained none. The controller's own T4 brief failed to
+  carry that assignment forward and the checkpoint-3 inspection did not check for it. A controller
+  error, recorded as one.
+
+**The fix pass, `eaf006e`.** The three sites now interpolate `HARNESS_FAILED_LABEL` — rendering-
+neutral, with `src/loop.test.ts` untouched and no assertion changed; the `CLAUDE.md` clause is
+rescoped to the read and removal path and names the kept create-time check; and the missing
+evidence is supplied as the log's **Part 3**, a real local `execFileSync` reproduction. The
+controller verified all of it independently rather than on report — including reproducing the
+confound Part 3 reports against itself (with the failing child passed via `node -e`, the
+`fd 2 ignore` arm *does* report `message contains BOOM-STDERR: true`, because Node's
+`Command failed:` line echoes argv, so the original check genuinely could not fail). The reviewer
+then reproduced Part 3 byte-for-byte with a matching md5sum across three runs.
+
+**The spec amendment, `f988101`** — FR-005's criterion rescoped to the *uses* of the name (create,
+add, remove, membership test, and the operator-facing message text), with comments, JSDoc and test
+fixtures named as excluded; FR-002's title narrowed to the removal path; its boundary naming the
+kept exception. The owner's authority for the criterion and the controller's authority for the rest
+are recorded in the two entries above and in the spec's `## Amendments`.
 
 **What T4 delivered.** Four files: `CLAUDE.md` (the `src/loop.ts` module-row clause + both
 `## Lessons` lines), `docs/work/WI-15/evidence/label-state-probes.log` (+130 lines),
@@ -342,5 +396,9 @@ non-claim (prd decision 7). (f) The delivery-note items the checkpoint-2 quality
 (a read failure rendering on the removal lines though no removal was attempted; `labelFailures`'
 doc — now **fixed** in T4, so this ask narrows to the rendering behaviour alone).
 
-**Reviews: specification review first, then code-quality review** — both against `a11d39b`, both
-read-only, sequentially per the quality contract.
+**Reviews: specification review first, then code-quality review** — both against **the candidate at
+HEAD** (the docs-hygiene commit closing this entry), both read-only, sequentially per the quality
+contract. Every earlier verdict is void: the `a11d39b` pair by the fix pass, and the `f988101`
+specification PASS by this commit, which changed `specification.md`, `implementation-plan.md` and
+this ledger after it was taken. The carried asks (a)–(f) remain T5's, except (b) and (c), which the
+amendment resolves by construction rather than by a scoped claim.

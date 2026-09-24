@@ -36,7 +36,7 @@ In force. Carried through `writing-plans` and `implement` under owner direction 
   present (FR-002 covers that arm). The membership test compares the label name as GitHub
   returns it; the harness creates the label itself, so the name it checks is the name it wrote.
 
-### FR-002: The label removal decides from the issue's state, not from subprocess error text
+### FR-002: No subprocess error text is interpreted in the label removal path
 
 - **Behavior:** The removal no longer decides whether a failure is harmless by matching phrases
   in a subprocess's error output. A failure while removing a label that the harness has
@@ -151,12 +151,16 @@ documentation and fixture text rather than strengthen the requirement. The same 
 FR-002's title claiming more than the delivered code does, because the create-time
 `already exists` check on label *creation* is deliberately kept (prd.md decision 5). The owner
 directed the criterion be amended to the uses it was always meant to cover rather than left
-disagreeing with the code; FR-002's title is scoped to the removal its Behavior clause already
-described, and its boundary now names the kept exception explicitly.
+disagreeing with the code. FR-002's title is **narrowed**, not replaced: "anywhere in the label
+path" becomes "in the label removal path", which is the Behavior clause it already carried, and
+its boundary now names the kept create-time exception explicitly.
 
 **No behavioral requirement changed.** Nothing the harness does is different, and the review found
-no behavior defect in the label path. The delivered code already interpolates the shared constant
-at the three operator-facing message sites, which is what these criteria now ask for.
+no behavior defect in the label path. The three message sites the review flagged —
+`src/loop.ts:2207` (the FAILED-line suffix), `:2528` and `:2564` (the single-issue report lines) —
+were fixed in the same pass by interpolating the shared constant; a fourth operator-facing site,
+the create-time `console.log` at `:3011`, already used it. The code therefore now does what these
+criteria ask.
 
 ## Traceability matrix
 
