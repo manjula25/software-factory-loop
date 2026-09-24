@@ -400,6 +400,43 @@ not against any client repo. The `cli/cli` probes recorded in
 engaged — that repository is public and carries no client data — but the scope overrun is real and is
 surfaced in Pending actions).
 
+### The follow-up's own actions (2026-09-24) — a second, separate delivery
+
+The follow-up branch `wi-15-followup` is a **second delivery, not part of PR #20's range**. Its two
+external actions were authorized in the owner's words *"push it and open a pr"* and executed:
+
+| Action | Command | Observed |
+|---|---|---|
+| Push the branch | `git push -u origin wi-15-followup` | `* [new branch] wi-15-followup -> wi-15-followup`; upstream set |
+| Open the PR | `gh pr create --base main --head wi-15-followup …` | [PR #21](https://github.com/manjula25/software-factory-loop/pull/21) |
+
+Read back from GitHub rather than taken from the create command, then reconciled against the pushed
+ref measured locally — both figures agree exactly:
+
+```
+$ gh pr view 21 --json state,baseRefName,headRefName,mergeable,additions,deletions,changedFiles
+PR #21  state=OPEN  base=main  head=wi-15-followup  mergeable=MERGEABLE
+13 files, +1084/-145
+
+$ git fetch -q origin wi-15-followup
+$ git diff --shortstat origin/main..origin/wi-15-followup
+ 13 files changed, 1084 insertions(+), 145 deletions(-)
+$ git ls-remote origin 'refs/heads/wi-15-followup'
+0fee38a736a05347947e6dce0788365bf9514aca	refs/heads/wi-15-followup
+```
+
+**Not merged, and not merged by the harness.** `mergeable=MERGEABLE` is GitHub's computation, not an
+action. Hard constraint 1 holds unchanged: the harness's own repository keeps human merge regardless,
+so PR #21 needs a human.
+
+Gates re-run **at the pushed candidate `0fee38a`**, not read off the earlier follow-up run, because
+`src/loop.test.ts` is in this range:
+
+```
+$ npm run typecheck   → tsc --noEmit, exit 0
+$ npm test            → Test Files 10 passed (10); Tests 285 passed (285), exit 0
+```
+
 ## Pending actions
 
 | # | Action | Needs | Notes |
@@ -414,6 +451,17 @@ surfaced in Pending actions).
 | 8 | The `cli/cli` probe scope overrun | owner awareness | recorded in the log; no client data involved |
 | 9 | ~~Personal-vs-project skill drift~~ | **done** | Owner instruction, 2026-09-24, verbatim: **"bring the repo's code-review up to what was run"** — given in reply to the controller's measurement that the repo's committed `code-review` inlines its smell baseline and carries two axes, while every review this repo has run since WI-13 used a four-axis skill pointing at a separate `smells.md`. "What was run" is the whole skill directory, so the delivered change is three files — `SKILL.md` (the four axes), `smells.md` (the file the four-axis SKILL.md references by path), and `agents/openai.yaml`. The other 15 shared skills left as-is. This row named two skills — re-measured, **all 16** shared skills differ. Evidence in `implementation-notes.md`. *Corrected 2026-09-24 (**in place** — this is a standing claim): this row previously read "owner chose 2026-09-24 to bring the repo's `code-review` up to **the four axes** actually run", which under-describes both the instruction and what shipped. The instruction says "what was run", not "the axes"; narrowing it to the axes made the `smells.md` and `agents/` files look like unauthorized extras when they are the rest of the skill the instruction names. What the narrowing obscured is a real consequence rather than a scope overrun: the personal `smells.md` carries a different twelve prompts than the baseline the repo inlined, so `Mysterious Name` and `Refused Bequest` are no longer among the prompts a committed-skill review receives. Recorded at `review.md` round 3.* **Decided 2026-09-24 (owner): keep the twelve that ran** — the swap stands, `Mysterious Name` and `Refused Bequest` stay out. The deciding reason is the instruction itself: "what was run" is the twelve that were run, so restoring the repo's original twelve would leave the committed skill describing a review nobody has performed — the exact mismatch this row exists to close. The loss is now a recorded choice rather than an unrecorded side effect. No file changed as a result of this decision, so `smells.md` needs no re-verification. |
 | 10 | ~~Two house styles for recording corrections (WI-9 addition-only vs WI-15 in-place)~~ | **done** | owner chose 2026-09-24 to keep **both**, selected by artifact — standing claims corrected in place, the chronological ledger appended to. Rule written into `CLAUDE.md` under *The lifecycle*; `review.md`'s deferral updated |
+
+Rows 11–15 concern the **follow-up** branch (`wi-15-followup`), which is a separate delivery from
+PR #20's range.
+
+| # | Action | Needs | Notes |
+|---|---|---|---|
+| 11 | ~~Push `wi-15-followup` to `origin`~~ | **done** | owner instruction *"push it and open a pr"*, 2026-09-24; observed above |
+| 12 | ~~Open a PR for `wi-15-followup` against `main`~~ | **done** | [PR #21](https://github.com/manjula25/software-factory-loop/pull/21), read back and reconciled |
+| 13 | Merge PR #21 | **a human** | open. Hard constraint 1 — the harness never merges its own repository, whatever a profile says |
+| 14 | The five non-blocking complexity suggestions (`delete`/`shrink`, `src/loop.ts`) | **held, not applied** | recorded in `review.md` as held. Applying them touches behavior-bearing code after verification, which would owe a fresh verification round; the owner has not asked for them |
+| 15 | Delete the `wi-15-followup` branch and its worktree | **owner authorization per action** | destructive; not requested, not done. The branch is the record of this delivery until PR #21 merges |
 
 ### PR body as opened, then corrected
 
