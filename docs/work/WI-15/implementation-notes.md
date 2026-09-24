@@ -104,6 +104,10 @@ both green.**
   text (`src/loop.ts:2207`, `:2528`, `:2564`) and JSDoc, where FR-004 freezes the wording and T1's
   scope was correct. `readLabels` / `readLabelsThrows` are declared and unused until T3, as the
   plan intends.
+  **Superseded by `eaf006e` (marker added at checkpoint-3 acceptance, 2026-09-24):** those three
+  operator-facing sites now interpolate `HARNESS_FAILED_LABEL`, so the first half of this
+  sentence is no longer true of the shipped tree — which is the point. The JSDoc half still
+  holds, and the decision above is left standing as the dated checkpoint-1 decision it was.
 
 **Specification review (rerun at `9970111`): PASS.** The reviewer verified the fix against the
 previous candidate's object (`git diff 6ec5c5b 9970111` — the only source change is the `stdio`
@@ -296,16 +300,21 @@ as owner decisions.
 
 ### Checkpoint 3 — T4 (docs honesty and evidence, FR-006)
 
-**Status: not yet accepted.** Three specification reviews have run against this checkpoint — each
-verdict recorded by candidate SHA rather than by ordinal, so it can be checked: **FAIL at
-`a11d39b`** (two blocking findings and one missing-evidence item), **PASS at `f988101`** (eight
-adjacent observations and two missing-evidence items, dispositioned below), and **FAIL at
-`5bd9a8a`** (one blocking finding — an authority overclaim in this work item's own `## Amendments`,
-which is this work item's defect class committed by its controller). All are addressed; the
-verdict for the candidate closing this entry is pending. Base for the range: `39d1b26`.
+**Status: accepted at `c66e268` (2026-09-24).** Four specification reviews ran against this
+checkpoint and one code-quality review — each verdict recorded by candidate SHA rather than by
+ordinal, so it can be checked: **FAIL at `a11d39b`** (two blocking findings and one
+missing-evidence item), **PASS at `f988101`** (eight adjacent observations and two missing-evidence
+items, dispositioned below), **FAIL at `5bd9a8a`** (one blocking finding — an authority overclaim
+in this work item's own `## Amendments`, which is this work item's defect class committed by its
+controller), and **PASS at `c66e268`**; the code-quality review returned **APPROVED at `c66e268`**
+with no blocking finding. The acceptance is recorded at the end of this entry. Base for the range:
+`39d1b26`.
 
 Commits: T1 `9c19268` → T2 `9970111` → T3 `3c0571b` → T4 `ba57d4c`, amended to `a11d39b` →
-blocker fix pass `eaf006e` → spec amendment `f988101` → docs-hygiene fix (this commit).
+ledger `8068288` → blocker fix pass `eaf006e` → spec amendment `f988101` → docs-hygiene fix
+`5bd9a8a` → attribution fix `c66e268` → checkpoint-3 acceptance (the commit closing this entry).
+Stated by SHA rather than as "this commit", which the quality review at `c66e268` correctly
+flagged as a self-pointer that two further commits had already invalidated.
 
 **The FAIL, and what it found.** The specification review at `a11d39b` returned **FAIL** on two
 blocking findings and one missing-evidence item — while finding **no behavior defect in the label
@@ -337,6 +346,13 @@ add, remove, membership test, and the operator-facing message text), with commen
 fixtures named as excluded; FR-002's title narrowed to the removal path; its boundary naming the
 kept exception. The owner's authority for the criterion and the controller's authority for the rest
 are recorded in the two entries above and in the spec's `## Amendments`.
+**Attribution corrected at checkpoint-3 acceptance (2026-09-24).** This sentence previously
+credited `f988101` alone with the title narrowing. `f988101` narrowed it to "The label removal
+decides from the issue's state, not from subprocess error text"; the **final** wording — "No
+subprocess error text is interpreted in the label removal path" — landed in `5bd9a8a`. The
+quality review at `c66e268` classified the original as loose attribution rather than a false
+claim, and it is corrected here because it is the misattribution class this work item spent two
+review rounds on.
 
 **The `f988101` review's findings and their dispositions — recorded here because the ledger's own
 stated reason for existing is that these outlive the session.** The review returned PASS and raised
@@ -444,3 +460,66 @@ verdict is void: the `a11d39b` pair by the fix pass, the `f988101` specification
 docs-hygiene commit, and the `5bd9a8a` verdict by this one. The carried asks (a)–(i) remain T5's,
 except (b), (c) and (d), which the amendment resolves by construction rather than by a scoped
 claim.
+
+### Checkpoint 3 — accepted at `c66e268`
+
+**Accepted 2026-09-24.** The acceptance criterion is "focused GREEN and both sequential reviews
+apply to the exact candidate", and all three hold at `c66e268`: focused GREEN (164 passed), the
+specification review **PASS** at `c66e268` with no blocking finding, and the code-quality review
+**APPROVED** at `c66e268` with no blocking finding — the same identity, reviewed in the contract's
+order, spec first.
+
+**What the quality review verified independently rather than accepting.** It confirmed the source
+identity itself (`git log -1 --format='%H %s' -- src/` → `eaf006e`, and that the three later commits
+touch only `docs/work/WI-15/*`); reproduced all three gates with the same numbers as the controller
+and the specification reviewer; reproduced the **RED** in a throwaway `/tmp` copy — pre-T3
+`src/loop.ts` (`git show 9970111:src/loop.ts`) beside the new tests gives `2 failed | 162 passed
+(164)`, both at `expect(deps.setIssueLabel).not.toHaveBeenCalled()` — so the RED fails for the
+stated reason and not from a compile error; checked FR-005 by `grep` rather than by claim (one
+non-comment hit, the definition at `:64`); checked the secrets posture at the emission seam rather
+than assuming it; and confirmed the classifier is gone from the removal path while the kept
+create-time `/already exists/i` is named as the exception in the code, the spec and the `CLAUDE.md`
+row. Its verdict on hard constraints: none violated — no merge/review/canary/revert/push code
+touched (1), dep-injected tests with the RED reproduced by the reviewer (2), and no acquisition,
+planning or spend path touched (5); `harness-prd-v2.md` untouched and `docs/work/WI-14/*` absent
+from the range. Nothing in its report contradicts a controller check; every number it gives
+matches one already in this ledger.
+
+**Its one Important finding — disposed, no action required.** The two `cli/cli` probes in the
+evidence log (`label-state-probes.log:88-150`) exceeded the plan's single authorized probe and are
+recorded in the log as **not pre-authorized**. The review confirms **hard constraint 3 is not
+engaged** — both were read-only `gh issue` reads against a public, non-client repository, and no
+client repo, issue list or log is wired in anywhere in the change — and states no action is
+required, recording it only so the outward-facing action stays visible to the owner. It already is:
+in the log, in this ledger, and in the delivery record.
+
+**The three narration items — closed here, not fixed earlier.** The review agreed they should not
+have blocked delivery and gave the one-line improvement each would take "if the file is ever
+touched again". The file is being touched again, so all three are closed in this same commit: the
+checkpoint-1 bullet now carries a **Superseded by `eaf006e`** marker (its claim that the label name
+still survives at `:2207`, `:2528`, `:2564` was false of the shipped tree); the checkpoint-3 commit
+chain is stated by SHA throughout with `8068288` and `5bd9a8a` added, replacing a "(this commit)"
+that two later commits had invalidated; and the title-narrowing attribution now names `f988101` for
+the first narrowing and `5bd9a8a` for the final wording. Two of the three are the misattribution
+class this work item spent two rounds on; the third is its defect class in miniature — a record
+asserting something untrue about its own contents.
+
+**Deferred, as follow-ups rather than scope expansion.** (j) `src/loop.test.ts:3813` and `:3817`
+assert the same `escalationLabelFailure` value twice in test `(g)`; the destructured repeat is
+redundant, and the one-line fix is to delete it. **Not fixed now, deliberately:** it is a `src/`
+edit, so it would change the source identity, void both `c66e268` verdicts *and* the Part 3
+evidence, and cost two review cycles — disproportionate to a duplicate assertion the review itself
+classified cosmetic. (k) FR-006's text asks for the grilling lesson "as one line under
+`## Lessons`" and two landed (`CLAUDE.md:159-160`); both are true and both concern this work item's
+defect classes, so it is an extra honest lesson rather than scope creep — recorded only because the
+count does not match the spec's singular phrasing. Minor finding 5 is ask (g), already deferred
+above.
+
+**What this commit is, and what the verdicts therefore describe.** This acceptance commit is
+**docs-only** — no `src/` path, so the source identity stays `eaf006e` and the shipped code the two
+verdicts examined is byte-identical to what they saw. By this ledger's own standard a later commit
+voids an earlier verdict, and that standard is not being waived here: the two verdicts are recorded
+as describing **`c66e268` and nothing later**, and the prose that lands after them — these three
+closures and this acceptance record — is covered by the lifecycle's stage-4 `code-review`, which
+reviews the whole range at final HEAD. Stating that plainly is the point; a ledger that claimed the
+`c66e268` verdicts certified a commit made after them would be this work item's defect class again.
