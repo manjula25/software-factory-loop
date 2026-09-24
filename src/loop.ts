@@ -59,6 +59,10 @@ export const LOOP_IDENTITY = {
   email: "manjula25+loop@users.noreply.github.com",
 } as const;
 
+/** WI-15 (FR-005): the label's name, defined once — the create, the add/remove edit and the
+ *  membership check must not be able to drift apart. */
+export const HARNESS_FAILED_LABEL = "harness-failed";
+
 /** Facts recorded by onboarding — validated by execution, committed to the target repo. */
 export interface ProjectProfile {
   readonly language: string;
@@ -217,13 +221,24 @@ export interface LoopDeps {
    */
   commentOnIssue(repoDir: string, issue: NormalizedIssue, body: string): Promise<void>;
   /**
-   * WI-14 (FR-004/FR-005): add/remove the `harness-failed` label on a
-   * gh-sourced issue (`gh issue edit <n> --add-label|--remove-label`).
-   * Removal is idempotent by contract: an issue not wearing the label
-   * resolves successfully. Best-effort at the call site: a throw is recorded
-   * as a summary line only.
+   * WI-14 (FR-004/FR-005), amended WI-15 (FR-001): add/remove the
+   * `harness-failed` label on a gh-sourced issue (`gh issue edit <n>
+   * --add-label|--remove-label`). The REMOVE is resolved by the caller's
+   * read-before-remove test, not by forgiving this call's error: the label set
+   * is read first and a removal is only attempted when the label is there
+   * (`clearHarnessFailedLabel`), so a throw here is a real failure.
+   * Best-effort at the call site: a throw is recorded as a summary line only.
    */
   setIssueLabel(repoDir: string, issue: NormalizedIssue, op: "add" | "remove"): Promise<void>;
+  /**
+   * WI-15 (FR-001): the labels an issue currently carries — the evidence the
+   * removal decides from, replacing WI-14's error-text classifier. Read at the
+   * removal site, not at acquisition: the state must be fresh, or a label a
+   * human removed out-of-band would send the removal into a call that fails
+   * (FR-005's boundary: a missing label is success). Wiring-only, not exercised
+   * by vitest — correctness is code review plus the recorded probes.
+   */
+  readIssueLabels(repoDir: string, issue: NormalizedIssue): Promise<readonly string[]>;
 }
 
 export interface SingleIssueInput {
@@ -299,9 +314,12 @@ export interface LoopOutcome {
    */
   readonly escalationCommentFailure?: string;
   /**
-   * WI-14 (FR-004/FR-005): set when a `harness-failed` label write THREW —
-   * ADDING the label on the failed gh-sourced issue (FR-004) or REMOVING it on
-   * a verified-delivered success (FR-005). The same recording posture as
+   * WI-14 (FR-004/FR-005), amended WI-15 (FR-003): set when a
+   * `harness-failed` label write THREW — ADDING the label on the failed
+   * gh-sourced issue (FR-004) or REMOVING it on a verified-delivered success
+   * (FR-005) — or when the removal's label READ threw, which is recorded with a
+   * `could not read the issue's labels:` prefix naming the failed step
+   * (FR-003). The same recording posture as
    * `escalationCommentFailure`: captured verbatim beside the already-decided
    * verdict, never retried. The outcome is otherwise unchanged; the queue's
    * FAILED / `LABEL REMOVE FAILED` line and the single-issue report name it
@@ -791,15 +809,30 @@ async function escalateOnFailure(
  * has no issue to label. Same recording posture as the add — one try, a throw
  * captured verbatim into `escalationLabelFailure` beside the already-earned
  * success verdict, never retried, never propagated (FR-005: "a failed removal
- * is a summary line only"). Removal is idempotent by contract: the wiring's
- * classifier treats a missing label as success, so an issue a human already
- * un-labeled is a no-op, not a failure.
+ * is a summary line only"). Removal is decided from the issue's LABELS, never
+ * from the remove's error text: the label set is READ first (FR-001), and an
+ * issue not wearing the label is a no-op — success by not calling, not by
+ * forgiving an error.
  */
 async function clearHarnessFailedLabel(
   input: SingleIssueInput,
   deps: LoopDeps,
 ): Promise<{ escalationLabelFailure?: string }> {
   if (input.issue.url === undefined) {
+    return {};
+  }
+  let labels: readonly string[];
+  try {
+    labels = await deps.readIssueLabels(input.repoDir, input.issue);
+  } catch (error) {
+    // FR-003: a failed READ is recorded and the removal is skipped — never
+    // guessed at, never silent.
+    const reason = error instanceof Error ? error.message : String(error);
+    return { escalationLabelFailure: `could not read the issue's labels: ${reason}` };
+  }
+  if (!labels.includes(HARNESS_FAILED_LABEL)) {
+    // FR-001: a missing label is success (FR-005's boundary) — implemented by
+    // not calling, not by forgiving an error.
     return {};
   }
   try {
@@ -1789,12 +1822,15 @@ export interface QueueSummary {
    */
   readonly closeFailures: [string, string][];
   /**
-   * [id, reason] — WI-14 T3 (FR-005): REMOVING the `harness-failed` label on a
-   * verified-delivered outcome failed. Like `closeFailures` this is a loud note
-   * of its own (`LABEL REMOVE FAILED` lines), never a `failed` entry — the fix
-   * is verified and delivered, the label is bookkeeping, and the queue
-   * continues. (A failed label ADD rides the FAILED line as a suffix instead:
-   * it only ever happens on a failure arm.)
+   * [id, reason] — WI-14 T3 (FR-005), amended WI-15 (FR-003): REMOVING the
+   * `harness-failed` label on a verified-delivered outcome failed — or the
+   * label READ the removal decides from threw, recorded with a `could not
+   * read the issue's labels:` prefix naming the failed step. Like
+   * `closeFailures` this is a loud note of its own (`LABEL REMOVE FAILED`
+   * lines), never a `failed` entry — the fix is verified and delivered, the
+   * label is bookkeeping, and the queue continues. (A failed label ADD rides
+   * the FAILED line as a suffix instead: it only ever happens on a failure
+   * arm.)
    */
   readonly labelFailures: [string, string][];
   /**
@@ -2168,7 +2204,7 @@ export async function runQueue(input: QueueRunInput, deps: QueueLoopDeps): Promi
         `${outcome.failure ?? "unknown failure"}` +
           `${outcome.teardownFailure !== undefined ? ` (teardown: ${outcome.teardownFailure})` : ""}` +
           `${outcome.escalationCommentFailure !== undefined ? ` (escalation comment failed: ${outcome.escalationCommentFailure})` : ""}` +
-          `${outcome.escalationLabelFailure !== undefined ? ` (harness-failed label add failed: ${outcome.escalationLabelFailure})` : ""}` +
+          `${outcome.escalationLabelFailure !== undefined ? ` (${HARNESS_FAILED_LABEL} label add failed: ${outcome.escalationLabelFailure})` : ""}` +
           (outcome.escalation !== undefined && outcome.escalation.notifyHandle === undefined
             ? "; notify handle not configured"
             : ""),
@@ -2489,7 +2525,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
     // posture — loud on stderr, never fatal (the PR is the deliverable) and
     // never a reason to lose the success exit code.
     if (result.outcome.escalationLabelFailure !== undefined) {
-      stderr.push(`harness-failed label remove failed: ${result.outcome.escalationLabelFailure}`);
+      stderr.push(`${HARNESS_FAILED_LABEL} label remove failed: ${result.outcome.escalationLabelFailure}`);
     }
     // WI-8 (FR-002): a preflight/verification teardown failure on a PR'd run
     // is bookkeeping — loud on stderr, never fatal: the PR is the deliverable,
@@ -2525,7 +2561,7 @@ export function formatSingleIssueResult(result: OverrideOutcome): {
   // WI-14 T2 (FR-004): the label-add recording, same line pattern as the
   // escalation-comment failure above — loud on stderr, never fatal.
   if (result.outcome.escalationLabelFailure !== undefined) {
-    stderr.push(`harness-failed label add failed: ${result.outcome.escalationLabelFailure}`);
+    stderr.push(`${HARNESS_FAILED_LABEL} label add failed: ${result.outcome.escalationLabelFailure}`);
   }
   if (result.outcome.escalation !== undefined && result.outcome.escalation.notifyHandle === undefined) {
     stderr.push("notify handle not configured");
@@ -2714,27 +2750,42 @@ async function main(): Promise<void> {
     },
     // WI-14 T2 (FR-004/FR-005): the harness-failed label add (the failure
     // arms' call) / remove (T3's success arm) — same number-from-url idiom.
-    // The remove is idempotent by contract: a gh exit indicating the label is
-    // absent resolves successfully. Not exercised by vitest — its correctness
-    // is code review + the live runs' job (same posture as closeIssue).
+    // The remove is idempotency-free by design: this call is only ever reached
+    // once the caller has READ the label set and confirmed the label is there
+    // (FR-001 — see `clearHarnessFailedLabel`), so a gh failure here is a real
+    // gh failure and propagates to the caller's recording. fd 2 is PIPED: that
+    // is what puts gh's stderr into the thrown error's message, which is the
+    // text the recording captures verbatim (FR-005's "a failed removal is a
+    // summary line only"). Not exercised by vitest — its correctness is code
+    // review + the live runs' job (same posture as closeIssue).
     async setIssueLabel(dir: string, issueToLabel: NormalizedIssue, op: "add" | "remove") {
       const labelFlag = op === "add" ? "--add-label" : "--remove-label";
-      try {
-        execFileSync(
-          "gh",
-          ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, "harness-failed"],
-          { cwd: dir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
-        );
-      } catch (error) {
-        const errText =
-          `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
-        // Idempotent remove (FR-004 contract): the issue not wearing the
-        // label is a success, not a failure — whatever wording gh uses.
-        if (op === "remove" && /not found|not present|does not exist|could not remove|couldn't remove/i.test(errText)) {
-          return;
-        }
-        throw error;
-      }
+      execFileSync(
+        "gh",
+        ["issue", "edit", issueNumberFromUrl(issueToLabel.url), labelFlag, HARNESS_FAILED_LABEL],
+        { cwd: dir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
+      );
+    },
+    // WI-15 T2 (FR-001): the label READ the removal decides from — same
+    // number-from-url idiom as setIssueLabel beside it. `--json labels`
+    // prints the label objects (verified shape: T2's recorded probes in
+    // docs/work/WI-15/evidence/label-state-probes.log — an element carries
+    // `name`, so the map is to names, not to `String`). stdout MUST be piped
+    // here, unlike setIssueLabel's call above: this one consumes stdout, and
+    // `inherit` makes execFileSync return null — JSON.parse(null) is null, so
+    // the `.labels` read throws a TypeError on every single call and the read
+    // can never succeed. fd 2 stays piped so gh's stderr still lands in the
+    // thrown error's message, which is the text FR-003 records verbatim.
+    // A throw here is a real gh failure and propagates to the caller, which
+    // records it (FR-003). Not exercised by vitest — its correctness is code
+    // review + the recorded probes (same posture as closeIssue).
+    async readIssueLabels(dir: string, issueToRead: NormalizedIssue) {
+      const raw = execFileSync(
+        "gh",
+        ["issue", "view", issueNumberFromUrl(issueToRead.url), "--json", "labels"],
+        { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      return (JSON.parse(raw) as { labels: readonly { name: string }[] }).labels.map((l) => l.name);
     },
     // WI-13 T8 (FR-007): the read-only conflict probe — `git merge-tree
     // --write-tree <branch> main` (git ≥ 2.38) performs the merge purely in
@@ -2937,8 +2988,10 @@ function issueNumberFromUrl(url: string | undefined): string {
  * problem and rethrows loudly at startup, before any spend. The logged line is
  * a static literal (no gh output echoed), so it needs no secrets guard.
  * fd 2 is PIPED (not inherited): gh prints "already exists" to stderr, and
- * only a piped fd puts it in the thrown error — the same classifier shape as
- * `setIssueLabel` above, without which this catch arm could never fire.
+ * only a piped fd puts it in the thrown error — the same piped-fd mechanism
+ * `setIssueLabel` above relies on, without which this catch arm could never
+ * fire. Its own `/already exists/i` match is narrow and stays: this check is
+ * create-time and unrelated to the removal's read-before-remove contract.
  * Wiring-only, not exercised by vitest — correctness is code review + the
  * live runs' job.
  */
@@ -2946,7 +2999,7 @@ function ensureHarnessFailedLabel(repoDir: string): void {
   try {
     execFileSync(
       "gh",
-      ["label", "create", "harness-failed", "--color", "B60205", "--description", "automated fix attempt failed"],
+      ["label", "create", HARNESS_FAILED_LABEL, "--color", "B60205", "--description", "automated fix attempt failed"],
       { cwd: repoDir, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8" },
     );
   } catch (error) {
@@ -2955,7 +3008,7 @@ function ensureHarnessFailedLabel(repoDir: string): void {
     if (!/already exists/i.test(errText)) {
       throw error;
     }
-    console.log('label "harness-failed" already exists — nothing to create');
+    console.log(`label "${HARNESS_FAILED_LABEL}" already exists — nothing to create`);
   }
 }
 

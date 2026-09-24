@@ -1,0 +1,412 @@
+# WI-15 — label-state probes
+
+What this file is: the recorded, read-only probes that establish the shape of the issue-label
+state the harness reads, so the `readIssueLabels` parse is written against **observed** gh output
+rather than an assumption. **Every command in Part 1 is read-only.** Part 2 copies the
+pre-grilling record verbatim, and that record contains outward-facing `gh issue edit
+… --remove-label` calls — each run on a **non-mutating case**, and recorded here rather than
+re-run (Part 2 says why). Later probes are appended by the task that runs them, each with its own
+command, exit code and verbatim output; where the source record summarizes instead of printing,
+the gap is labelled rather than filled in.
+
+The file holds **nine** gh probe blocks in **two** sets, plus **one local reproduction** (Part 3,
+two arms):
+
+- **Part 1 — the T2 shape probes: four blocks (1, 2, 3, 3b).** They establish the JSON *shape*
+  the `readIssueLabels` parse is written against, and were run during T2.
+- **Part 2 — the pre-grilling probes: five blocks.** They were run before grilling and are
+  **copied verbatim** from `docs/work/WI-15/prd.md` § "Facts verified before grilling
+  (2026-09-23)"; none was re-run for this file.
+- **Part 3 — the local `execFileSync` stdio reproduction: two arms (a, b).** It makes **no
+  gh call** and touches **no sandbox** — it spawns local `node` children only. It is the durable
+  evidence for the two stdio claims the wiring comments rest on, which the adjacent review found
+  recorded nowhere.
+
+**Which "five" the specification means.** The specification's evidence boundary names "the five
+recorded probe commands" — that phrase refers to the **pre-grilling** set (Part 2). The T2 shape
+probes are four, not five, and they are the parse-shape evidence, a different thing.
+
+The confounder this file exists to remove: the issue this work item is about was caused by the
+harness interpreting a subprocess's *text* instead of reading its *state* — so the shape of the
+state is probed first, before any parse is written against it.
+
+---
+
+# Part 1 — T2 shape probes (2026-09-23)
+
+## Probe 1 — the plan's owner-approved shape probe (fixture repo)
+
+Command:
+
+```
+gh issue list --repo manjula25/loop-fixtures-py --state all --limit 5 --json number,labels
+```
+
+Exit code: `0`
+
+Verbatim stdout:
+
+```
+[{"labels":[],"number":54},{"labels":[],"number":52},{"labels":[],"number":49},{"labels":[],"number":48},{"labels":[],"number":45}]
+```
+
+What it establishes: gh's `--json labels` field puts the labels under a `labels` **array key** per
+issue (so `JSON.parse(stdout)` yields an array of issues, each with a `labels` array). What it
+does **not** establish: the shape of an array *element* — every array here is empty, so this probe
+alone cannot distinguish `{name: string}` objects from bare strings. It was recorded as
+inconclusive on that point rather than read as if it had settled it; probes 3 and 3b below supply
+the missing element shape. **This is the fork the plan flagged, reached honestly.**
+
+## Probe 2 — is any issue in the fixture repo even labelled?
+
+Command:
+
+```
+gh issue list --repo manjula25/loop-fixtures-py --state all --limit 100 --json number,labels
+```
+
+Exit code: `0`
+
+Verbatim stdout (re-run by T4, 2026-09-24 — one JSON line, unmodified, no elision):
+
+```
+[{"labels":[],"number":54},{"labels":[],"number":52},{"labels":[],"number":49},{"labels":[],"number":48},{"labels":[],"number":45},{"labels":[],"number":44},{"labels":[],"number":41},{"labels":[],"number":40},{"labels":[],"number":37},{"labels":[],"number":36},{"labels":[],"number":32},{"labels":[],"number":31},{"labels":[],"number":30},{"labels":[],"number":29},{"labels":[],"number":26},{"labels":[],"number":23},{"labels":[],"number":22},{"labels":[],"number":20},{"labels":[],"number":18},{"labels":[],"number":14},{"labels":[],"number":10},{"labels":[],"number":3},{"labels":[],"number":2},{"labels":[],"number":1}]
+```
+
+What it establishes: no issue in the synthetic fixture repo wears a label — the array holds 24
+issue objects and every `labels` array in it is empty, so the element shape cannot be observed
+there at any `--limit`. Probe 1's emptiness is a property of the fixture data, not of gh's
+serialisation — which is why the element shape had to be observed elsewhere.
+
+**Correction (T4, 2026-09-24).** This block previously displayed a *filtered* result — `[]` under
+the heading "Verbatim result" plus the line `total issues: 24` — without showing the filter,
+which falls below the standard probes 1/3/3b set. The command above was therefore re-run against
+the same public synthetic fixture repo (read-only) and its unmodified stdout is recorded here.
+Nothing else in this block's conclusion changed: the repo still carries no labelled issue.
+
+## Probe 3 — the element shape, on a public repo with a labelled issue
+
+Command (same `--json labels` field as probe 1, on a public repository):
+
+```
+gh issue list --repo cli/cli --state all --limit 3 --json number,labels
+```
+
+Exit code: `0`
+
+Verbatim stdout:
+
+```
+[{"labels":[{"id":"LA_kwDODKw3uc7QD3p7","name":"needs-triage","description":"needs to be reviewed","color":"D6393F"}],"number":14512},{"labels":[{"id":"LA_kwDODKw3uc7QD3p7","name":"needs-triage","description":"needs to be reviewed","color":"D6393F"}],"number":14511},{"labels":[{"id":"LA_kwDODKw3uc7QD3p7","name":"needs-triage","description":"needs to be reviewed","color":"D6393F"}],"number":14510}]
+```
+
+What it establishes: a `labels` array element is an **object carrying `name`** (alongside `id`,
+`description`, `color`) — not a bare string. The plan's expected case holds, so the parse is
+`.labels.map((l) => l.name)`; `.map(String)` would have been wrong here (it would yield
+`"[object Object]"` and every membership check would fail).
+
+## Probe 3b — the wiring's own subcommand, on a labelled issue
+
+The wiring calls `gh issue view <n> --json labels` (not `gh issue list`), so the element shape is
+confirmed on that subcommand too. The probe adds `--repo cli/cli` only to point that same
+subcommand at a repository whose issue carries a label; the wiring itself omits `--repo` and is
+scoped by the target repo's cwd instead, so this is the wiring's subcommand and `--json` field,
+not its literal argv.
+
+```
+gh issue view 14512 --repo cli/cli --json labels
+```
+
+Exit code: `0`
+
+Verbatim stdout:
+
+```
+{"labels":[{"id":"LA_kwDODKw3uc7QD3p7","name":"needs-triage","description":"needs to be reviewed","color":"D6393F"}]}
+```
+
+What it establishes: `issue view --json labels` returns the same top-level `{"labels":[...]}`
+object with the same element shape, so `JSON.parse(raw) as { labels: readonly { name: string }[] }`
+followed by `.map((l) => l.name)` matches observed output. (Consistent with the shape already
+recorded in `docs/work/WI-15/prd.md`: `gh issue view 54 --json labels,state` →
+`{"labels":[],"state":"CLOSED"}`, exit 0 — that record confirms the top-level key, this probe
+confirms the element.)
+
+## Authorization status of probes 3 and 3b (recorded honestly, T4)
+
+The implementation plan authorized **one** read-only probe — T2 step 1, on the fixture repo
+`manjula25/loop-fixtures-py`. That probe could not determine the JSON **element** shape: no issue
+in the fixture repo carries a label (probe 2 above), so every `labels` array it returned was
+empty. The implementer therefore extended the probing to `cli/cli`, a public third-party
+repository, for probes 3 and 3b, in order to read an issue that actually wears a label.
+
+This deviation was **not pre-authorized**: the plan named no repository other than the fixture
+repo, and this file does not claim an authorization that did not exist. What can be said plainly
+is what was true of the two probes themselves — both were read-only (`gh issue list` /
+`gh issue view`), on a public, non-client repository, so the confidentiality gate (hard
+constraint 3) is not engaged. The controller accepted the deviation after the fact and surfaced
+it to the owner. It is recorded here rather than left implicit.
+
+---
+
+# Part 2 — Pre-grilling probes (2026-09-23), copied verbatim from `prd.md`
+
+These five probes were run **before grilling** and are recorded in `docs/work/WI-15/prd.md` §
+"Facts verified before grilling (2026-09-23)". They are copied here **from that record**; none was
+re-run for this file. The reason is stated rather than assumed: probes 2–4 in that record are
+`gh issue edit … --remove-label` calls — mutating commands, run on a case that does not mutate —
+and re-running them is not authorized. Where the record summarizes instead of printing (noted per
+probe below), this file does not invent the missing verbatim text.
+
+Environment, quoted from the record's preamble (which also states the authorization):
+
+> Code reading, plus five probe commands run against `manjula25/loop-fixtures-py` (a public
+> synthetic fixture repo, so hard constraint 3 is not engaged) on **gh 2.45.0**. The probes are
+> outward-facing `gh` calls on a non-mutating case each; the owner authorized each batch.
+
+## Grilling probe 1 — reading labels works
+
+- Command: `gh issue view 54 --json labels,state`
+- Exit code: `0`
+- Verbatim output, as recorded: `{"labels":[],"state":"CLOSED"}`
+- What it establishes: reading an issue's labels through `gh` works, and the top-level key is
+  `labels` — the key the read seam parses.
+
+## Grilling probe 2 — removing a label that exists in the repo but is not applied to the issue
+
+- Command: `gh issue edit 54 --remove-label harness-failed`
+- Exit code: `0`
+- Verbatim output, as recorded: exit 0, **no stdout, no stderr**
+- What it establishes, in the record's words: "`gh` is already idempotent for the very case the
+  classifier was written to forgive." A label-absent removal is a silent success, so this case
+  can never be what makes the old classifier fire.
+
+## Grilling probe 3 — removing a label that does not exist in the repo
+
+- Command: **not printed in the record.** This block reproduces only what the record shows; the
+  label name below is read from the recorded output, not from a recorded argv.
+- Exit code: `1`
+- Verbatim output, as recorded: `failed to update <url>: 'no-such-label-xyz' not found` +
+  `failed to update 1 issue` (the `<url>` placeholder is the record's own elision, kept here
+  rather than filled in with a guess)
+- What it establishes: this text **matched** the then-current error-text classifier — this is the
+  case that made the classifier reachable (see the `## Lessons` entry in `CLAUDE.md`), and it is
+  the case the WI-15 read-before-remove design removes the need for.
+
+## Grilling probe 4 — removing a label from a nonexistent issue
+
+- Command: **not printed in the record** (same reason as probe 3); the output identifies the
+  case — issue number 999999, which does not exist.
+- Exit code: `1`
+- Verbatim output, as recorded: `GraphQL: Could not resolve to an issue or pull request with the
+  number of 999999. (repository.issue)`
+- What it establishes: this text **did not match** the classifier — so the record's reading is
+  that a genuine issue-not-found error during a remove was never swallowed as success, which is
+  what disproves A9 as it was written (the record's next bullet spells that out).
+
+## Grilling probe 5 — the `harness-failed` label still exists on that repo (read-only check)
+
+- Command: **not recorded in the record** — the record describes this probe only as "a read-only
+  check" and prints no argv, exit code or output for it. Nothing is invented here to fill that
+  gap; the gap is the honest record.
+- Exit code: not recorded
+- Verbatim output, as recorded: none printed
+- What it establishes, in the record's words: "`harness-failed` still exists on that repo", so
+  grilling probe 2 really was "label in repo, not on the issue" — not "label deleted". That
+  distinction is what makes probe 2's silent success the correct-outcome case rather than a
+  masking of the label-deleted case.
+
+---
+
+# Part 3 — the local `execFileSync` stdio reproduction (2026-09-24)
+
+**This is a local reproduction: no GitHub call, no sandbox, no `gh` binary.** It spawns local
+`node` children only, from `/tmp`; no repository file is touched and no script is left in the
+tree. It exists because two load-bearing claims in the `src/loop.ts` wiring comments — that
+`stdio: ["ignore", "inherit", "pipe"]` makes `execFileSync` return `null`, and that piping fd 2 is
+what puts the subprocess's stderr into the thrown error's `message` — were, until this block,
+asserted in prose with no recorded reproduction anywhere (adjacent finding 3 of checkpoint 1's
+spec review, ledger line ~119). This block is that reproduction run for real.
+
+Environment: **Node v24.18.0** (`node --version`, printed by the script itself as its first line
+and independently by the invoking shell).
+
+## The children
+
+Two real spawned processes, written to `/tmp` as throwaway files — the failing child's stderr
+text appears nowhere in its own argv (its argv is just the script path), so the "message contains
+the stderr text" check below is able to fail. That detail is deliberate; see the confound note.
+
+`/tmp/wi15-echo-stdout.mjs`:
+
+```js
+console.log("STDOUT-PAYLOAD");
+```
+
+`/tmp/wi15-fail-stderr.mjs`:
+
+```js
+console.error("BOOM-STDERR");
+process.exit(3);
+```
+
+## The reproduction script
+
+`/tmp/wi15-stdio-repro.mjs`, run from `/tmp`:
+
+```js
+import { execFileSync } from "node:child_process";
+
+const STDOUT_CHILD = "/tmp/wi15-echo-stdout.mjs";
+const FAIL_CHILD = "/tmp/wi15-fail-stderr.mjs";
+
+console.log("node:", process.version);
+
+// (a) stdout inherited vs stdout piped — the stdio the read seam was wired with
+//     first, versus the one it ships with. `encoding: "utf8"` mirrors the wiring.
+const viaInherit = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "inherit", "pipe"],
+  encoding: "utf8",
+});
+const viaPipe = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "pipe", "pipe"],
+  encoding: "utf8",
+});
+console.log("(a) stdio inherit stdout -> value:", JSON.stringify(viaInherit), "| typeof:", typeof viaInherit);
+console.log("(a) stdio pipe    stdout -> value:", JSON.stringify(viaPipe), "| typeof:", typeof viaPipe);
+
+// The same call with no `encoding`, for completeness: the piped return is a Buffer
+// (JSON.parse still accepts it; the value is not null either way).
+const viaPipeNoEncoding = execFileSync(process.execPath, [STDOUT_CHILD], {
+  stdio: ["ignore", "pipe", "pipe"],
+});
+console.log("(a) pipe, no encoding -> value:", JSON.stringify(viaPipeNoEncoding), "| typeof:", typeof viaPipeNoEncoding);
+
+try {
+  const parsed = JSON.parse(viaInherit);
+  console.log("(a) JSON.parse(inherit return) ->", JSON.stringify(parsed));
+  console.log("(a) parsed.labels ->", JSON.stringify(parsed.labels));
+} catch (err) {
+  console.log("(a) JSON.parse(inherit return).labels THREW:", err.constructor.name + ": " + err.message);
+}
+
+// (b) the failing child, stderr piped (the wiring) — the load-bearing arm.
+try {
+  execFileSync(process.execPath, [FAIL_CHILD], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+  console.log("(b) fd 2 piped -> no throw (unexpected)");
+} catch (err) {
+  console.log("(b) fd 2 piped -> threw:", err.constructor.name, "| err.status:", err.status);
+  console.log("(b) fd 2 piped -> err.stderr:", JSON.stringify(err.stderr));
+  console.log("(b) fd 2 piped -> err.message contains BOOM-STDERR:", err.message.includes("BOOM-STDERR"));
+  console.log("(b) fd 2 piped -> err.message:", JSON.stringify(err.message));
+}
+
+// (b2) contrast — the same child with fd 2 ignored and with fd 2 inherited.
+for (const fd2 of ["ignore", "inherit"]) {
+  try {
+    execFileSync(process.execPath, [FAIL_CHILD], { stdio: ["ignore", "pipe", fd2], encoding: "utf8" });
+    console.log(`(b2) fd 2 ${fd2} -> no throw (unexpected)`);
+  } catch (err) {
+    console.log(`(b2) fd 2 ${fd2} -> err.stderr: ${JSON.stringify(err.stderr)}`);
+    console.log(`(b2) fd 2 ${fd2} -> err.message contains BOOM-STDERR: ${err.message.includes("BOOM-STDERR")}`);
+    console.log(`(b2) fd 2 ${fd2} -> err.message: ${JSON.stringify(err.message)}`);
+  }
+}
+```
+
+Command:
+
+```
+cd /tmp && node /tmp/wi15-stdio-repro.mjs; echo "--- exit=$? ---"
+```
+
+Exit code: the script exits `0`; the shell's marker line prints `--- exit=0 ---`. (The child's
+non-zero status is caught by the reproduction and shown as `err.status: 3`, not propagated.)
+
+Verbatim output:
+
+```
+node: v24.18.0
+STDOUT-PAYLOAD
+(a) stdio inherit stdout -> value: null | typeof: object
+(a) stdio pipe    stdout -> value: "STDOUT-PAYLOAD\n" | typeof: string
+(a) pipe, no encoding -> value: {"type":"Buffer","data":[83,84,68,79,85,84,45,80,65,89,76,79,65,68,10]} | typeof: object
+(a) JSON.parse(inherit return) -> null
+(a) JSON.parse(inherit return).labels THREW: TypeError: Cannot read properties of null (reading 'labels')
+(b) fd 2 piped -> threw: Error | err.status: 3
+(b) fd 2 piped -> err.stderr: "BOOM-STDERR\n"
+(b) fd 2 piped -> err.message contains BOOM-STDERR: true
+(b) fd 2 piped -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs\nBOOM-STDERR\n"
+(b2) fd 2 ignore -> err.stderr: null
+(b2) fd 2 ignore -> err.message contains BOOM-STDERR: false
+(b2) fd 2 ignore -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs"
+BOOM-STDERR
+(b2) fd 2 inherit -> err.stderr: null
+(b2) fd 2 inherit -> err.message contains BOOM-STDERR: false
+(b2) fd 2 inherit -> err.message: "Command failed: /home/bitcot/.nvm/versions/node/v24.18.0/bin/node /tmp/wi15-fail-stderr.mjs"
+--- exit=0 ---
+```
+
+**About the two bare lines.** `STDOUT-PAYLOAD` (after the `node:` line) and `BOOM-STDERR` (before
+the `fd 2 inherit` group) carry no `(a)`/`(b)` prefix because they are the **children's own
+writes**, going straight to the invoking terminal under the `inherit` arms — that is precisely
+what `inherit` means, and it is why neither appears in a return value or a caught error. Their
+**position** in the interleaving is timing-dependent, so this block does not claim it; the
+parent's own lines (every line with an `(a)`/`(b)`/`(b2)` prefix) were checked for stability
+first and are byte-identical across three consecutive runs (identical `md5sum` of the filtered
+output). The recorded block above is the real run, transcribed, not a reordered tidying of it.
+
+## Arm (a) — the `inherit`-stdout trap
+
+Both claims about the read seam's original stdio are confirmed on this Node:
+
+- `stdio: ["ignore", "inherit", "pipe"]` → the return value is **`null`** (`typeof: object`
+  because `typeof null === "object"`; `JSON.stringify` prints `null`). The stdout went to the
+  terminal instead — the bare `STDOUT-PAYLOAD` line.
+- `stdio: ["ignore", "pipe", "pipe"]` **with the wiring's `encoding: "utf8"`** → the return value
+  is the stdout **string** `"STDOUT-PAYLOAD\n"`.
+- `JSON.parse(null)` → `null`, and the subsequent `.labels` read throws
+  **`TypeError: Cannot read properties of null (reading 'labels')`** — i.e. on every call, which
+  is the FR-001 defeat the checkpoint-1 spec review found and the reason the shipped wiring pipes
+  stdout.
+
+One nuance the record keeps rather than smooths: **`encoding` is doing work in that second claim.**
+Without it, the piped return is a `Buffer` (`{"type":"Buffer","data":[…]}`, the third `(a)` line),
+**not** a string — the "returns the stdout string" claim is true of the shipped call *because* it
+passes `encoding: "utf8"`, as `src/loop.ts:2786` does. The defect the claim is about does not
+depend on this: the `inherit` arm returns `null` either way, and `JSON.parse` accepts both the
+string and the Buffer, so the shipper's parse is correct while the un-encoded variant would also
+have worked. Recorded because the difference is real and a future reader should not take
+"returns a string" as unconditional.
+
+## Arm (b) — fd 2 piped, and why the recorded reason is useful
+
+Confirmed: with `stdio: ["ignore","pipe","pipe"]`, a child that writes to stderr and exits `3`
+throws an `Error` whose **`message` contains that stderr text** (`err.message` ends
+`…/tmp/wi15-fail-stderr.mjs\nBOOM-STDERR\n`), and `err.stderr` carries it too. That is the
+mechanism by which the removal path's recorded reason (`harness-failed label remove failed:
+<reason>`) is the subprocess's own words rather than a bare exit status.
+
+The contrast arms make the mechanism **attributable** rather than merely co-observed, which is
+what "piping fd 2 is *what puts* the text there" requires:
+
+| fd 2 | `err.stderr` | `err.message` contains `BOOM-STDERR` |
+|---|---|---|
+| `"pipe"` (shipped) | `"BOOM-STDERR\n"` | **true** |
+| `"ignore"` | `null` | **false** |
+| `"inherit"` | `null` | **false** |
+
+With `ignore` the text is dropped; with `inherit` it reaches the operator's console (the bare
+`BOOM-STDERR` line) but **not** the thrown error. Both claims in the wiring comments therefore
+hold as written, on this Node, observed rather than assumed.
+
+**The confound this reproduction had to shed, recorded because it is the work item's own defect
+class.** The first version of this probe passed the failing child as
+`node -e 'console.error("BOOM-STDERR"); process.exit(3)'` and asked whether the message contained
+`BOOM-STDERR`. It "passed" for the `fd 2 ignore` case too — because Node's `Command failed: …`
+message **echoes the child's argv**, and the script text containing `BOOM-STDERR` *was* the argv.
+The check could not fail; its result was guaranteed rather than informative, exactly the vacuous-
+evidence trap already under `CLAUDE.md`'s `## Lessons`. Moving the child into a script file (so
+argv is just a path) is what made the contrast real, and the arms above are the re-run after that
+correction. Without the `(b2)` contrast, the original check would have "confirmed" a mechanism it
+had never tested.
