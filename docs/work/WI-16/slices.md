@@ -15,7 +15,8 @@ consequence) — those are settled in `specification.md`, not here.
 **Behavior.** A test-driven fixture repository on GitHub, reset to a known state before each run
 (remote branches pruned, open PRs closed, base branch reset to the seed commit); a **test-only
 sandbox image** identical to the production image except that its agent entry points are scripts;
-and the vitest wiring that makes the integration run part of `npm test`.
+and the wiring that gives the scenarios **their own command** on the pipeline-integration surface,
+leaving `npm test` exactly as it is (D2, reversed 2026-09-25 — see `prd.md`).
 
 Answers the four hazards by construction: H1 and H3 stop being hazards because mutation lands in
 a repo whose purpose is to be mutated **and** the pre-run reset removes the leftover that makes a
@@ -83,10 +84,11 @@ Size: small. Risk: low.
 
 ## Slice F — Docs honesty (independent)
 
-**Behavior.** `docs/agents/workflow.md`'s command table gains `--image`, which the integration
-test now depends on and which the table does not currently name (D4). `CLAUDE.md`'s module table
-and the testing tiers stay honest about what the new gate does and does not prove, in the same PR
-as the code — the table's own standing rule.
+**Behavior.** `docs/agents/workflow.md`'s **Pipeline integration** row gains the integration
+command under its own name **and** the `--image` option the scenarios depend on and which the
+table does not currently list (D4). `CLAUDE.md`'s module table and the testing-tiers description
+stay honest about what the new command does and does not prove — including that nothing runs it
+automatically — in the same PR as the code, which is the table's own standing rule.
 
 Size: small. Risk: none (review-verified).
 

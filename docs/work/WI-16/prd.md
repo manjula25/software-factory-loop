@@ -143,20 +143,68 @@ bad day." A test that fails for two different reasons is not a test. `harness-pr
 records this trade-off ("a failed run is ambiguous between pipeline and model", grilling
 2026-09-11, decision 3).
 
-**D2 — It runs on every `npm test`.** *(owner, 2026-09-25: "on every test")*
+**D2 — It runs as its own command on the pipeline-integration surface; the default gate is
+unchanged.** *(owner, 2026-09-25: "split it" — superseding the same-day decision "on every test")*
 
-The wiring check is part of the default gate, not an opt-in command. A gate that skips the wiring
-is the gate that let A-2 exist.
+**This decision previously read: "It runs on every `npm test`. The wiring check is part of the
+default gate, not an opt-in command. A gate that skips the wiring is the gate that let A-2
+exist."** The owner revisited it later the same day and reversed it. The original reasoning is
+kept above rather than deleted, because it is the argument the reversal had to answer.
 
-### Consequence: the default gate changes character
+The three scenarios now run under a dedicated command belonging to the **pipeline-integration
+surface** — the row `docs/agents/workflow.md` already gives them — and are required evidence at
+the verification stage for any change that touches that surface. `npm test` stays what it is
+today: offline, Docker-free, seconds.
 
-Stated plainly because it is a real cost of D2, not an objection to it. Today `npm test` is
-offline, Docker-free, and runs in ~2s. After this it will require, on every invocation:
+Three facts decided the reversal. Each was looked up, not assumed; each is re-runnable.
 
-- a running Docker daemon (constraint 6 keeps this local — no cloud spend);
-- network access and working GitHub auth;
-- several minutes, not seconds;
-- **writes to a real GitHub repository** — branches, commits, PRs, merges.
+**1. There is no CI and no hook — `npm test` is the only automated trigger that exists.**
+
+```
+$ ls .github                       → No such file or directory
+$ git ls-files .github | wc -l     → 0
+$ git config --get core.hooksPath  → (unset)
+```
+
+**2. `npm test` does not actually force the check, so D2 bought default slowness rather than
+guaranteed coverage.** The gate is subsettable by path — `"test": "vitest run"` with
+`include: ["src/**/*.test.ts"]` — and a developer iterating on a unit test types exactly that:
+
+```
+$ npx vitest run                    → Test Files 10 passed (10); Tests 287 passed (287); 1.42s
+$ npx vitest run src/verify.test.ts → Test Files  1 passed  (1); Tests  12 passed  (12); 133ms
+```
+
+The second invocation is the same gate, run the way it is actually run while working, and it
+starts no integration scenario. The scenarios would therefore have sat inside the default command
+without being forced by it.
+
+**3. The command table already splits the two surfaces.** `docs/agents/workflow.md` lists
+`npm run typecheck` and `npm test` under *Harness source (`src/`, TypeScript)*, and
+`build:image`, `smoke:image` and `npm run loop` under *Pipeline integration (local Docker)*. The
+scenarios are that second surface. D2 put them in the first.
+
+### What the reversal resolves
+
+It dissolves a question the original D2 created. "What does `npm test` do when Docker, network or
+`gh` auth is missing?" is a hard question only while `npm test` is the thing that needs them — and
+both available answers were bad: fail, and the inner loop is red for reasons unrelated to the
+change under test; or skip, which is a check that cannot fail. As its own command the answer is
+plain: **it fails loudly and names the missing precondition**, no skip and no silent pass. The
+specification carries that answer and leaves no clarification marker.
+
+### The cost this accepts, stated plainly
+
+**Nothing runs the scenarios automatically.** In a repository with no CI, the trigger is the
+delivery path: `verification-before-completion` requires fresh evidence for the exact candidate,
+and a change touching the wiring has no other evidence to offer. That is how WI-13, WI-14 and
+WI-15 were actually verified. It is a **process** guarantee, not a mechanical one — a run can
+still be skipped, and this record does not pretend otherwise. Making it mechanical means CI, which
+does not exist in this repository and is its own work item.
+
+What the split buys: the common case is not taxed, and the integration command never goes red for
+a reason unrelated to the change under test — the failure mode that trains people to route around
+a gate, which is the same disease as a check that cannot fail wearing a different coat.
 
 ## Hazards the design must handle
 
@@ -170,9 +218,9 @@ answered in the specification before implementation starts.
 { "baselineFailures": [], "expectedDurationSec": 3, "autoMerge": true, "notifyHandle": "manjula25" }
 ```
 
-So a green run **squash-merges into that repo's `main` and deletes the branch**. Every `npm test`
-would mutate real history, and trigger the post-merge canary on top. Left alone, main accumulates
-a junk commit per test run.
+So a green run **squash-merges into that repo's `main` and deletes the branch**. Every integration
+run would mutate real history, and trigger the post-merge canary on top. Left alone, main
+accumulates a junk commit per run.
 
 **H2 — The same profile carries `notifyHandle: "manjula25"`.** A failing lane posts an inline
 `@manjula25` comment on the GitHub issue. So a red test run would **@-mention the owner on
@@ -292,9 +340,10 @@ only when more than one issue is eligible.
   draft of this record called it "the deciding constraint" and implied a sandbox on every run
   would breach it. That was wrong, and worth correcting rather than deleting: the constraint bans
   **cloud** spend, and everything here is local Docker. What D2 actually costs is a Docker daemon
-  on every `npm test`, not a constraint breach. The scripted agent (D1/D4) is what keeps spend at
-  zero — a live model on every test run would be the real problem, and it is the thing being
-  avoided.
+  **when the integration command runs** — not on every `npm test`, and not a constraint breach
+  (corrected 2026-09-25 with D2's reversal; this sentence previously read "a Docker daemon on
+  every `npm test`"). The scripted agent (D1/D4) is what keeps spend at zero — a live model on
+  any run would be the real problem, and it is the thing being avoided.
 - **Constraints 3, 4, 5** — untouched. The disposable repo carries no client data (constraint 3),
   and the reproduction test the scripted agent writes stays in that repo's suite (constraint 4).
 

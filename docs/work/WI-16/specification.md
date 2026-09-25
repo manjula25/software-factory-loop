@@ -2,8 +2,9 @@
 
 ## Status
 
-**Draft — presented for owner approval.** No implementation may start from this document until it
-is approved.
+**Draft — presented for owner approval.** D2 was reversed by the owner on 2026-09-25 (see
+`prd.md`); this document reflects the reversal, and the clarification marker it previously carried
+is resolved and removed. No implementation may start from this document until it is approved.
 
 ## Source artifacts
 
@@ -224,25 +225,35 @@ is approved.
 - **Non-claims:** Does not make the harness safe to run twice against *the same real repository* —
   that is a pre-existing property, unchanged here.
 
-### FR-011: The integration run is part of the default gate
+### FR-011: The scenarios are their own command, and the default gate is unchanged
 
-- **Behavior:** The scenarios run as part of the default test command, not as a separate opt-in
-  command. The default test command's configuration is widened so that a test outside the
-  production source tree is included.
-- **Source traceability:** prd.md D2 ("on every test", 2026-09-25) and its recorded reasoning — a
-  gate that skips the wiring is the gate that let A-2 exist; TD6's own wording, "alone would drift
-  silently and a check that isn't run", via the repo's standing lesson that a check that cannot
-  fail is not evidence.
+- **Behavior:** The three scenarios run under a **dedicated command** belonging to the
+  pipeline-integration surface of the authoritative command list. They are not part of the default
+  test command, which keeps its present character: offline, Docker-free, seconds. For any change
+  that touches the pipeline surface, running that command and recording its evidence is required
+  before delivery — the obligation the repository's verification stage already carries for every
+  other claim.
+- **Source traceability:** prd.md D2 **as reversed 2026-09-25** ("split it"), which supersedes the
+  same-day "on every test". The three facts the reversal rests on — no CI or hook exists; the
+  default gate is subsettable, so it never forced the check; and the command table already splits
+  the two surfaces — are recorded there with their commands.
 - **Slice coverage:** A, F.
-- **Success criteria:** a developer running the default test command with no extra flags executes
-  all three scenarios; no separate opt-in command exists for them.
-- **Evidence label:** Focused integration run, invoked exactly as the default gate invokes it.
-- **Boundary and errors:** The gate's cost changes materially and knowingly: it requires a running
-  Docker daemon (local only — hard constraint 6), network access, a working GitHub CLI auth, and
-  it writes to the fixture repository. It also takes minutes rather than seconds. This is D2's
-  recorded consequence, not an objection to it.
-- **Non-claims:** Does not claim the gate is fast, offline, or side-effect-free — it is none of
-  those, by decision.
+- **Success criteria:** the default test command runs no scenario, needs no Docker, no network and
+  no GitHub auth, and is unchanged in character and duration; the dedicated command runs all three
+  scenarios; and the authoritative command list names it under the pipeline-integration surface
+  (FR-013).
+- **Evidence label:** Focused integration run, invoked exactly as the dedicated command invokes it,
+  plus a default-gate run demonstrating it is unaffected.
+- **Boundary and errors:** The dedicated command requires a running Docker daemon (local only —
+  hard constraint 6), network access, a working GitHub CLI auth, and it writes to the fixture
+  repository. When a precondition is absent it **fails**, naming the precondition that is missing.
+  It does not skip, and it does not report a pass. This is the question the original D2 made hard
+  and the reversal made plain.
+- **Non-claims:** **Does not claim the scenarios are run automatically.** Nothing triggers them:
+  this repository has no CI and no hook, and this requirement adds neither. The guarantee is a
+  process one — the delivery path requires fresh evidence for the exact candidate, and a change to
+  the wiring has no other evidence to offer — and a run can still be skipped by someone who
+  chooses to skip it. Making it mechanical is a separate work item.
 
 ### FR-012: TD6 — the prompt-text assertions are narrowed to the interface
 
@@ -273,16 +284,21 @@ is approved.
 
 ### FR-013: Docs honesty in the same delivery
 
-- **Behavior:** The authoritative command list gains the option the integration test now depends
-  on and which it does not currently name. The module table and the testing-tiers description stay
-  honest about what the new gate does and does not prove, in the same delivery as the code — the
-  table's own standing rule. The grilling lesson, if any, lands as one line under `## Lessons`.
+- **Behavior:** The authoritative command list gains **two** things it does not currently carry:
+  the dedicated integration command, placed in its pipeline-integration row, and the option the
+  scenarios pass to the harness, which today is undocumented. The module table and the
+  testing-tiers description stay honest about what the new command does and does not prove —
+  including that **nothing runs it automatically** — in the same delivery as the code, which is
+  the table's own standing rule. The grilling lesson, if any, lands as one line under
+  `## Lessons`.
 - **Source traceability:** prd.md D4's second consequence ("`--image` is an undocumented flag …
   If the test comes to depend on it, the workflow command table must name it in the same PR");
-  `CLAUDE.md`'s standing rule that the module table stays honest in the same PR.
+  prd.md D2 as reversed, which puts the new command on a surface the table owns; `CLAUDE.md`'s
+  standing rule that the module table stays honest in the same PR.
 - **Slice coverage:** F.
 - **Success criteria:** the delivered change contains both the behavior and the matching command-
-  table and `CLAUDE.md` rows; the table's entry matches how the test actually invokes the harness.
+  table and `CLAUDE.md` rows; the table's entry matches how the scenarios actually invoke the
+  harness; and the table does not imply the command runs by itself.
 - **Evidence label:** Review of the delivered diff.
 - **Boundary and errors:** No new lint step is introduced and none exists (the repository has
   none).
@@ -309,9 +325,15 @@ is approved.
 - **Hard constraint 2 is the posture of the whole work item.** The harness's own completion
   signal is not trusted anywhere; this work item applies the same treatment inward, to the
   harness's own wiring.
-- **Runtime budget.** The gate moves from seconds to minutes. The specification sets no numeric
-  ceiling — a ceiling that made the scenarios flaky would be worse than the time it saved — but
-  the recorded consequence is that `npm test` is no longer a fast inner-loop command.
+- **Runtime budget.** The dedicated command takes minutes; the default gate stays in seconds, and
+  that difference is now the point of the split rather than a cost of it. The specification sets no
+  numeric ceiling on the scenarios — a ceiling that made them flaky would be worse than the time
+  it saved.
+- **The trigger is a process, not a mechanism.** Nothing in this work item makes the scenarios run
+  by themselves. The repository has no CI and no hook, the default gate is deliberately unchanged,
+  and adding a mechanical trigger is out of scope (FR-011's non-claims, FR-013's honesty
+  requirement). This is stated here as a property of the delivered work, not as a gap to be closed
+  later without saying so.
 - **The fixture repository is provisioned deliberately, not reflexively.** Creating it on GitHub
   is an outward-facing action. This specification does not authorize it: it happens once, under
   explicit owner authority, and the test verifies it exists and fails with a clear setup
@@ -320,26 +342,14 @@ is approved.
 
 ## Clarifications
 
-**[NEEDS CLARIFICATION: When the integration gate's preconditions are absent — no Docker daemon,
-no network, no GitHub CLI auth — should the default test command fail, or report the scenarios as
-not run and pass?]**
+**None.** The single question this specification opened — what the gate does when Docker, network
+or `gh` auth is missing — was resolved by D2's reversal on 2026-09-25, and its marker is removed
+rather than carried. With the scenarios on their own command, the answer is that command **fails**
+and names the missing precondition: no skip, no silent pass, and no tension with a fast offline
+inner loop, because the inner loop is no longer the thing that needs Docker.
 
-FR-011 states the scenarios run on every default run, and the grilling record lists those
-preconditions as a knowingly accepted cost. It does not say what the gate does when one is
-missing, and the two answers differ materially:
-
-- **Fail.** Faithful to the gate's purpose and to this repository's doctrine that an integration
-  run which could not start is "a non-claim, not silence and not a pass". Cost: the default test
-  command becomes unusable offline, on a plane, and inside a fresh worktree that has no `.env` —
-  and it would be red for a reason unrelated to the change under test.
-- **Report and pass.** Keeps the inner loop usable. Cost: it is exactly the shape of a check that
-  cannot fail, and the repository has already recorded that class of mistake as the thing it keeps
-  re-learning.
-
-**Recommendation:** fail, with a message naming the precise missing precondition, so the failure
-is unambiguous and never mistaken for a code defect. If the inner loop matters more than the
-gate's integrity, the honest alternative is to revisit D2 rather than to soften the scenario —
-a quietly-skipping gate is the failure mode this work item exists to remove.
+Every other decision this requirement set depends on was settled in the grilling record, or is
+made explicitly in FR-012 and flagged there as this specification's own call.
 
 ## Traceability matrix
 
@@ -355,15 +365,16 @@ a quietly-skipping gate is the failure mode this work item exists to remove.
 | FR-008 | D3; fact 7 | TD5 | D | integration run |
 | FR-009 | D5; H2 | — | A | integration run + profile review |
 | FR-010 | H4 | — | A | integration run |
-| FR-011 | D2 | — | A, F | integration run, invoked as the gate invokes it |
+| FR-011 | D2 (reversed 2026-09-25) | — | A, F | integration run + a default-gate run showing it unaffected |
 | FR-012 | D3 (judgment call) | TD6 | E | review of the diff |
-| FR-013 | D4 | — | F | review of the diff |
+| FR-013 | D4; D2 (reversed) | — | F | review of the diff |
 
 ## Approval
 
-**Draft.** Awaiting owner approval, together with an answer to the single clarification above.
+**Draft.** Awaiting owner approval. There is no open clarification — see Clarifications — so this
+is approval of the requirement set as written.
 
-Not approved for planning until then: `writing-plans` may not start from this document, and no
-part of `docs/work/WI-16/prd.md` is amended by it. If approval changes a decision the grilling
-record settled, the record is corrected in place rather than contradicted here — it is a standing
-claim, not a ledger.
+Not approved for planning until then: `writing-plans` may not start from this document. If
+approval changes a decision the grilling record settled, the record is corrected in place rather
+than contradicted here — it is a standing claim, not a ledger, which is exactly how D2's reversal
+was handled on 2026-09-25.
