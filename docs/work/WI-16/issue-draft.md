@@ -1,4 +1,4 @@
-# WI-16 GitHub issue — draft, filing, and pending amendment
+# WI-16 GitHub issue — the draft, the filing, and the applied amendment
 
 **Filed:** 2026-09-25 as [`manjula25/software-factory-loop#23`](https://github.com/manjula25/software-factory-loop/issues/23),
 under explicit owner authority, from the draft below. Verify with:
@@ -12,10 +12,11 @@ gh issue view 23 --repo manjula25/software-factory-loop
 
 ---
 
-## Amendment pending owner authority (2026-09-25)
+## Amendment — applied 2026-09-25, under owner authority
 
-D2 was reversed after #23 was filed ("split it" — see `prd.md`). Two parts of the filed body are
-now stale, and a wrong claim left standing on the tracker is a wrong answer, not a historical one:
+D2 was reversed after #23 was filed ("split it" — see `prd.md`). Three parts of the filed body
+went stale, and a wrong claim left standing on the tracker is a wrong answer, not a historical
+one:
 
 - **Scope item 5** says *"It runs in the default gate. `npm test` will require Docker, network
   access and GitHub auth on every invocation, and will write to the disposable repo."* Under the
@@ -23,16 +24,33 @@ now stale, and a wrong claim left standing on the tracker is a wrong answer, not
   command. This is the substantive correction.
 - **The Scope heading** says *"specification pending"*; the specification now exists as a draft,
   `docs/work/WI-16/specification.md`, FR-001…FR-013.
+- **The Decisions section** repeats *"on every `npm test`"* in its list of owner decisions.
+- *(Found while writing this section, not at the outset — the first draft of this amendment named
+  only two, and the third is the one a reader would hit first.)*
 
-Per `docs/agents/issue-tracker.md` the tracker is read-only by default, so the corrected body is
-**prepared and not applied**. Applying it needs the owner's explicit authority for this exact
-change:
+Per `docs/agents/issue-tracker.md` the tracker is read-only by default, so the corrected body was
+prepared first and applied only on the owner's explicit authority for this exact change:
 
 ```
-gh issue edit 23 --repo manjula25/software-factory-loop --body-file <corrected body>
+$ gh issue edit 23 --repo manjula25/software-factory-loop --body-file /tmp/wi-16-issue-body-v2.md
+https://github.com/manjula25/software-factory-loop/issues/23
 ```
 
-The replacement text for item 5:
+**Read back, not assumed** — the policy requires the write be verified rather than trusted:
+
+```
+$ gh issue view 23 --repo manjula25/software-factory-loop --json body -q .body | grep -nE "^5\.|on every"
+11:5. **It runs as its own command.** … **Nothing runs the scenarios automatically** — this
+    repository has no CI and no hook** — so the trigger is the verification stage, and that limit
+    is recorded as a non-claim rather than papered over.
+20:Five recorded in `docs/work/WI-16/prd.md` — four by the owner on 2026-09-25 (… **its own
+    command, not the default gate** — decided "on every `npm test`" and reversed the same day; …)
+```
+
+No clause claiming the scenarios run in the default gate survives. The text below is kept as the
+record of what was filed and what each replacement said.
+
+The replacement text applied for item 5:
 
 > 5. **It runs as its own command.** The scenarios get a dedicated command on the pipeline-
 >    integration surface, listed in `docs/agents/workflow.md`; `npm test` stays fast, offline and
@@ -40,7 +58,7 @@ The replacement text for item 5:
 >    hook — so the trigger is the verification stage, and that limit is recorded as a non-claim
 >    rather than papered over.
 
-The replacement text for the Scope heading:
+The replacement text applied for the Scope heading:
 
 > ### Scope (grilling record: `docs/work/WI-16/prd.md` — complete 2026-09-25; specification:
 > `docs/work/WI-16/specification.md` — draft, FR-001…FR-013)
@@ -70,10 +88,10 @@ Testing Decisions 1 and 2 are already satisfied and are not reworked. No refacto
 
 Five recorded in `docs/work/WI-16/prd.md` — four by the owner on 2026-09-25 (real end to end with only the agent swapped; on every `npm test`; its own disposable repo; the whole Testing Decisions list in scope), one answered by reading the code rather than deciding (the `--image` seam already exists, so no production change is needed).
 
-### Amendment note on the Decisions section
+### The Decisions section, as it was corrected in the same edit
 
-It too is now stale in one clause: *"on every `npm test`"* became *"as its own command, with the
-default gate unchanged"*. The corrected Decisions section, for the same body edit:
+Stale in one clause: *"on every `npm test`"* became *"as its own command, with the default gate
+unchanged"*. The replacement text applied:
 
 > ### Decisions
 >
