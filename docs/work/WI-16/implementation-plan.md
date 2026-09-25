@@ -392,7 +392,7 @@ are mutations. Nothing below is executed by the plan itself.
 # 1. the seed, in a scratch directory outside this repo
 SEED="$(mktemp -d)/loop-integration-fixture"
 mkdir -p "$SEED/src/loopsample" "$SEED/tests" "$SEED/.loop-harness"
-# 2. write the eight files from "The seed — exact contents" above
+# 2. write the seven files from "The seed — exact contents" above
 # 3. one commit, under the practice repo's seed identity
 cd "$SEED" && git init -b main && git add -A
 git -c user.name="manjula" -c user.email="manjula@bitcot.com" \
@@ -466,8 +466,16 @@ Record all four outputs, with the commands, to `docs/work/WI-16/evidence/t1-guar
 `docs/work/WI-16/verification.md` (new).
 
 Append to `implementation-notes.md`: the seed commit's SHA and subject as read back from the
-fixture, the issue number and its normalized id, and the four `.gitignore` decisions that differ
-from the practice repo (D2's committed profile; nothing else).
+fixture, the issue number and its normalized id, and how the fixture's `.gitignore` differs from
+the practice repo's.
+
+*(Corrected 2026-09-25, at T1.5. This line previously said "the four `.gitignore` decisions",
+which contradicted its own parenthetical — D2's committed profile is **one** decision, and the
+parenthetical already said "nothing else". Diffed rather than counted:
+`diff /home/bitcot/Documents/projects/loop-fixtures-py/.gitignore /tmp/wi16-seed/loop-integration-fixture/.gitignore`
+prints exactly one removed line, `.loop-harness/`, and
+`git ls-files | grep loop-harness` in the practice repo prints nothing — so D2's "one deliberate
+structural difference" is verified, and no other line of the `.gitignore` differs.)*
 
 `verification.md` records the claims T1 makes and the exact commands that prove them, with the
 outputs and exit codes — the three passing tests, the planted-defect pair, and the
