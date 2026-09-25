@@ -552,8 +552,9 @@
   <div class="feature">
     <h3>Nothing leaves without a secrets check</h3>
     <p>Every piece of text the harness sends out — to the AI service, to GitHub, into a report —
-    passes a screen that blocks credentials, keys, and tokens.</p>
-    <p class="why"><b>What it prevents:</b> automation leaking access it was never supposed to share. <b>Boundary:</b> this is a screen on what the harness emits, not a general security audit of the surrounding systems.</p>
+    is checked against the harness's own configured credentials before it leaves, and the send is
+    blocked if one of them appears in it.</p>
+    <p class="why"><b>What it prevents:</b> the harness leaking its own access keys into a prompt, a review request, or a log. <b>Boundary:</b> it looks for <em>its own</em> configured values, so it is not a general scan for credentials — a password or key sitting inside a client's error log is not caught here. Keeping material like that away from the harness is the job of the per-client clearance rule below, and reviewing it is a human decision.</p>
   </div>
 
   <div class="feature">
