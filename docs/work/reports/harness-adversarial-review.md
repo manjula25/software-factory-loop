@@ -3,13 +3,20 @@
 **Question put:** review each feature individually and decide whether it is honestly implemented,
 or faked / hardcoded to close the implementation. Report any serious issues.
 
-**Candidate:** branch `docs/harness-guide-casebook`, commit `3c5772a`. The harness source under
-review is byte-identical to `origin/main` (`56636ed`) — this branch adds docs only:
+**Candidate:** branch `harness-audit-followups` (then named `docs/harness-guide-casebook`), commit
+`3c5772a`. At that commit the harness source was byte-identical to `origin/main` (`56636ed`) — the
+branch was docs only:
 
 ```
 $ git diff --stat origin/main..3c5772a -- src/
 (no output)
 ```
+
+Every figure and quotation below describes **that** commit, not the branch as it stands now. The
+branch has since moved: A-3 and A-4 were fixed in `14d0978` and `d8aad2f`, so the source now
+differs from `origin/main` by exactly those two changes and the suite count has risen from 285 to
+287. The findings themselves are unrevised — only their status changed, each marked inline with
+the command that closes it.
 
 **Date:** 2026-09-25. **Method:** read the implementation behind each claim, not the record that
 describes it, then try to break it. Stance adversarial: the object was to find the feature that
