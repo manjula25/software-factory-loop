@@ -1,9 +1,8 @@
 # WI-16 — Cover the CLI entry (the A-2 gap)
 
-**Status: GRILLING IN PROGRESS — no decisions taken.** Nothing below the "Verified facts"
-heading is a decision. The `## Open decisions` section lists what the owner must rule on, each
-with the recommended answer; this record is filled in as those are answered, the way
-`docs/work/WI-13/prd.md` was.
+**Status: GRILLING IN PROGRESS.** D1 and D2 are settled by the owner (2026-09-25); D3–D5 are
+open and listed under `## Open decisions`, each with a recommendation. This record is filled in
+as they are answered, the way `docs/work/WI-13/prd.md` was.
 
 ## Origin
 
@@ -120,41 +119,110 @@ PRD's "Test the onboarding pass against seeded repos in at least two different s
 unmet by test too. Whether WI-16 absorbs that family or leaves it to its own work item is
 decision **D3**.
 
+## Decisions taken
+
+**D1 — The test runs the harness for real, end to end, with only the AI swapped out.**
+*(owner, 2026-09-25: "run it real")*
+
+Real git, real `gh`, real GitHub, real branch, real PR, real merge. The **only** substitution is
+the agent: a script that makes a trivial edit in place of a live model. The reasoning, in the
+owner's terms: the AI is the slow, costly, unpredictable part, and it is the part we least need
+to test — the harness never trusts the agent's output anyway (constraint 2). Everything the A-2
+gap is about stays real.
+
+This supersedes the recommendation originally drafted here (stub `git`/`gh` on `PATH`), which was
+weaker for a reason worth recording: faking `gh` fakes the exact thing under test. The distinction
+that decides it is **which** component is faked — the agent, not the integration.
+
+The decisive argument against running the *live model* in the loop is **not primarily cost but
+ambiguity**: a red result would not distinguish "the harness's wiring broke" from "the agent had a
+bad day." A test that fails for two different reasons is not a test. `harness-prd-v2.md` already
+records this trade-off ("a failed run is ambiguous between pipeline and model", grilling
+2026-09-11, decision 3).
+
+**D2 — It runs on every `npm test`.** *(owner, 2026-09-25: "on every test")*
+
+The wiring check is part of the default gate, not an opt-in command. A gate that skips the wiring
+is the gate that let A-2 exist.
+
+### Consequence: the default gate changes character
+
+Stated plainly because it is a real cost of D2, not an objection to it. Today `npm test` is
+offline, Docker-free, and runs in ~2s. After this it will require, on every invocation:
+
+- a running Docker daemon (constraint 6 keeps this local — no cloud spend);
+- network access and working GitHub auth;
+- several minutes, not seconds;
+- **writes to a real GitHub repository** — branches, commits, PRs, merges.
+
+## Hazards the design must handle
+
+Verified facts, not speculation. Each was read off the practice repo on 2026-09-25; each must be
+answered in the specification before implementation starts.
+
+**H1 — The practice repo has `autoMerge: true`.** Read from
+`/home/bitcot/Documents/projects/loop-fixtures-py/.loop-harness/profile.json`:
+
+```json
+{ "baselineFailures": [], "expectedDurationSec": 3, "autoMerge": true, "notifyHandle": "manjula25" }
+```
+
+So a green run **squash-merges into that repo's `main` and deletes the branch**. Every `npm test`
+would mutate real history, and trigger the post-merge canary on top. Left alone, main accumulates
+a junk commit per test run.
+
+**H2 — The same profile carries `notifyHandle: "manjula25"`.** A failing lane posts an inline
+`@manjula25` comment on the GitHub issue. So a red test run would **@-mention the owner on
+GitHub**. This is outward-facing and would fire automatically on every failing run.
+
+**H3 — Leftovers can make a later run pass vacuously.** This is the most dangerous one, and it is
+the exact class the repo's lessons already warn about. A run that dies midway leaves a branch
+and/or an open PR. The next run's dedup then finds an open PR for that issue and **skips** it; if
+every issue is skipped, the queue is empty and the harness exits cleanly. A test asserting only
+"exit 0" would then pass **without having executed the wiring at all** — a check that cannot fail
+wearing the shape of a passing test. The suite already contains live evidence that leftovers
+accumulate: the practice repo currently carries a stale branch,
+`fix/spec-titlecase-returns-all-caps-instead-of-title-case`, with no PR.
+
+**H4 — Concurrent runs collide.** `docs/agents/workflow.md` already notes that worktrees share
+one Docker daemon. They would also share one target repo: two simultaneous runs would push
+competing branches and each would see the other's PRs during dedup.
+
 ## Open decisions — NOT YET TAKEN
 
-Each is the owner's to make. A recommendation is given for each, per the grilling convention;
-none is in force until answered.
+**D3 — Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
 
-**D1 — What does the automated test actually execute?** *(the decision everything else depends on)*
+A-2 is specifically about `main()`. Fact 7 shows the seeded-repo integration family is unmet more
+broadly.
 
-- **(a) Spawn the real CLI with stub `git` and `gh` on `PATH`.** A temp dir holding executables
-  named `git` and `gh` that record their argv and emit canned stdout, prepended to `PATH`.
-  Fact 3 says this works: all 26 call sites resolve by name. Executes **all** of `main()`,
-  including the entry guard and argv parsing. Deterministic, no Docker, no agent spend, fast.
-  Its cost: it proves argument *shape* and control flow, not that GitHub accepts the arguments.
-- **(b) Spawn the real CLI end-to-end in Docker with a real provider.** Highest fidelity, and
-  the only thing that proves a flag is one `gh` actually accepts. Real spend, slow,
-  nondeterministic (an agent is involved) — can never be the default gate.
-- **(c) Export `main()` and call it in-process behind injected fakes.** Needs a production-code
-  change, and in-process cannot prove the entry guard at `:3015`.
-- **(d) Extract the closures out of `main()` into a testable module.** A refactor; tests the
-  pieces, not the assembly — which is the A-2 gap restated, not closed.
+**Recommended: WI-16 stays on the CLI entry**, and the wider family is recorded as candidate
+work rather than absorbed. The repo's process exists to stop exactly this expansion, and a work
+item that means "make all six testing decisions real" is not one that can be planned or verified
+as a unit.
 
-**Recommended: (a) for the gate, with (b) kept as the manual tier it already is.** (a) is the
-only option that executes the real `main()` without spend, and (c) and (d) both shrink what is
-being proven toward the very thing A-2 says is missing.
+**D4 — Does WI-16 permit changing production code?**
 
-**D2 — Where does it run, and when?**
+**Recommended: additive only.** D1 requires a way to substitute the agent, and no such provider
+exists today (`src/providers.ts` registers `claude-via-proxy`, `codex`, `opencode` — 87 lines, no
+scripted entry, and the `LOOP_BYPASS_PLAN` hook seen in `merger-live-run-3.log` is a scratch edit
+that is **not** in the current source). Adding a scripted provider is an addition to the registry,
+not a refactor of `main()`.
 
-- In `npm test` — only viable for option (a), and it would then be the first test in the suite
-  that executes production code as a subprocess.
-- As a separate opt-in command (`npm run test:integration`), keeping the default gate fast.
-- Both, split by fidelity.
+**D5 — Which repository does the test run against?**
 
-**Recommended: (a) joins `npm test`** — a gate that skips the wiring is the gate that let A-2
-exist. Anything needing Docker or an agent gets its own command and **never** the default gate
-(constraint 6: local Docker only, no cloud spend; and the harness must not spend on every test
-run).
+This is the question H1–H4 turn on, and it is the one decision that must be settled before the
+specification can be written.
+
+- **(a) A dedicated disposable scratch repo** owned by the test, reset to a known state before
+  each run (branches deleted, PRs closed, main reset). H1 and H3 stop being hazards because
+  mutations land in a repo whose entire purpose is to be mutated, and a known-state reset before
+  every run removes the vacuous-pass trap. H2 is handled by omitting `notifyHandle` from that
+  repo's profile — at the cost of not exercising the escalation path in the automated test.
+- **(b) `manjula25/loop-fixtures-py` as it stands.** Fewest moving parts, but every `npm test`
+  merges into its main and can @-mention the owner, and H3's vacuous pass stays live.
+
+**Recommended: (a).** It is what makes "real, on every test" survivable rather than noisy — real
+GitHub, real merges, real PRs, but in a repo built to absorb them.
 
 **D3 — Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
 
