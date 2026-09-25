@@ -70,8 +70,16 @@ exit 0; `npm test` = **10 files / 287 tests passed** (1.41s).
 
 ## The seed — exact contents
 
-Eight files, committed as the fixture's single seed commit. Identity for that commit:
+**Seven** files, committed as the fixture's single seed commit. Identity for that commit:
 `manjula <manjula@bitcot.com>` — the practice repo's seed identity.
+
+*(Corrected 2026-09-25, at T1.3. This line previously claimed "Eight files". The section's own
+list is the authority and it names seven — proven by
+`awk 'NR>=71 && NR<=201' docs/work/WI-16/implementation-plan.md | grep -oE '^\*\*`[^`]+`\*\*'`,
+which prints `.gitignore`, `README.md`, `pyproject.toml`, `src/loopsample/__init__.py`,
+`src/loopsample/textops.py`, `tests/test_textops.py`, `.loop-harness/profile.json`. There is no
+eighth file: the practice repo carries no `tests/__init__.py` and no committed profile, so
+nothing was dropped from the seed — only the numeral was wrong.)*
 
 **`.gitignore`** — note the deliberate absence of `.loop-harness/` (D2).
 
