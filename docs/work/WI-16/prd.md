@@ -315,6 +315,13 @@ only when more than one issue is eligible.
 
 This WI-16 record only. Implementation is a separate, later step through the normal chain
 (to-spec → to-tickets → writing-plans → ponytail → worktree → implement), carving FRs from the
-settled decisions above. No GitHub issue exists for WI-16 yet — per
-`docs/agents/issue-tracker.md`, that mutation is prepared and executed only with explicit owner
-authority.
+settled decisions above.
+
+**Corrected 2026-09-25.** This paragraph previously read "No GitHub issue exists for WI-16 yet —
+per `docs/agents/issue-tracker.md`, that mutation is prepared and executed only with explicit
+owner authority." That was true when written and is now false: the owner authorized the creation
+and the issue is filed at
+[`manjula25/software-factory-loop#23`](https://github.com/manjula25/software-factory-loop/issues/23)
+— `gh issue view 23 --repo manjula25/software-factory-loop` shows it. The prepared draft is kept
+as evidence at `docs/work/WI-16/issue-draft.md`. Status lives on the issue; the rationale still
+lives here.
