@@ -13,8 +13,13 @@
  * (`parseSuiteOrReject` in loop.ts), onboarding (`parseSuiteBaseline` in
  * onboard-profile.ts), and the preflight script — silence is still rejected;
  * a counted outcome of any kind is readable.
+ *
+ * A ZERO count is not a counted outcome (finding A-4, 2026-09-25): "0 passed"
+ * is a suite that executed nothing, which is the same non-evidence as "no tests
+ * ran" wearing a numeral. The negative lookahead keys on the count's VALUE, not
+ * on the digit being present, so "10 passed" and "20 skipped" still read.
  */
-export const SUITE_SUMMARY_RE = /\b\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/;
+export const SUITE_SUMMARY_RE = /\b(?!0\b)\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/;
 
 /** Parse `pytest -q` output into failing test node ids. */
 export function parsePytestFailures(output: string): string[] {
