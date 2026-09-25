@@ -628,6 +628,12 @@
     tested: other repositories, other AI providers, and heavier workloads than three parallel fixes.
     This guide describes designed and proven behaviour, not a production rollout claim.
   </p>
+  <p>
+    <b>One boundary to know.</b> The automated checks cover each piece of the harness on its own.
+    The assembled command-line path — the exact git and GitHub commands it runs when you start it —
+    is proved by those live runs, not by the automated checks. So a change to that wiring is not
+    covered until the next live run, and "the checks pass" is not evidence about it.
+  </p>
 </section>
 
 <footer>

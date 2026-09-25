@@ -71,7 +71,7 @@ Each row was checked against the implementation, not against prose about it.
 | Label read before removal (WI-15) | `loop.ts` `clearHarnessFailedLabel` | Honest — reads first; a failed read is recorded and the removal is skipped, not forgiven; a missing label returns success by *not calling* |
 | Run-level halt | `loop.ts` `createRunHaltSignal` | Honest — real shared signal, first halt wins |
 | Honest summary | `loop.ts` `formatSummary` | Honest |
-| Adapter boundary | `sandcastle-adapter.boundary.test.ts` | Real, but narrower than claimed — see A-3 |
+| Adapter boundary | `sandcastle-adapter.boundary.test.ts` | Real — **and was narrower than the absolute it enforced; fixed**, see A-3 |
 
 The 10 assertions that look weak (`toBeDefined`, `toBeTruthy`) were each checked in context: all
 are secondary guards standing next to a stronger assertion, not tests that pass on nothing.
@@ -133,7 +133,16 @@ defect is cited in-code from `merger-live-run-3.log` — a bug no unit test woul
 
 **What it means for the evidence page:** "285 tests pass" is not evidence about the CLI's wiring,
 and every edit inside `main()` since the last live run is unproven. The guide's closing section,
-"How far the proof goes today", does not currently say this.
+"How far the proof goes today", did not say this.
+
+**Half-fixed** in the same commit as this edit: the guide now states the boundary in plain words
+— the automated checks cover each piece on its own, the assembled command-line path is proved by
+the live runs, and a change to that wiring is uncovered until the next one. **The underlying gap
+is not closed and is not closable by a docs edit.** Closing it means an automated integration test
+that executes the CLI against a seeded repo, which is a work item with the repo's full lifecycle
+(grilling → spec → tickets → plan → implement), not a patch. It remains the largest honest gap in
+the harness, and the compensating control — logged live runs — is real and has already caught a
+defect no unit test would have (`merger-live-run-3.log`).
 
 ### A-3 — MODERATE: the boundary rule is stated as absolute, enforced as partial
 
@@ -149,12 +158,40 @@ A new file at the repo root, under `scripts/`, or named `.mts` / `.cts` / `.tsx`
 package and the suite would stay green. Low likelihood; the rule is simply weaker than the
 absolute it is recorded as.
 
+**Fixed** in `14d0978`. The scan root is now the whole repository (skipping `node_modules`,
+`.git`, `.claude`, `.loop-work`, `dist`, `coverage`) and the extension list covers
+`.ts`/`.mts`/`.cts`/`.tsx`. Both halves of the gap were observed closing, not assumed:
+
+```
+$ cat > boundary-probe.ts   # imports @ai-hero/sandcastle, at the repo root
+before: Test Files 1 passed (1); Tests 5 passed (5)         ← offender missed
+after:  Test Files 1 failed (1); Tests 1 failed | 4 passed   ← offender named
+$ rm boundary-probe.ts
+after:  Test Files 1 passed (1); Tests 5 passed (5)
+```
+
+The `.claude` skip is a deliberate trade-off, stated in the test: sibling worktrees are full
+copies of this repo whose own adapter would report as an offender, so an offender inside an
+uncommitted sibling worktree is not caught. Everything in the tracked tree is.
+
 ### A-4 — MINOR: a zero count counts as execution evidence
 
 `SUITE_SUMMARY_RE = /\b\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/` matches
 `0 passed`. The rule's intent is "a counted outcome proves the suite executed"; pytest prints
 `no tests ran` in the zero case, so the practical exposure needs a different runner that prints a
-zero count. Worth knowing, not worth a change today.
+zero count.
+
+**Fixed** in `d8aad2f` — the exposure is small but the regex is the one definition of "the suite
+executed" shared by the verification gate, onboarding and the preflight script, and "0 passed" is
+the same non-evidence as "no tests ran" wearing a numeral. A negative lookahead now keys on the
+count's value rather than on a digit being present:
+
+```ts
+export const SUITE_SUMMARY_RE = /\b(?!0\b)\d+ (?:passed|failed|error|errors|skipped|xfailed|xpassed)\b/;
+```
+
+`10 passed` and `20 skipped` still read; `0 passed` and `0 failed, 0 passed` do not. RED
+(`Tests 1 failed | 11 passed`) → GREEN (`Tests 12 passed`); full suite 287 passed, typecheck 0.
 
 ---
 
