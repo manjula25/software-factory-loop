@@ -2,9 +2,20 @@
 
 ## Status
 
-**Draft — presented for owner approval.** D2 was reversed by the owner on 2026-09-25 (see
-`prd.md`); this document reflects the reversal, and the clarification marker it previously carried
-is resolved and removed. No implementation may start from this document until it is approved.
+**Approved 2026-09-25** by the owner, together with the ticket split in `tickets/` (T1–T8). D2 was
+reversed by the owner on 2026-09-25 (see `prd.md`); this document reflects the reversal, and the
+clarification marker it previously carried is resolved and removed.
+
+**Amended 2026-09-25, before planning** — two changes, both tightening what an implementer must do
+rather than moving a requirement:
+
+- **FR-007** now states that onboarding is driven through its own real entry point **as a process**.
+  The text it replaced said only that onboarding "is run", which does not distinguish importing it
+  and calling it from executing it — and that distinction is the whole of FR-001's point. Without
+  it, scenario 2 could be built in a way that closes nothing.
+- **FR-003** records a fact found by reading the second entry point: onboarding hardcodes its
+  sandbox image and has no image option, but it invokes **no agent**, so scenario 2 uses the
+  production image and no source change is needed. This was previously assumed; it is now checked.
 
 ## Source artifacts
 
@@ -75,7 +86,11 @@ is resolved and removed. No implementation may start from this document until it
   **stop condition** for this specification, not a silent scope expansion.
 - **Evidence label:** Review of the delivered diff, with the changed-path list accounted for.
 - **Boundary and errors:** `vitest.config.ts` and `package.json` are test configuration, not
-  production source; amending them is in scope (FR-011 depends on it).
+  production source; amending them is in scope (FR-011 depends on it). Checked, not assumed: the
+  second entry point, `scripts/onboard.ts:47`, hardcodes its sandbox image with no image option —
+  but it invokes **no agent**, only `sandbox.exec` of the profile's commands, so scenario 2 uses the
+  production image and its part of the substitution needs no source change either. The test image is
+  therefore exercised by scenario 1 alone.
 - **Non-claims:** This constrains *how* the test is wired. It is not a claim that the production
   source is correct — it is the opposite: an unchanged source is what makes the test's evidence
   about that source meaningful.
@@ -150,9 +165,12 @@ is resolved and removed. No implementation may start from this document until it
 
 ### FR-007: Scenario 2 — onboarding against two seeded setups
 
-- **Behavior:** Onboarding is run against two seeded setups — one with thorough documentation, one
-  with none (config files only) — and both must produce a project profile whose commands
-  **actually execute**. A documentation claim that fails execution must never reach the profile.
+- **Behavior:** Onboarding is driven against two seeded setups — one with thorough documentation,
+  one with none (config files only) — through its **own real entry point, as a process**, and both
+  must produce a project profile whose commands **actually execute**. Onboarding is a separate
+  program from the loop CLI, and no test executes it today either; importing it and calling it
+  directly would leave the same wiring unexecuted that FR-001 exists to cover. A documentation
+  claim that fails execution must never reach the profile.
 - **Source traceability:** TD4 ("Test the onboarding pass against seeded repos in at least two
   different setups — one with thorough docs, one with no docs at all (config files only) —
   confirming both produce a profile whose commands actually execute, and that docs claims which
@@ -371,10 +389,10 @@ made explicitly in FR-012 and flagged there as this specification's own call.
 
 ## Approval
 
-**Draft.** Awaiting owner approval. There is no open clarification — see Clarifications — so this
-is approval of the requirement set as written.
+**Approved 2026-09-25** by the owner, together with the dependency-aware ticket set in `tickets/`
+(T1–T8). There was no open clarification — see Clarifications — so approval was of the requirement
+set as written, with the two amendments recorded under Status.
 
-Not approved for planning until then: `writing-plans` may not start from this document. If
-approval changes a decision the grilling record settled, the record is corrected in place rather
+If approval changes a decision the grilling record settled, the record is corrected in place rather
 than contradicted here — it is a standing claim, not a ledger, which is exactly how D2's reversal
 was handled on 2026-09-25.
