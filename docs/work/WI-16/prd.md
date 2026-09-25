@@ -1,8 +1,9 @@
 # WI-16 — Cover the CLI entry (the A-2 gap)
 
-**Status: GRILLING NEARLY COMPLETE.** D1, D2 and D5 are settled by the owner (2026-09-25); D4 was
-settled by reading the code and needs no decision at all. **D3 is the only decision still open.**
-This record is filled in as answers arrive, the way `docs/work/WI-13/prd.md` was.
+**Status: GRILLING COMPLETE 2026-09-25.** All five decisions settled — D1, D2, D3 and D5 by the
+owner, D4 by reading the code (no decision was needed). Next stage is `to-spec`, then
+`to-tickets` to split the three scenarios. This record is the grilling record, the way
+`docs/work/WI-13/prd.md` is.
 
 ## Origin
 
@@ -53,8 +54,10 @@ Tests do use `execFileSync` — `queue.test.ts:280,318` and `loop.test.ts:1492` 
 build **real git repositories in `/tmp` as fixtures**. That is a genuine strength worth naming:
 the suite is not fakes-only. It is simply not a test of the harness's own git/gh wiring.
 
-**3. Every subprocess in `main()` resolves its binary through `PATH`.** This is the fact that
-makes a cheap test possible, and it is the single most important input to decision D1:
+**3. Every subprocess in `main()` resolves its binary through `PATH`.** Recorded because it was
+the input to D1; the decision it first supported was superseded, but the fact stands and still
+matters — it is also why the *image* is a viable substitution point (D4), since `git`, `gh` and
+the agent CLIs are all installed by name inside it:
 
 ```
 $ awk 'NR>=2587 && NR<=3030' src/loop.ts | grep -c "execFileSync("
@@ -188,17 +191,41 @@ accumulate: the practice repo currently carries a stale branch,
 one Docker daemon. They would also share one target repo: two simultaneous runs would push
 competing branches and each would see the other's PRs during dedup.
 
-## Decisions, continued — D3 is the only one still open
+## D3 — Scope: the whole of the PRD's Testing Decisions
+→ **All of them.** *(owner, 2026-09-25: "all of them")*
 
-**D3 — OPEN. Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
+This overrides the recommendation drafted here to keep WI-16 narrow. Recorded with its full
+extent below, because "all of them" is only plannable once each one is enumerated — an earlier
+draft of this record named onboarding as an example of the drift, and naming an example is not
+stating the extent.
 
-A-2 is specifically about `main()`. Fact 7 shows the seeded-repo integration family is unmet more
-broadly.
+### The extent, enumerated (read from the source, 2026-09-25)
 
-**Recommended: WI-16 stays on the CLI entry**, and the wider family is recorded as candidate
-work rather than absorbed. The repo's process exists to stop exactly this expansion, and a work
-item that means "make all six testing decisions real" is not one that can be planned or verified
-as a unit.
+Of the six Testing Decisions in `harness-prd-v2.md`: **two are already satisfied, three have
+gaps, and one is a judgment call.** A-2 is the seventh item and the reason this work item exists.
+
+| # | What the PRD asks for | Verdict |
+|---|---|---|
+| TD1 | Normalization across all three sources produces one shape | **Satisfied.** `issues.test.ts` carries all three (`issue normalization`, `spec-doc normalization` WI-3 FR-005, `plain-list normalization` WI-3 FR-006), and `queue.test.ts:188` adds a cross-source parity pin: "the dedup is source-agnostic over a mixed queue" |
+| TD2 | Dedup skips an issue with an open PR | **Satisfied, and beyond what was asked.** `queue.test.ts:101` plus ~12 more cases covering merged, reverted, closed-unmerged, and the merged-before-open ordering |
+| TD3 | Reproduce-then-fix against seeded buggy repos, ≥1 in a non-Node language | **Unmet.** No test runs the flow. `loop.test.ts` mentions the fixtures repo only inside URL *strings* (`url: "https://github.com/manjula25/loop-fixtures-py/issues/1"`) — fixture data, not a run. The "any target language" claim is asserted, never demonstrated |
+| TD4 | Onboarding against two seeded setups (docs / no docs), commands validated by execution | **Unmet.** `onboard-profile.test.ts` tests argv→profile shaping and baseline parsing — pure functions. "commands actually execute" is precisely the untested half |
+| TD5 | Profile staleness: test command no longer matches → failed verification, flagged for re-onboarding | **Behavior implemented, integration test unmet.** `src/loop.ts:985–1009` aborts with `project profile is stale — baseline no longer matches a fresh run … Re-run onboarding.` The unit halves are tested (`SuiteDidNotRunError`, empty stdout, no summary token); the seeded-repo scenario is not |
+| TD6 | "Test only external behavior … not internal prompt wording" | **Judgment call, to be made in the work item.** `loop.test.ts:326–352` tests `buildFixPrompt` by asserting on prompt text, including prose: `toMatch(/commit only the fix and the reproduction test/i)`. Whether that is a legitimate contract pin or the thing the rule forbids is a call to make explicitly, not to leave implied |
+| **A-2** | *(the seventh item — this work item's origin)* | **Unmet.** Nothing executes `main()`; see the facts above |
+
+### The structural fact that falls out of the enumeration
+
+**TD3 and A-2 are the same test.** Running the real reproduce-then-fix flow against a seeded
+non-Node repo necessarily executes `main()` — so the one integration test closes both at once.
+TD4 and TD5 are two further scenarios driven through that same harness once it exists.
+
+That is what makes "all of them" plannable rather than sprawling: it is **one integration
+harness** (disposable repo + scripted-agent image, per D1/D4/D5) **driven by three scenarios**,
+plus an explicit call on TD6. The `to-tickets` stage splits it; this record does not.
+
+TD1 and TD2 need nothing — they are recorded here as satisfied so the work item does not
+re-litigate them.
 
 **D4 — Does WI-16 permit changing production code?**
 → **Answered by fact: no production change is needed at all.** *(settled 2026-09-25)*
@@ -251,49 +278,38 @@ pre-merge review runs on the same path. Whether the test drives queue mode (plan
 the `--issue` single-issue override is a specification-stage question; note that the planner runs
 only when more than one issue is eligible.
 
-**D3 — Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
-
-A-2 is specifically about `main()`. Fact 7 shows the seeded-repo integration family is unmet more
-broadly.
-
-**Recommended: WI-16 stays on the CLI entry**, and the wider family is recorded as candidate
-work rather than absorbed. The repo's process exists to stop exactly this expansion, and a work
-item that means "make all six testing decisions real" is not one that can be planned or verified
-as a unit.
-
-**D4 — Does WI-16 permit changing production code?**
-
-**Recommended: no refactor; the change is additive.** If D1 is (a), nothing in `src/` needs to
-move — the test drives the CLI from outside. This keeps the diff reviewable and keeps the option
-of (c)/(d) genuinely closed rather than quietly taken.
-
-**D5 — Does the test get a seeded repo of its own, or use the real fixtures repo?**
-
-The PRD names `manjula25/loop-fixtures-py` (grilling decision 8, 2026-09-11). For a stub-`PATH`
-test the "repo" need only be a directory shaped enough for `main()` to start — no network, no
-GitHub.
-
-**Recommended: a throwaway directory built by the test itself**, with the real fixtures repo
-staying the tier-4 manual target. A test that reaches GitHub is a test that fails on a plane.
-
 ## Constraints touched
 
 - **Constraint 1 (no auto-merge unless opted in)** — untouched, but the new test is the first
-  thing that could *prove* the opt-in gate's wiring rather than its logic.
-- **Constraint 2 (never trust the agent's completion signal)** — untouched; this work item makes
-  the harness's own wiring verifiable, which is the same posture applied inward.
-- **Constraint 6 (local Docker only)** — the deciding constraint for D1/D2. An automated test
-  that starts sandboxes or calls a provider would breach it on every run.
-- **Constraints 3, 4, 5** — untouched.
+  thing that could *prove* the opt-in gate's wiring rather than its logic. Note the disposable
+  repo (D5) *is* opted in — `autoMerge: true` in its profile — because the merge path is part of
+  what is being tested. That is the constraint working as designed, in a repo whose only purpose
+  is to be merged into; it does not touch the rule for real repos.
+- **Constraint 2 (never trust the agent's completion signal)** — untouched, and this work item is
+  the same posture applied inward: the harness's own wiring becomes verifiable the same way its
+  fixes are.
+- **Constraint 6 (local Docker only, no cloud spend)** — *satisfied, not strained.* An earlier
+  draft of this record called it "the deciding constraint" and implied a sandbox on every run
+  would breach it. That was wrong, and worth correcting rather than deleting: the constraint bans
+  **cloud** spend, and everything here is local Docker. What D2 actually costs is a Docker daemon
+  on every `npm test`, not a constraint breach. The scripted agent (D1/D4) is what keeps spend at
+  zero — a live model on every test run would be the real problem, and it is the thing being
+  avoided.
+- **Constraints 3, 4, 5** — untouched. The disposable repo carries no client data (constraint 3),
+  and the reproduction test the scripted agent writes stays in that repo's suite (constraint 4).
 
 ## Explicit non-goals
 
-- Not a general test-coverage improvement; the target is the wiring A-2 names.
-- Not a refactor of `main()` (D4).
+- Not a general test-coverage push. The target is exactly the four items D3 enumerates as unmet
+  or undecided (TD3, TD4, TD5, TD6) plus A-2. TD1 and TD2 are already satisfied and are **not**
+  to be reworked.
+- Not a refactor of `main()` (D4) — no file under `src/` should have to move.
 - No new agent spend, no cloud sandbox, no scheduled/unattended run.
-- Does not replace the live-run tier. Tier 4 stays the high-fidelity manual control; this work
-  item adds a deterministic tier beneath it, it does not promote a stub test into proof that
-  GitHub accepts the arguments.
+- **Does not replace the live runs, and does not claim what they claim.** This is the one non-goal
+  that changes meaning under D1, so it is stated precisely: because the agent is scripted, a green
+  integration test proves the harness's wiring against real GitHub — real flags, real PRs, real
+  merges. It proves **nothing** about whether a real model writes a good fix. The live runs
+  (`--provider claude-via-proxy`) remain the only evidence on that, and remain manual.
 
 ## Scope of this record
 
