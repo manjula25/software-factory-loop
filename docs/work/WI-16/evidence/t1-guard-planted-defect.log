@@ -1,0 +1,85 @@
+# WI-16 T1.4 — the guard's planted-defect pair
+
+`t1-guard-absent-fixture.log` proved the guard fires when the fixture is absent.
+That run happened *before* the fixture existed, so on its own it does not
+distinguish the guard firing from the fixture simply never having been there.
+
+This is the pair that does: point the constant at a slug that has never existed,
+observe three failures each carrying the setup instruction, restore the constant,
+observe three passes. The only thing that changes between the two runs is one
+string in one file.
+
+## Step 1 — plant the defect
+
+`tests/integration/fixture.ts`, one line changed:
+
+```diff
+-export const FIXTURE_REPO = "manjula25/loop-integration-fixture";
++export const FIXTURE_REPO = "manjula25/loop-integration-fixture-does-not-exist";
+```
+
+## Step 2 — RED
+
+```
+$ npm run test:integration
+ ❯ tests/integration/fixture.test.ts (3 tests | 3 failed) 17880ms
+   ❯ the disposable integration fixture (WI-16 T1) (3)
+     × exists on GitHub with the base branch the harness will drive 15840ms
+     × carries a profile that is opted in, unnotifiable, and born green 1492ms
+     × has a contract suite that is green in the production image 545ms
+
+FixtureMissingError: integration fixture manjula25/loop-integration-fixture-does-not-exist is missing or unreachable (Command failed: gh repo view manjula25/loop-integration-fixture-does-not-exist --json name
+GraphQL: Could not resolve to a Repository with the name 'manjula25/loop-integration-fixture-does-not-exist'. (repository)
+). Provision it once, under owner authority, per docs/work/WI-16/implementation-plan.md T1.3. This test never creates it.
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Duration  18.04s (tests 100%)
+exit=1
+```
+
+All three tests fail, and each of the three carries the instruction — not one
+failed suite with two skipped tests. That is the shape T1.2's restructure was for:
+the guard runs inside every `it`, so the guard's own behaviour is what the count
+reports.
+
+The three failures also land at three different call sites (`fixture.test.ts:40`,
+`:27` via `:51`, and `:32` via `:59`), which is the guard being reached by all
+three tests rather than by a shared setup step.
+
+## Step 3 — restore the constant
+
+```
+$ git diff --stat tests/integration/fixture.ts
+(no output)
+```
+
+The file is byte-identical to its committed state. Run **before** the green run so
+the green that follows cannot be attributed to any other edit.
+
+## Step 4 — GREEN
+
+```
+$ npm run test:integration
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Duration  34.86s (tests 100%)
+exit=0
+```
+
+## What this pair does and does not prove
+
+**Proves:** the guard is what fails the suite when the fixture is unreachable, and
+the suite returns to green when it is reachable again. The check can fail, and it
+can stop failing.
+
+**Does not prove:** that the suite is green for the right reason. A test that
+passed because it asserted nothing would look the same here. The green run's
+individual assertions are exercised by §1 of `t1-fixture-green.log` (born-green in
+the production image) and by the profile and branch assertions themselves, but
+this pair is a check on the guard's *firing*, not on the suite's strength.
+
+The two `describe`-level timings are also not comparable between runs — 18.04s
+RED against 34.86s GREEN here — because the green run re-clones and re-runs the
+container, and the red run short-circuits on `gh` before either happens. Neither
+figure is a performance claim.
