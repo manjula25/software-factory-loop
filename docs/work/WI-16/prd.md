@@ -1,8 +1,8 @@
 # WI-16 — Cover the CLI entry (the A-2 gap)
 
-**Status: GRILLING IN PROGRESS.** D1 and D2 are settled by the owner (2026-09-25); D3–D5 are
-open and listed under `## Open decisions`, each with a recommendation. This record is filled in
-as they are answered, the way `docs/work/WI-13/prd.md` was.
+**Status: GRILLING NEARLY COMPLETE.** D1, D2 and D5 are settled by the owner (2026-09-25); D4 was
+settled by reading the code and needs no decision at all. **D3 is the only decision still open.**
+This record is filled in as answers arrive, the way `docs/work/WI-13/prd.md` was.
 
 ## Origin
 
@@ -188,9 +188,9 @@ accumulate: the practice repo currently carries a stale branch,
 one Docker daemon. They would also share one target repo: two simultaneous runs would push
 competing branches and each would see the other's PRs during dedup.
 
-## Open decisions — NOT YET TAKEN
+## Decisions, continued — D3 is the only one still open
 
-**D3 — Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
+**D3 — OPEN. Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
 
 A-2 is specifically about `main()`. Fact 7 shows the seeded-repo integration family is unmet more
 broadly.
@@ -201,28 +201,55 @@ item that means "make all six testing decisions real" is not one that can be pla
 as a unit.
 
 **D4 — Does WI-16 permit changing production code?**
+→ **Answered by fact: no production change is needed at all.** *(settled 2026-09-25)*
 
-**Recommended: additive only.** D1 requires a way to substitute the agent, and no such provider
-exists today (`src/providers.ts` registers `claude-via-proxy`, `codex`, `opencode` — 87 lines, no
-scripted entry, and the `LOOP_BYPASS_PLAN` hook seen in `merger-live-run-3.log` is a scratch edit
-that is **not** in the current source). Adding a scripted provider is an addition to the registry,
-not a refactor of `main()`.
+The seam D1 needs already exists, and it was found by reading rather than assumed. The adapter
+takes its sandbox image as an input (`src/sandcastle-adapter.ts:82`, `readonly imageName: string`)
+and the agent CLIs are installed **inside that image** (`.sandcastle/Dockerfile`: `npm install -g
+@anthropic-ai/claude-code@2.1.270 --prefix /home/agent/.local`, plus `codex` and `opencode`). And
+`main()` already exposes it:
+
+```
+$ grep -n 'imageName = optFlag' src/loop.ts
+2605:  const imageName = optFlag("image") ?? "sandcastle-loop";
+```
+
+So a **second, test-only image** whose `claude` entry is a script — instead of the real CLI —
+substitutes the agent with no change to `src/` whatsoever. Everything else in the image stays
+real: `git`, `gh`, `python`, `pytest`, the non-root `agent` user.
+
+Two things follow, both worth recording:
+
+- The change is **purely additive**: a Dockerfile variant, a test, and the fixtures it needs. No
+  file under `src/` has to move, which also keeps option (c)/(d) from D1's original list
+  genuinely closed rather than quietly taken.
+- **`--image` is an undocumented flag.** `docs/agents/workflow.md` lists `--repo`, `--provider`,
+  `--model`, `--issue`, `--label`, `--max-issues`, `--spec-doc`, `--plain-list` — not `--image`.
+  If the test comes to depend on it, the workflow command table must name it in the same PR, per
+  the CLAUDE.md rule that the table is authoritative and changes with the code.
 
 **D5 — Which repository does the test run against?**
+→ **Its own disposable repo.** *(owner, 2026-09-25: "its own disposable repo")*
 
-This is the question H1–H4 turn on, and it is the one decision that must be settled before the
-specification can be written.
+A dedicated scratch repo owned by the test and reset to a known state before each run — branches
+deleted, PRs closed, main reset. H1 and H3 stop being hazards because mutation lands in a repo
+whose whole purpose is to be mutated, and the pre-run reset removes the vacuous-pass trap. For
+H2, the repo's profile omits `notifyHandle`, at the cost of not exercising the escalation path in
+the automated test — the rest of the wiring is still covered.
 
-- **(a) A dedicated disposable scratch repo** owned by the test, reset to a known state before
-  each run (branches deleted, PRs closed, main reset). H1 and H3 stop being hazards because
-  mutations land in a repo whose entire purpose is to be mutated, and a known-state reset before
-  every run removes the vacuous-pass trap. H2 is handled by omitting `notifyHandle` from that
-  repo's profile — at the cost of not exercising the escalation path in the automated test.
-- **(b) `manjula25/loop-fixtures-py` as it stands.** Fewest moving parts, but every `npm test`
-  merges into its main and can @-mention the owner, and H3's vacuous pass stays live.
+How that repo is created, named, and reset is a specification-stage question, not a decision left
+open here. Creating it on GitHub is an outward-facing action and needs the owner's explicit
+authority when it happens.
 
-**Recommended: (a).** It is what makes "real, on every test" survivable rather than noisy — real
-GitHub, real merges, real PRs, but in a repo built to absorb them.
+### Consequence of D4 worth stating early
+
+The scripted agent is not "make a trivial edit" — the verification gate is real, so the script
+must produce a fix that genuinely turns the reproduction test green in a fresh sandbox. For a
+seeded repo with a known bug that is a known patch, which is exactly what makes it deterministic.
+It must also answer as the **review** agent (a `<review>approve</review>` verdict) since the
+pre-merge review runs on the same path. Whether the test drives queue mode (planner included) or
+the `--issue` single-issue override is a specification-stage question; note that the planner runs
+only when more than one issue is eligible.
 
 **D3 — Scope: the CLI entry only, or the PRD's whole Testing Decisions list?**
 
