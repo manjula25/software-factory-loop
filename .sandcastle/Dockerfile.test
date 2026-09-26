@@ -1,0 +1,6 @@
+# WI-16 T2 — the scripted-agent test image. The ONLY difference from the
+# production image (sandcastle-loop, built from .sandcastle/Dockerfile) is the
+# `claude` entry point, shadowed by a script that answers the harness's real
+# prompt/stream contract with no model and no network (FR-002).
+FROM sandcastle-loop
+COPY --chmod=0755 claude /home/agent/.local/bin/claude

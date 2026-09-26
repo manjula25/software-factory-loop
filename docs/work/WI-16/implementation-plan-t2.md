@@ -33,9 +33,15 @@ or has an unrecognised shape is silently ignored. Exactly three shapes are consu
 {"type": "result", "result": "..."}
 ```
 
-**How stdout is assembled** (`index.js:265–281, 513`). Every `text` block and every `result`
+**How stdout is assembled** (`index.js:265–281, 513`). ~~Every `text` block and every `result`
 string is appended, in order, to one accumulator, and that accumulator is what `run()` returns
-as `stdout` — which is the string the harness parses. **Exit code must be 0**; anything else is
+as `stdout`~~ *(corrected in place 2026-09-26, T2.2 — the plan read the accumulator into the
+return value; the live run proved otherwise: assistant text feeds the live display and the
+completion-signal detector only, and the value returned as `stdout` is `resultText ||
+execResult.stdout` — the **result** event's string alone, `dist/index.js:262–305`, assembled at
+`:513`. Proof: the first green attempt returned exactly the result string and nothing of the
+assistant text, failing the review test; see `implementation-notes.md` §7.)* — so the
+harness-parsed contract must ride the **result** event. **Exit code must be 0**; anything else is
 an `AgentError` (`index.js:283–299`). A run whose accumulated output contains
 `<promise>COMPLETE</promise>` is treated as agent-signalled completion (`index.js:336`); with
 `maxIterations: 1` the return shape is identical either way, so including it is fidelity, not
@@ -112,9 +118,12 @@ and script directory are committed, not ignored.
    `<review>approve</review>` and the completion signal, and exits 0. The caller's
    `loop/review` branch is deleted by the harness itself (`src/loop.ts:1490`).
 7. **D7 — the emission shape is one init event, one assistant text event, one result event.**
-   The evidence/verdict text rides the **assistant** event; the **result** event carries a
-   one-line summary plus `<promise>COMPLETE</promise>` (the result string is appended to the
-   same accumulator, so putting the full report in both would duplicate it in `stdout`).
+   ~~The evidence/verdict text rides the **assistant** event; the **result** event carries a
+   one-line summary plus `<promise>COMPLETE</promise>`~~ *(corrected in place 2026-09-26, T2.2 —
+   the reverse: the evidence/verdict text rides the **result** event, because the result event's
+   string is the only thing returned as the run's `stdout`, which is what the harness parses;
+   the assistant event stays for stream fidelity. See the corrected stdout-assembly fact above
+   and `implementation-notes.md` §7.)* plus `<promise>COMPLETE</promise>`.
 8. **D8 — T2's tests drive the real seams with the real prompts and the live issue.**
    `tests/integration/scripted-agent.test.ts` imports `runFixRun`/`runReview`, builds the
    prompts with `buildFixPrompt`/`buildReviewPrompt` over the **live issue #1** fetched via

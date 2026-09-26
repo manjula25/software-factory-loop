@@ -5,7 +5,6 @@
  * fixture, not about the harness: no scenario runs until T4.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ProjectProfile } from "../../src/loop.js";
 import { SUITE_SUMMARY_RE, parsePytestFailures } from "../../src/verify.js";
@@ -15,6 +14,7 @@ import {
   FIXTURE_REPO,
   PRODUCTION_IMAGE,
   assertFixtureReady,
+  ensureFixtureClone,
   readFixtureFile,
 } from "./fixture.js";
 
@@ -26,13 +26,6 @@ import {
 function readProfile(): ProjectProfile {
   assertFixtureReady(FIXTURE_REPO);
   return JSON.parse(readFixtureFile(".loop-harness/profile.json")) as ProjectProfile;
-}
-
-function cloneIfAbsent(): void {
-  assertFixtureReady(FIXTURE_REPO);
-  if (!existsSync(FIXTURE_CLONE_DIR)) {
-    execFileSync("gh", ["repo", "clone", FIXTURE_REPO, FIXTURE_CLONE_DIR], { stdio: "inherit" });
-  }
 }
 
 describe("the disposable integration fixture (WI-16 T1)", () => {
@@ -56,7 +49,7 @@ describe("the disposable integration fixture (WI-16 T1)", () => {
   });
 
   it("has a contract suite that is green in the production image", () => {
-    cloneIfAbsent();
+    ensureFixtureClone();
     const profile = readProfile();
     // Read the verdict through the harness's own parser, so the fixture is
     // proven not-stale by the same rule the harness applies at preflight
