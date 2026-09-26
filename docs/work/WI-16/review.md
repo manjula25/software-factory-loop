@@ -113,3 +113,146 @@ are minor and accepted with reasons. Verification is fresh (integration gates re
 E1 re-capture; unit gate and typecheck unchanged at the same code identity, `2499b90`).
 `finishing-a-development-branch` is the recommended next skill — delivery still requires
 the owner's explicit authorization.
+
+---
+
+# WI-16 Review — T3: the scenarios command, the reset, the guard
+
+## Candidate identities
+
+- Fixed point: `4701f21d59c8c5e2b9b3281d4f69a3ea92c3c27c` (the T3 plan)
+- Candidate (last code identity): `5393e1af0f205570e38fcaf61ebbdb90c614af71`
+- Docs-only commits follow on the branch (`afd326c` at review time); range reviewed:
+  `4701f21..5393e1a`, 4 commits, 11 files, +948/−9, ancestry verified (`git
+  merge-base --is-ancestor`, rc 0).
+- Authoritative requirement: `tickets/t3-integration-command.md` +
+  `implementation-plan-t3.md` (commit `4701f21`), tracing to `specification.md`
+  FR-004/FR-005/FR-010/FR-011/FR-013.
+
+## Changed-path accounting (all 11 files)
+
+`tests/scenarios/fixture-reset.ts`, `tests/scenarios/command.test.ts`,
+`vitest.scenarios.config.ts`, `package.json` (the surface); `CLAUDE.md`,
+`docs/agents/workflow.md` (the honesty catch-ups FR-011/FR-013 require);
+`implementation-plan-t3.md` + 4 evidence logs (records). None under `src/`
+(FR-003 — checked `git diff --name-only`, zero hits). Every file read in full
+at the candidate, not from the commit messages.
+
+## Axis verdicts
+
+**Repository standards — PASS.** Exit codes captured with `rc=$?` on the
+immediately following line in all four logs; the three plan corrections are
+in-place strikethroughs naming the evidence that falsified them (none silent);
+CLAUDE.md and the authoritative command table gained the surface in the same
+change; numerals-beside-lists verified by recount (11 files named in both
+`verification.md` claim 8 and `implementation-notes.md` §10; the enumeration
+counts 11).
+
+**Specification fidelity — PASS.** All five acceptance criteria mapped: command
+isolation + unchanged default gate (`t3-surface-red.log` context, `npm test`
+287 rc=0, `test:integration` 5/5 rc=0); hand-mutation → clean
+(`t3-command-green.log`, both captures); guard refusal naming the holder +
+dead-holder steal (guard test); precondition RED at test and command level
+(`t3-precondition-red.log`, 4/4 naming docker); no `src/` change (accounting
+above). The ticket's own posture is honored precisely: the empty-queue
+assertion is about fixture state, not exit code, and the killed-run →
+clean-run pair and guard-under-real-work are left to T4 exactly as the ticket's
+Evidence boundary requires. Deviations from the plan are all recorded and
+corrected in place (born-red mechanism, the uncatchable `gh pr close` defect,
+the force-push defect needing a main advance, PATH → DOCKER_HOST).
+
+**Evidence and risk integrity — FAIL (finding E1, blocking).** The T3 section's
+contingency paragraph is wrong twice about its own evidence: it classes claim
+5's red as "cannot be re-run as printed now", but
+`DOCKER_HOST=unix:///nonexistent-t3.sock npm run test:scenarios` is verbatim
+re-runnable and reproduces the red — only claim 1's red is contingent (the
+born-red stub was replaced in `0e10076`; re-running that command now yields
+green); and it asserts "Each log says so", but neither log's footer states any
+contingency — a reader re-running `t3-surface-red.log`'s command against the
+current tree gets a pass with no explanation in the log. Same class as T2's E1:
+a standing record claiming more than its evidence says.
+
+**Unnecessary complexity — PASS, one local smell (A1).** No speculative surface:
+every export is used by the tests or the machinery. `releaseFixtureGuard`'s
+throw-into-its-own-catch with a string-marker rethrow works and is tested, but
+the plain shape (parse to a variable, decide, remove) says the same thing
+without the marker.
+
+## Findings
+
+**Blocking**
+
+- **E1** — `verification.md` T3 §"Claims → evidence" trailing paragraph: claim 5
+  misclassified as non-re-runnable, and "Each log says so" is false of both
+  logs. Fix: correct the paragraph in place (contingency is claim 1's alone)
+  and append a marked contingency note to `t3-surface-red.log` so the log
+  itself tells the re-runner why they see green.
+
+**Adjacent observations (non-blocking)**
+
+- **A1** — `fixture-reset.ts` `releaseFixtureGuard`: string-marker rethrow
+  control flow; simpler equivalent available.
+- **A2** — `command.test.ts` passes the literal `"scenarios-empty-queue"` to
+  the loop while `EMPTY_QUEUE_LABEL` is exported for exactly that name — a
+  rename would drift the test from the machinery silently.
+- **A3** — `t3-planted-defects.log` footer: "(4/4 suite green re-verified
+  after)" — at that point only the filtered single test had been re-run; the
+  full 4/4 arrived later as the T3.5 re-capture (it exists, header-dated, in
+  `t3-command-green.log`). The footer reads as if within the pair.
+- **A4** — the 111s standalone measurement justifying the 480s timeouts has no
+  verbatim capture under `docs/work/WI-16/evidence/` (it is quoted in the green
+  log's editorial footer and a test comment); the durable proof of sufficiency
+  is the two full-suite greens containing the test (578.38s, 690.47s).
+
+## Unverified evidence
+
+- The guard against two genuinely concurrent processes (proven here against a
+  planted holder only; ticket defers real-work concurrency to T4).
+- The reset against a real run's mess (hand-made only; killed-run pair is T4's).
+- The 16s-per-gh-POST and 111s figures (A4 — editorial citations, not captures).
+
+## Verdict
+
+Specification and code quality pass; evidence integrity fails on E1. Back to
+stage 3 for the E1 fix, then re-review the corrected records. A1–A4 may be
+taken or left with the record as-is; none is load-bearing for the ticket's
+claims.
+
+---
+
+# WI-16 Re-review — T3 at `0dd9ed3` (E1 resolution)
+
+## Candidate identities
+
+- Fixed point unchanged: `4701f21`. Code identity unchanged: `5393e1a` — the
+  delta since the first review is docs only (`afd326c` records, `6f2ea2e` the
+  E1 fix, `0dd9ed3` the re-runnability proof), so the specification,
+  code-quality and standards verdicts carry over unchanged; only the evidence
+  axis re-verdicts.
+
+## E1 resolution, checked
+
+1. The wrong paragraph is corrected **in place** in `verification.md`, names
+   what it previously claimed, and restricts contingency to claim 1's red —
+   verified by re-reading; no surviving copy of "cannot be re-run as printed"
+   or "Each log says so" in T3's section (the remaining hits are T1's and T2's
+   own reviewed sections, and this file's quotations of the finding).
+2. `t3-surface-red.log` carries the appended, clearly-marked contingency note:
+   a re-runner seeing green is told why.
+3. Beyond the fix: the corrected record's re-runnability claim for claim 5 is
+   now **proved, not asserted** — the exact command re-run at `0dd9ed3`'s
+   tree: 4/4 failed naming docker, `exit=1`, appended verbatim to
+   `t3-precondition-red.log` with its exit line.
+
+## Verdict
+
+**Evidence and risk integrity — PASS.** All four axes now pass; no blocking
+findings. A1–A4 remain recorded as adjacent observations, none load-bearing;
+the candidate for delivery is the code at `5393e1a` with records through
+`0dd9ed3`.
+
+## Next recommended skill
+
+`finishing-a-development-branch` — with the owner's explicit authorization for
+push/PR (the branch is stacked on `wi-16-t2` / PR #25, which is still awaiting
+human merge).

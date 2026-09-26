@@ -41,7 +41,11 @@ Beyond the unit surface, `tests/integration/` holds the WI-16 integration gate
 repo against the production image and drives the exported adapter seams through
 `sandcastle-loop-test` (`npm run build:image:test`) — the production image with its
 `claude` entry point shadowed by a scripted agent that answers the harness's real
-prompt/stream contract with no model and no network.
+prompt/stream contract with no model and no network. Alongside it, `tests/scenarios/`
+(`npm run test:scenarios`, isolated config `vitest.scenarios.config.ts`) holds the
+scenario-level surface: whole-loop runs against the same fixture through the real CLI
+entry, each opening with a precondition check and holding the fixture guard, with the
+reset/guard/seed machinery in `tests/scenarios/fixture-reset.ts`.
 
 There is still **no lint step** — do not invent one. The authoritative command list lives in
 `docs/agents/workflow.md` (Repository commands); read it rather than guessing, and when a
