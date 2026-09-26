@@ -5,10 +5,10 @@
 
  RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t2
 
- ❯ tests/integration/scripted-agent.test.ts (2 tests | 2 failed) 31357ms
+ ❯ tests/integration/scripted-agent.test.ts (2 tests | 2 failed) 31216ms
    ❯ the scripted agent (WI-16 T2) (2)
-     × fix pass: patch, reproduction test and evidence land on fix/gh-1 15662ms
-     × review pass: the answer satisfies the harness's verdict parser 15692ms
+     × fix pass: patch, reproduction test and evidence land on fix/gh-1 15612ms
+     × review pass: the answer satisfies the harness's verdict parser 15603ms
 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
 
 [notice] A new release of pip is available: 25.0.1 -> 26.2.1
@@ -45,6 +45,8 @@ ImageNotBuiltError: sandbox image sandcastle-loop-test is not built locally. Bui
 
  Test Files  1 failed | 1 passed (2)
       Tests  2 failed | 3 passed (5)
-   Start at  17:54:40
-   Duration  112.28s (tests 100%)
+   Start at  18:49:37
+   Duration  112.97s (tests 100%)
 
+
+exit=1   # captured with rc=$? on the line immediately after the command; image removed via docker rmi sandcastle-loop-test first, which is this log's own precondition

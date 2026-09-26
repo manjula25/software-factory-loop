@@ -123,9 +123,10 @@ covers T1 only.
 
 # T2: the scripted-agent image
 
-- **Source identity verified:** `2499b90` — `test(WI-16): record the scripted
-  agent's planted-defect pairs`. The T2.4 records commit follows it (docs only).
-- **Verified:** 2026-09-26.
+- **Source identity verified:** `485154c` — `test(WI-16): re-capture the T2 vitest
+  logs with recorded exit codes` (docs/evidence only). Code identity is unchanged
+  since `2499b90` — `test(WI-16): record the scripted agent's planted-defect pairs`.
+- **Verified:** 2026-09-26 (evidence re-captured same day, post-review).
 - **Surface:** pipeline integration (`tests/integration/`, Docker + `gh`) and the
   default harness-source gate (`npm test`).
 - **Base:** `9915ef5` (T1 complete on `main`); worktree `wi-16-t2`.
@@ -158,8 +159,12 @@ $ npm run test:integration        # image pre-built via npm run build:image:test
 exit=0
  Test Files  2 passed (2)
       Tests  5 passed (5)
-   Duration  149.68s (tests 100%)
+   Duration  152.90s (tests 100%)
 ```
+
+*(The green run was re-captured 2026-09-26 after review finding E1 — the first
+capture, 149.68s at `d89ebee`, predated the exit-code recording requirement
+being applied to these two logs; both vitest logs now carry their `exit=` line.)
 
 The image-diff acceptance criterion is satisfied by the file, not by a run:
 `.sandcastle/Dockerfile.test` is `FROM sandcastle-loop` plus one `COPY` of the

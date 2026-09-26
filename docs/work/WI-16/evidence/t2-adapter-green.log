@@ -12,6 +12,8 @@ WARNING: Running pip as the 'root' user can result in broken permissions and con
 
  Test Files  2 passed (2)
       Tests  5 passed (5)
-   Start at  18:14:07
-   Duration  149.68s (tests 100%)
+   Start at  18:52:05
+   Duration  152.90s (tests 100%)
 
+
+exit=0   # captured with rc=$? on the line immediately after the command
