@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Issue-driven test & fix loop harness (POC) — see harness-prd-v2.md",
+  "description": "Issue-driven test & fix loop harness (POC) \u2014 see harness-prd-v2.md",
   "scripts": {
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
     "build:image": "sandcastle docker build-image --image-name sandcastle-loop",
+    "build:image:test": "docker build -f .sandcastle/Dockerfile.test -t sandcastle-loop-test .sandcastle/scripted-agent",
     "smoke:image": "bash scripts/smoke-image.sh",
     "loop": "tsx src/loop.ts"
   },

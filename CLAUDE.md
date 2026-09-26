@@ -36,6 +36,13 @@ wave runner, and — on opted-in repos only — a verified merger for conflictin
 | `src/onboard-profile.ts` | Onboarding argv parsing + project-profile shaping, incl. the clearance flag and the `--auto-merge` opt-in flag (WI-6), and suite-baseline parsing (`parseSuiteBaseline`) (WI-3, WI-3b) |
 | `src/assert-no-secrets.ts`, `src/env.ts` | The confidentiality seam every emitted string passes through |
 
+Beyond the unit surface, `tests/integration/` holds the WI-16 integration gate
+(`npm run test:integration`, isolated vitest config): it checks the seeded fixture
+repo against the production image and drives the exported adapter seams through
+`sandcastle-loop-test` (`npm run build:image:test`) — the production image with its
+`claude` entry point shadowed by a scripted agent that answers the harness's real
+prompt/stream contract with no model and no network.
+
 There is still **no lint step** — do not invent one. The authoritative command list lives in
 `docs/agents/workflow.md` (Repository commands); read it rather than guessing, and when a
 command changes, change it there. Keep this section honest: if you add a surface, say so here

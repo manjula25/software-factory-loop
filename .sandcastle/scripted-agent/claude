@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""WI-16 T2 — the scripted agent. Shadows /home/agent/.local/bin/claude in the
+test image. Answers the harness's real prompt/stream contract without a model:
+
+- fix pass   (prompt opens "You are fixing one reported issue"): writes the
+              reproduction test, applies the known patch, runs the suite,
+              commits under LOOP_IDENTITY, emits <red/green-evidence>.
+- review pass(prompt opens "You are reviewing a proposed bug-fix diff"):
+              emits <review>approve</review>.
+Anything else exits 1 — an unrecognised prompt is a harness change to see, not
+to paper over. No network call exists in this file (FR-002, D9).
+"""
+import json
+import os
+import subprocess
+import sys
+
+FIX_MARKER = "You are fixing one reported issue"
+REVIEW_MARKER = "You are reviewing a proposed bug-fix diff"
+REPRO_PATH = "tests/fixed-issues/test_gh_1.py"
+PATCH_PATH = "src/loopsample/textops.py"
+DEFECT = "return text[:limit] + ELLIPSIS"
+PATCHED = "return text[:limit - 1] + ELLIPSIS"
+USER_NAME = "software-factory-loop"
+USER_EMAIL = "manjula25+loop@users.noreply.github.com"
+SESSION_ID = "scripted-agent"
+
+REPRO_TEST = '''"""Regression test for gh-1: truncate must respect the limit."""
+from loopsample import truncate
+
+
+def test_truncate_respects_limit():
+    result = truncate("abcdefghij", 5)
+    assert len(result) <= 5, f"truncate returned {len(result)} characters"
+    assert result == "abcd…"
+'''
+
+
+def emit(obj):
+    print(json.dumps(obj), flush=True)
+
+
+def write_session_transcript():
+    """The runner captures a session transcript after the process exits, from
+    ~/.claude/projects/<cwd with / as ->/<session_id>.jsonl (the same path the
+    real claude-code CLI writes). The scripted agent writes the file itself, so
+    the capture finds what the session_id promised. Still no network."""
+    project_dir = os.getcwd().rstrip("/").replace("/", "-")
+    transcript_dir = os.path.join(
+        os.path.expanduser("~/.claude/projects"), project_dir
+    )
+    os.makedirs(transcript_dir, exist_ok=True)
+    transcript = os.path.join(transcript_dir, SESSION_ID + ".jsonl")
+    with open(transcript, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"session_id": SESSION_ID, "scripted": True}) + "\n")
+
+
+def emit_text(text):
+    emit({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def fix_pass():
+    install = run(["pip", "install", "-q", "-e", ".[test]"])
+    if install.returncode != 0:
+        sys.stderr.write(install.stderr)
+        sys.exit(1)
+    os.makedirs(os.path.dirname(REPRO_PATH), exist_ok=True)
+    with open(REPRO_PATH, "w", encoding="utf-8") as fh:
+        fh.write(REPRO_TEST)
+    red = run(["pytest", "-q", REPRO_PATH])
+    if red.returncode == 0:
+        sys.stderr.write("reproduction test passed before the fix -- fixture is not in its seeded state\n")
+        sys.exit(1)
+    with open(PATCH_PATH, encoding="utf-8") as fh:
+        source = fh.read()
+    if DEFECT not in source:
+        sys.stderr.write(f"known defect not found in {PATCH_PATH}\n")
+        sys.exit(1)
+    with open(PATCH_PATH, "w", encoding="utf-8") as fh:
+        fh.write(source.replace(DEFECT, PATCHED))
+    green = run(["pytest", "-q", REPRO_PATH])
+    suite = run(["pytest", "-q"])
+    if green.returncode != 0 or suite.returncode != 0:
+        sys.stderr.write((green.stderr or "") + (suite.stderr or ""))
+        sys.exit(1)
+    for key, value in (("user.name", USER_NAME), ("user.email", USER_EMAIL)):
+        run(["git", "config", key, value])
+    run(["git", "add", REPRO_PATH, PATCH_PATH])
+    commit = run(["git", "commit", "-m", "fix(gh-1): truncate returns at most limit characters"])
+    if commit.returncode != 0:
+        sys.stderr.write(commit.stderr)
+        sys.exit(1)
+    report = (
+        "Reproduction test written at "
+        + REPRO_PATH
+        + ", defect patched, suite green, committed under the loop identity.\n"
+        + "<red-evidence>\n"
+        + red.stdout.strip()
+        + "\n</red-evidence>\n"
+        + "<green-evidence>\n"
+        + green.stdout.strip()
+        + "\n</green-evidence>\n"
+    )
+    emit({"type": "system", "subtype": "init", "session_id": SESSION_ID})
+    emit_text(report)
+    # The runner returns ONLY the result event's string as the run's stdout
+    # (assistant text feeds the live display, not the returned value), so the
+    # harness-parsed contract — the evidence blocks — must ride the result.
+    emit({"type": "result", "result": report + "<promise>COMPLETE</promise>"})
+    write_session_transcript()
+
+
+def review_pass():
+    verdict = (
+        "Diff judged against the reported issue: it patches the truncation "
+        "off-by-one the report describes, and the new test asserts the reported "
+        "behavior.\n<review>approve</review>\n"
+    )
+    emit({"type": "system", "subtype": "init", "session_id": SESSION_ID})
+    emit_text(verdict)
+    # Same as the fix pass: the verdict must ride the result event, which is
+    # the string `parseReviewOutput` consumes.
+    emit({"type": "result", "result": verdict + "<promise>COMPLETE</promise>"})
+    write_session_transcript()
+
+
+def main():
+    prompt = sys.stdin.read()
+    if FIX_MARKER in prompt:
+        fix_pass()
+    elif REVIEW_MARKER in prompt:
+        review_pass()
+    else:
+        sys.stderr.write("scripted agent: unrecognised prompt (no fix or review marker)\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
