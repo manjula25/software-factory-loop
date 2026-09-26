@@ -147,6 +147,92 @@ This file and `verification.md`. No source change.
 
 ---
 
+---
+
+## 6. T2.1 — the born-red scripted-agent surface — 2026-09-26
+
+Plan: `implementation-plan-t2.md` (approved with the ticket set). Worktree
+`wi-16-t2` off `9915ef5`; baselines re-taken there before any edit — typecheck
+`exit=0`, `npm test` 10 files / 287 tests, `npm run test:integration` 3 passed
+(144.57s), matching the plan's recorded base.
+
+`tests/integration/fixture.ts` gained `TEST_IMAGE`, `assertImageBuilt` /
+`ImageNotBuiltError` (build instruction: `npm run build:image:test`) and
+`ensureFixtureClone`, which exports T1's private clone-if-absent; T1's test now
+calls the exported one and its private copy is gone.
+
+RED recorded to `evidence/t2-image-missing-red.log`: `Tests 2 failed | 3 passed`,
+both failures `ImageNotBuiltError` carrying the build instruction. Unit gate and
+typecheck unchanged.
+
+Commit `80b852e`.
+
+## 7. T2.2 — the image and the agent, first green — 2026-09-26
+
+Delivered as planned: `.sandcastle/Dockerfile.test` (three lines, `FROM
+sandcastle-loop` plus one `COPY --chmod=0755`), `.sandcastle/scripted-agent/claude`
+(Python 3), `build:image:test` in `package.json`, the workflow.md integration-tests
+row (which also records T1's `test:integration` — added by T1 without landing it
+in the authoritative command list; corrected here per CLAUDE.md's rule, same PR),
+and one CLAUDE.md paragraph for the integration surface.
+
+Direct smoke, before any harness involvement: `which claude` inside the image
+resolves to `/home/agent/.local/bin/claude` with the script's `#!/usr/bin/env
+python3` shebang (the shadow, not a PATH accident); a review-shaped prompt yields
+the three NDJSON lines with `<review>approve</review>`; an unrecognised prompt
+exits 1 with the stderr message (D4's loud branch).
+
+### Deviation — three defects between the plan's facts and the runner's behaviour
+
+The plan's "repository facts" were verified against `dist/index.js` text but not
+against a live `run()`. The first green attempt failed 2/2, and the diagnosis
+corrected the plan in place (see items below); all three fixes are in the
+test-only script, so FR-003's "no `src/` change" held — no stop condition fired.
+
+1. **The runner post-captures a session transcript.** After the agent exits, the
+   claude-code provider `docker cp`s
+   `/home/agent/.claude/projects/<cwd with / as ->/<session_id>.jsonl`
+   (`dist/index.js:2607`, `encodeProjectPath` at `:2598`). A `session_id` in the
+   init event with no such file on disk is a `SessionCaptureError` that fails the
+   whole run. The script now writes that file itself (`write_session_transcript`)
+   — still no network.
+2. **The plan's stdout-assembly fact was wrong.** Assistant text events feed the
+   live display and the completion-signal detector only; the value returned as
+   the run's `stdout` is `resultText || execResult.stdout` — the **result**
+   event's string alone (`dist/index.js:262–305`, assembly at `:513`). D7 said
+   the opposite ("evidence/verdict text rides the assistant event"). Corrected in
+   the plan in place; the script now carries the full report/verdict in the
+   result event (the assistant event stays, for stream fidelity).
+3. **`tests/fixed-issues/` does not exist in the seed**, so `open(REPRO_PATH,
+   "w")` raised `FileNotFoundError`. The script creates the directory first.
+
+GREEN recorded to `evidence/t2-adapter-green.log`: `Tests 5 passed (5)` (T1's 3 +
+T2's 2, 149.68s); unit gate and typecheck re-checked unchanged.
+
+The plan's pip-as-`agent` risk did not bite: `pip install -q -e ".[test]"` as the
+non-root user succeeded via the user site (warning only), as the plan's T2.2
+observation anticipated.
+
+Commit `d89ebee`.
+
+## 8. T2.3 — planted-defect pairs — 2026-09-26
+
+Pair 1 (fix side): the script's report without the `<green-evidence>` block →
+exactly the fix test fails, `expected '…' to contain '<green-evidence>'` — the
+same observation `extractEvidence` throws on in production. Pair 2 (review
+side): `<review>wrong</review>` → exactly the review test fails,
+`expected 'wrong' to be 'approve'` through `parseReviewOutput`. Each revert was
+confirmed byte-identical by an empty `git diff --quiet` (rc 0) **before** its
+green re-run; both green re-runs are `Tests 5 passed (5)`.
+
+Recorded to `evidence/t2-planted-defects.log`. Commit `2499b90`.
+
+## 9. T2.4 — records — 2026-09-26
+
+This entry and the T2 section of `verification.md`. The plan's corrected
+stdout-assembly fact and D7 are corrected in place in `implementation-plan-t2.md`
+with this ledger entry as the correction's record.
+
 ## Follow-ups this work item leaves open
 
 - `.claude/worktrees/` is untracked and present in the working tree. Not WI-16's,
@@ -154,3 +240,4 @@ This file and `verification.md`. No source change.
 - T1.3 raised `testTimeout` to 300_000 on the integration surface. It is a bound,
   not a budget: a scenario in T4 that legitimately needs longer must raise it with
   its own evidence rather than inherit the number silently.
+

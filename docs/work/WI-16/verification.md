@@ -1,4 +1,4 @@
-# WI-16 Verification — T1: the fixture repository and its seed
+# WI-16 Verification — T1: the fixture repository and its seed; T2: the scripted-agent image
 
 **Standing claim.** Corrected in place if wrong; the history of what was believed
 belongs in `implementation-notes.md`.
@@ -118,3 +118,112 @@ captured with `rc=$?` immediately after each command.
 Anything not listed in the claims table above. In particular, no claim is made that
 T1 closes adversarial-review finding A-2; that is WI-16 as a whole, and this record
 covers T1 only.
+
+---
+
+# T2: the scripted-agent image
+
+- **Source identity verified:** `2499b90` — `test(WI-16): record the scripted
+  agent's planted-defect pairs`. The T2.4 records commit follows it (docs only).
+- **Verified:** 2026-09-26.
+- **Surface:** pipeline integration (`tests/integration/`, Docker + `gh`) and the
+  default harness-source gate (`npm test`).
+- **Base:** `9915ef5` (T1 complete on `main`); worktree `wi-16-t2`.
+
+## The claim, exactly
+
+T2 delivers a test-only sandbox image — the production image plus a shadowed
+`claude` entry point and nothing else — in which a scripted agent answers the
+harness's real prompt/stream contract with no model and no network: the fix pass
+lands the seeded patch and reproduction test on `fix/gh-1` under the loop identity
+with both evidence blocks present, and the review pass's verdict satisfies the
+harness's own parser. No file under `src/` changed.
+
+## Proving commands, run fresh at `2499b90`
+
+```
+$ npm test
+exit=0
+ Test Files  10 passed (10)
+      Tests  287 passed (287)
+```
+
+```
+$ npm run typecheck
+exit=0
+```
+
+```
+$ npm run test:integration        # image pre-built via npm run build:image:test
+exit=0
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+   Duration  149.68s (tests 100%)
+```
+
+The image-diff acceptance criterion is satisfied by the file, not by a run:
+`.sandcastle/Dockerfile.test` is `FROM sandcastle-loop` plus one `COPY` of the
+script over `/home/agent/.local/bin/claude` — the entire difference from the
+production image. `which claude` in the image resolves to that path with the
+script's shebang, observed directly (`docker run --entrypoint which`, `--entrypoint
+head`).
+
+## Claims → evidence
+
+| # | Claim | Proved by | Output |
+|---|---|---|---|
+| 1 | A missing test image fails each scripted-agent test with its build instruction | `evidence/t2-image-missing-red.log` | `Tests 2 failed \| 3 passed`, both `ImageNotBuiltError: … npm run build:image:test` |
+| 2 | The fix pass lands the patch + reproduction test on `fix/gh-1`, under the loop identity, with both evidence blocks | `evidence/t2-adapter-green.log` | green fix test: `outcome.branch == fix/gh-1`, commits ≥ 1, both tags in stdout, changed files exactly the two expected, author `software-factory-loop <manjula25+loop@users.noreply.github.com>` |
+| 3 | The review pass's answer satisfies the harness's verdict parser | `evidence/t2-adapter-green.log` | `parseReviewOutput(stdout) === "approve"` through the exported seam |
+| 4 | Both assertions are load-bearing | `evidence/t2-planted-defects.log` | pair 1 → exactly the fix test fails on the missing `<green-evidence>`; pair 2 → exactly the review test fails on `wrong`; each revert byte-identical (empty `git diff`) before its green re-run |
+| 5 | No model is invoked and no API spend occurs | structural: the only agent binary is the script; its ~100 lines contain no network call (no urllib/requests/curl/subprocess reaching outside the container's own git/pytest/pip) | reviewable by reading `.sandcastle/scripted-agent/claude` |
+| 6 | No credential is required at this layer | the agent spec is `{engine: "claude-code", model: "scripted-agent"}` with no provider registry; the green runs needed no `.env` | the green log's runs |
+| 7 | No file under `src/` changed | `git diff --name-only 9915ef5..2499b90` confined to `tests/integration/`, `.sandcastle/`, `package.json`, `docs/`, `CLAUDE.md` | changed-path list in the PR |
+| 8 | The default gate is unchanged | this record, run at `2499b90` | 10 files / 287 tests, `exit=0`; typecheck `exit=0` |
+
+Claims 1 and 4's red halves are **contingent observations**: their commands
+require altering the script or deleting the image and cannot be re-run as printed
+now. Each log says so. Exit codes were captured with `rc=$?` immediately after
+each command.
+
+## Evidence boundary
+
+- T2 proves the substitution is real, minimal and source-free. It does **not**
+  prove the harness's wiring end to end: no scenario drives the queue, the PR
+  opening, the canary, the merger, the escalation path or onboarding. Those are
+  T4/T5's, and the image is only exercised end to end once T4 runs.
+- This ticket's runs are the smallest invocations that show the scripts responding
+  through the real adapter seams — not a full `npm run loop` invocation. The
+  placeholder-credential CLI path (`--provider` + `.env`) is T3/T4's.
+- The session-transcript and result-event behaviours the script relies on are
+  properties of `@ai-hero/sandcastle`'s current dist; a sandcastle upgrade that
+  changes either will break these tests loudly (AgentError or a failed assertion),
+  which is the correct failure mode.
+
+## Non-claims
+
+1. **Nothing about any real model**, in either direction (FR-002's non-claims):
+   no scenario asserts a real provider would or would not behave likewise.
+2. **Nothing about `codex` or `opencode`** — only `claude` is shadowed (D2).
+3. **"No API spend" is structural, not measured** — it is a property of the
+   script's source (claim 5), stated as such.
+4. **Nothing about a planner-answering arm** — a planner prompt makes the script
+   exit 1 by design (D4); scenario 1 avoids it via `--issue 1`. A plan-answering
+   arm is a new decision for T4 if needed.
+
+## Unknowns closed or deferred
+
+| Unknown | Status |
+|---|---|
+| Does pip work as the non-root `agent` user? | **Closed** — user-site fallback, warning only; the fix pass's install step succeeded in every green run. |
+| Does `COPY --chmod` work on this daemon? | **Closed** — BuildKit default; the build succeeded. |
+| Does the shadow survive sandcastle's PATH resolution? | **Closed** — `which claude` → `/home/agent/.local/bin/claude`, script shebang. |
+| Does the runner accept a scripted `session_id`? | **Closed, with a fix** — only once the script writes the transcript file the capture expects (`implementation-notes.md` §7). |
+
+## Remaining risks
+
+- **The script hard-codes the seeded defect** (`text[:limit]` → `text[:limit - 1]`).
+  It is a fixture actor: if the fixture's seed ever changes, the script changes in
+  the same PR.
+- **Two vitest files clone concurrently on a cold machine** (`ensureFixtureClone`
+  races). Consequence is a failed clone, not corruption; the retry is a re-run.
