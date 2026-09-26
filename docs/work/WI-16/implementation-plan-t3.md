@@ -101,12 +101,17 @@ specification's stop condition: report it, do not make it.
 ### T3.1 — the command surface, born red
 
 **Files:** `vitest.scenarios.config.ts` (new), `package.json` (+`test:scenarios`),
-`tests/scenarios/command.test.ts` (new — all four tests, importing `./fixture-reset.js`
-which does not exist yet), `docs/agents/workflow.md` (the Integration-tests row gains
-`test:scenarios`; CLAUDE.md's paragraph gains a clause).
+`tests/scenarios/command.test.ts` (new — all four tests, importing `./fixture-reset.js`),
+`tests/scenarios/fixture-reset.ts` (new — the born-red stub), `docs/agents/workflow.md`
+(the Integration-tests row gains `test:scenarios`; CLAUDE.md's paragraph gains a clause).
 
-**RED:** `npm run test:scenarios` → the file fails to load (`fixture-reset.js` absent) —
-all four tests failed. `npm test` and `npm run test:integration` unchanged. Recorded to
+**RED:** ~~`npm run test:scenarios` → the file fails to load (`fixture-reset.js` absent) —
+all four tests failed.~~ *(Corrected in place 2026-09-26, before the RED run: a missing
+module also fails `npm run typecheck` — tsconfig includes `tests/` — and T1/T2 kept every
+gate green at RED. The stub exists with every export present and every function throwing
+`T3 born-red stub: … not implemented yet`, so the red is on substance.)* `npm run
+test:scenarios` → 4/4 tests failed on the stub's throws, `exit=1`. `npm run typecheck`,
+`npm test`, and `npm run test:integration` unchanged (rc=0 each). Recorded to
 `docs/work/WI-16/evidence/t3-surface-red.log`.
 
 **Commit:** `test(WI-16): the scenarios command, born red on the missing machinery`

@@ -7,6 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:scenarios": "vitest run --config vitest.scenarios.config.ts",
     "typecheck": "tsc --noEmit",
     "build:image": "sandcastle docker build-image --image-name sandcastle-loop",
     "build:image:test": "docker build -f .sandcastle/Dockerfile.test -t sandcastle-loop-test .sandcastle/scripted-agent",
