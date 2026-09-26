@@ -232,3 +232,91 @@ each command.
   the same PR.
 - **Two vitest files clone concurrently on a cold machine** (`ensureFixtureClone`
   races). Consequence is a failed clone, not corruption; the retry is a re-run.
+---
+
+# T3 — the scenarios command, the reset, the guard
+
+## The claim, exactly
+
+T3 delivers the scenarios' own command surface (`npm run test:scenarios`, an
+isolated vitest configuration that cannot change `npm test` or
+`npm run test:integration`) with its machinery in `tests/scenarios/fixture-reset.ts`:
+a precondition check that fails naming the missing tool, a concurrency guard that
+refuses while a live holder stands and steals a dead one's lock, a reset that
+restores the fixture to exactly four properties (only `main` on origin, no open
+PR, origin/main at `SEED_COMMIT`, local clone clean at the same commit) and
+verifies them itself before claiming success, and the empty-queue label. The
+smallest real invocation of the CLI entry runs against the fixture with
+placeholder provider credentials and leaves it unchanged. No file under `src/`
+changed.
+
+## Proving commands, run fresh at `5393e1a` (docs-only commits follow)
+
+```
+$ npm run typecheck
+exit=0
+```
+
+```
+$ npm test
+exit=0
+      Tests  287 passed (287)
+```
+
+```
+$ npm run test:scenarios        # re-captured at 5393e1a, appended to the log
+exit=0
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Duration  690.47s (tests 100%)
+```
+
+## Claims → evidence
+
+| # | Claim | Proved by | Output |
+|---|---|---|---|
+| 1 | The command exists and fails on absence of its own subject | `evidence/t3-surface-red.log` (born-red stub) | 4/4 failed, exit=1; typecheck/unit/integration rc=0 and unchanged |
+| 2 | The reset restores all four clean properties from a hand-made mess | `evidence/t3-command-green.log` | hand-mutation test green in both captures (578.38s, then 690.47s at `5393e1a`) |
+| 3 | The reset's assertions are load-bearing | `evidence/t3-planted-defects.log` | branch-deletion skip → `FixtureResetError "verify remote heads"`; force-push `--dry-run` → post-mess reset fails `non-fast-forward`; each revert byte-identical (empty `git diff --quiet`, rc 0) before its green re-run |
+| 4 | The guard refuses a live holder by name and steals a dead one | `evidence/t3-command-green.log` (guard test) | refusal names `pid … (planted live holder …)`; dead-pid acquire does not throw |
+| 5 | A missing precondition is a failure naming it, at test and command level | `evidence/t3-precondition-red.log` | `DOCKER_HOST=unix:///nonexistent-t3.sock npm run test:scenarios` → exit=1, 4/4 failed, each naming the docker precondition; the fixture untouched (every failure precedes any reset) |
+| 6 | The smallest real CLI invocation leaves the fixture unchanged, with no model spend | `evidence/t3-command-green.log` (invocation test) | queue empty via the label worn by no issue; placeholder credentials (presence-only validation); `expectFixtureClean` after the run; the run measured standalone at 111s rc=0 |
+| 7 | The default gates are untouched | `vitest.scenarios.config.ts` (separate include glob `tests/scenarios/**`); run at `5393e1a` | `npm test` 287 rc=0; typecheck rc=0; `test:integration` 5/5 rc=0 at T3.1 and unchanged since |
+| 8 | No file under `src/` changed | `git diff --name-only 4701f21..5393e1a` | 11 files, none under `src/` (list in implementation-notes §10's range check) |
+
+Claims 1 and 5's red halves are contingent observations: their commands require
+the stub state or a removed precondition and cannot be re-run as printed now.
+Each log says so. Exit codes were captured with `rc=$?` immediately after each
+command; the 690.47s re-capture's rc was captured in the invoking shell and
+appended to the log in the same motion.
+
+## Evidence boundary
+
+- The reset is proven against a HAND-MADE mess only. FR-004's killed-run half —
+  a run actually killed mid-flight and then reset — is T4's; the dead-holder
+  steal that makes it possible is proven here only against a planted dead pid.
+- The invocation test's assertion is about the fixture's state, not the run's
+  success (FR-005 posture); the empty-queue run's exit 0 is observed, not
+  asserted.
+- The reset does not touch issues or labels (D6) — nothing here claims anything
+  about issue state.
+- Timing figures are this network's (~16s per gh API POST); the two gh-heavy
+  tests carry explicit 480s timeouts with the measurement in a comment.
+
+## Non-claims
+
+1. **Nothing about concurrent scenario processes** — the guard's refusal is
+   tested from one process against a planted holder; two real vitest processes
+   racing for the mkdir is not exercised.
+2. **Nothing about guard durability across reboots** — the lock lives in tmpdir;
+  a reboot clears it, which is acceptable (a reboot kills any holder too).
+3. **Nothing about the planner, PRs, canary, merger, or escalation paths** —
+   T4/T5's; the invocation here is deliberately the empty queue.
+
+## Remaining risks
+
+- **The empty-queue run's ~111s standalone duration is network-bound**, not
+  harness-bound; on a faster network it shrinks, on a slower one the 480s bound
+  could one day be tight — the measurement comment names the cause.
+- **`ensureFixtureClone` cold-clone concurrency** (T2's risk) applies to the
+  scenarios surface too; same consequence, same retry.

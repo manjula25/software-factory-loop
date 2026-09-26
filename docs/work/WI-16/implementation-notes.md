@@ -233,11 +233,70 @@ This entry and the T2 section of `verification.md`. The plan's corrected
 stdout-assembly fact and D7 are corrected in place in `implementation-plan-t2.md`
 with this ledger entry as the correction's record.
 
+## 10. T3 — the scenarios command, the reset, the guard — 2026-09-26
+
+**T3.1 (born red, `d7f83c2`):** the red mechanism deviated from the plan on
+purpose, corrected in place before the run: a missing `fixture-reset.js` module
+would also fail `npm run typecheck` (tsconfig includes `tests/`), and T1/T2 kept
+every gate green at red. The stub exports everything and throws per function —
+`npm run test:scenarios` → 4/4 failed on substance, exit=1
+(`evidence/t3-surface-red.log`); typecheck, `npm test` (287), and
+`test:integration` (5, 149.68s) all rc=0. Two later test-file fixes before the
+first machinery run: the planted live holder must be a genuinely live pid
+(`spawnSync` waits, so its child is dead on return — the test now plants its own
+`process.pid`), and removing preconditions by PATH surgery is fragile — the
+docker case uses a dead `DOCKER_HOST`, the gh case an empty `GH_CONFIG_DIR`
+(plus stripped token env vars, so a teammate's `GH_TOKEN` cannot save it).
+
+**T3.2 (first green, `0e10076`):** the guard acquires with an atomic mkdir,
+refuses naming a live holder, steals a dead/corrupt one; the reset closes PRs,
+deletes non-main branches, force-puts main at the seed, verifies all four
+properties itself. The first green attempt failed 2/4: the hand-mutation's
+scratch clone pushed to a path remote that never reached GitHub (fixed: clone
+the fixture's real remote URL), and the empty-queue invocation outran the 300s
+default — one gh API POST costs ~16s from this network; the run measured
+standalone at 111s rc=0, and the test now carries 480s with that measurement
+in a comment (the follow-up below, honored as designed). Green: 4/4, 578.38s,
+exit=0 (`evidence/t3-command-green.log`).
+
+**T3.3 (planted defects, `27390f3`):** the plan's first pair was wrong —
+dropping `gh pr close` alone is NOT catchable, because deleting a PR's head
+branch on GitHub auto-closes the PR (the run passed; plan corrected in place,
+the branch deletion is the catchable defect). The force-push pair needed the
+mess to advance main — a killed post-merge run's shape — or dropping the force
+changes nothing the assertions see; the hand-mutation now pushes a junk commit
+to main too. And a red that dies mid-mess leaves timestamp-unique junk commits
+whose next push is rejected non-fast-forward before the reset under test runs,
+so the test resets BEFORE mutating (self-healing start). Both surviving pairs
+red→empty-diff-revert→green in `evidence/t3-planted-defects.log`; the two
+gh-heavy tests carry explicit 480s timeouts.
+
+**T3.4 (command-level precondition RED, `5393e1a`):**
+`DOCKER_HOST=unix:///nonexistent-t3.sock npm run test:scenarios` → exit=1, 4/4
+failed naming the docker precondition verbatim
+(`evidence/t3-precondition-red.log`); PATH-stripping corrected in place as both
+fragile and over-broad (it would remove gh with docker).
+
+**T3.5:** this entry and the T3 section of `verification.md`, with a fresh full
+4/4 re-capture at the final code identity appended to
+`evidence/t3-command-green.log` (the original 4/4 predates the T3.3 test
+extension). Changed-path range check, `git diff --name-only 4701f21..5393e1a` —
+exactly 11 files, none under `src/`: `CLAUDE.md`, `docs/agents/workflow.md`,
+`docs/work/WI-16/evidence/t3-{surface-red,command-green,planted-defects,precondition-red}.log`,
+`docs/work/WI-16/implementation-plan-t3.md`, `package.json`,
+`tests/scenarios/command.test.ts`, `tests/scenarios/fixture-reset.ts`,
+`vitest.scenarios.config.ts`.
+
 ## Follow-ups this work item leaves open
 
 - `.claude/worktrees/` is untracked and present in the working tree. Not WI-16's,
   and not touched.
 - T1.3 raised `testTimeout` to 300_000 on the integration surface. It is a bound,
-  not a budget: a scenario in T4 that legitimately needs longer must raise it with
-  its own evidence rather than inherit the number silently.
+  not a budget — and T3 exercised the sanctioned escape: the two gh-heavy
+  scenario tests each carry an explicit 480_000 with the latency measurement in
+  a comment (~16s per gh API POST; the empty-queue run is 111s standalone).
+- D6's open question stands for T4: the reset does not touch issues or labels —
+  whether a scenario needs issue-state reset is T4's to answer with a scenario
+  that cares.
+
 
