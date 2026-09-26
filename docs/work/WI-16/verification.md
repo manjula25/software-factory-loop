@@ -123,9 +123,9 @@ covers T1 only.
 
 # T2: the scripted-agent image
 
-- **Source identity verified:** `485154c` — `test(WI-16): re-capture the T2 vitest
-  logs with recorded exit codes` (docs/evidence only). Code identity is unchanged
-  since `2499b90` — `test(WI-16): record the scripted agent's planted-defect pairs`.
+- **Source identity verified:** `2499b90` — `test(WI-16): record the scripted
+  agent's planted-defect pairs` is the last code change; docs/evidence commits
+  follow it (the E1 re-capture among them — no code change).
 - **Verified:** 2026-09-26 (evidence re-captured same day, post-review).
 - **Surface:** pipeline integration (`tests/integration/`, Docker + `gh`) and the
   default harness-source gate (`npm test`).
