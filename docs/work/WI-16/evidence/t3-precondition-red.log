@@ -1,0 +1,85 @@
+
+> software-factory-loop@0.0.0 test:scenarios
+> vitest run --config vitest.scenarios.config.ts
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+ ❯ tests/scenarios/command.test.ts (4 tests | 4 failed) 1059ms
+   ❯ the scenarios command (WI-16 T3) (4)
+     × resets a hand-mutated fixture: branch gone, PR closed, base at the seed 214ms
+     × smallest real invocation: the loop finds no eligible issue and the fixture is unchanged 200ms
+     × the guard refuses while held, naming the holder; a dead holder is stolen 223ms
+     × a missing precondition is a failure naming it — never a skip or a pass 420ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > resets a hand-mutated fixture: branch gone, PR closed, base at the seed
+FixtureResetError: scenarios fixture machinery failed at step "precondition: docker": docker info --format {{.ServerVersion}} failed: failed to connect to the docker API at unix:///nonexistent-t3.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent-t3.sock: connect: no such file or directory
+ ❯ run tests/scenarios/fixture-reset.ts:59:11
+     57|       return "";
+     58|     }
+     59|     throw new FixtureResetError(
+       |           ^
+     60|       step,
+     61|       `${command} ${args.join(" ")} failed: ${stderr.trim() || (failur…
+ ❯ assertScenariosPreconditions tests/scenarios/fixture-reset.ts:87:3
+ ❯ tests/scenarios/command.test.ts:87:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > smallest real invocation: the loop finds no eligible issue and the fixture is unchanged
+FixtureResetError: scenarios fixture machinery failed at step "precondition: docker": docker info --format {{.ServerVersion}} failed: failed to connect to the docker API at unix:///nonexistent-t3.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent-t3.sock: connect: no such file or directory
+ ❯ run tests/scenarios/fixture-reset.ts:59:11
+     57|       return "";
+     58|     }
+     59|     throw new FixtureResetError(
+       |           ^
+     60|       step,
+     61|       `${command} ${args.join(" ")} failed: ${stderr.trim() || (failur…
+ ❯ assertScenariosPreconditions tests/scenarios/fixture-reset.ts:87:3
+ ❯ tests/scenarios/command.test.ts:155:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > the guard refuses while held, naming the holder; a dead holder is stolen
+FixtureResetError: scenarios fixture machinery failed at step "precondition: docker": docker info --format {{.ServerVersion}} failed: failed to connect to the docker API at unix:///nonexistent-t3.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent-t3.sock: connect: no such file or directory
+ ❯ run tests/scenarios/fixture-reset.ts:59:11
+     57|       return "";
+     58|     }
+     59|     throw new FixtureResetError(
+       |           ^
+     60|       step,
+     61|       `${command} ${args.join(" ")} failed: ${stderr.trim() || (failur…
+ ❯ assertScenariosPreconditions tests/scenarios/fixture-reset.ts:87:3
+ ❯ tests/scenarios/command.test.ts:205:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > a missing precondition is a failure naming it — never a skip or a pass
+AssertionError: expected [Function] to throw error matching /gh/i but got 'scenarios fixture machinery failed at…'
+
+- Expected:
+/gh/i
+
++ Received:
+"scenarios fixture machinery failed at step \"precondition: docker\": docker info --format {{.ServerVersion}} failed: failed to connect to the docker API at unix:///nonexistent-t3.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent-t3.sock: connect: no such file or directory"
+
+ ❯ tests/scenarios/command.test.ts:257:58
+    255|       delete noAuth.GITHUB_TOKEN;
+    256|       delete noAuth.GH_ENTERPRISE_TOKEN;
+    257|       expect(() => assertScenariosPreconditions(noAuth)).toThrow(/gh/i…
+       |                                                          ^
+    258|     } finally {
+    259|       rmSync(ghConfig, { recursive: true, force: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  23:26:45
+   Duration  1.44s (tests 89%, transform 7%, import 3%, worker 1%)
+
+
+exit=1 (captured as rc=$? immediately after the command; 4/4 failed, each naming the docker precondition; the fixture was never touched — every failure precedes any reset)

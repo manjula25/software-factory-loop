@@ -152,7 +152,10 @@ Each revert confirmed byte-identical by an empty `git diff` **before** the green
 
 ### T3.4 — the recorded RED: precondition failure at command level
 
-With `PATH` stripped of docker: `npm run test:scenarios` → fails, every test naming the
+~~With `PATH` stripped of docker:~~ *(Corrected in place 2026-09-26: PATH surgery is
+environment-fragile and removes gh with docker; the recorded run instead points
+`DOCKER_HOST` at a dead socket — `DOCKER_HOST=unix:///nonexistent-t3.sock npm run
+test:scenarios`.)* `npm run test:scenarios` → fails, every test naming the
 missing precondition. Recorded verbatim with exit code to
 `docs/work/WI-16/evidence/t3-precondition-red.log`. (Run before T3.5's records; the
 fixture itself is untouched — the failure precedes any reset.)
