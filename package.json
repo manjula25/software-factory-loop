@@ -6,6 +6,7 @@
   "description": "Issue-driven test & fix loop harness (POC) — see harness-prd-v2.md",
   "scripts": {
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
     "build:image": "sandcastle docker build-image --image-name sandcastle-loop",
     "smoke:image": "bash scripts/smoke-image.sh",

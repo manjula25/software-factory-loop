@@ -1,0 +1,72 @@
+$ npm run test:integration
+
+
+> software-factory-loop@0.0.0 test:integration
+> vitest run --config vitest.integration.config.ts
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop
+
+ ❯ tests/integration/fixture.test.ts (3 tests | 3 failed) 2121ms
+   ❯ the disposable integration fixture (WI-16 T1) (3)
+     × exists on GitHub with the base branch the harness will drive 694ms
+     × carries a profile that is opted in, unnotifiable, and born green 719ms
+     × has a contract suite that is green in the production image 706ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/fixture.test.ts > the disposable integration fixture (WI-16 T1) > exists on GitHub with the base branch the harness will drive
+FixtureMissingError: integration fixture manjula25/loop-integration-fixture is missing or unreachable (Command failed: gh repo view manjula25/loop-integration-fixture --json name
+GraphQL: Could not resolve to a Repository with the name 'manjula25/loop-integration-fixture'. (repository)
+). Provision it once, under owner authority, per docs/work/WI-16/implementation-plan.md T1.3. This test never creates it.
+ ❯ assertFixtureReady tests/integration/fixture.ts:45:11
+     43|     });
+     44|   } catch (error) {
+     45|     throw new FixtureMissingError(repo, error instanceof Error ? error…
+       |           ^
+     46|   }
+     47| }
+ ❯ tests/integration/fixture.test.ts:40:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/integration/fixture.test.ts > the disposable integration fixture (WI-16 T1) > carries a profile that is opted in, unnotifiable, and born green
+FixtureMissingError: integration fixture manjula25/loop-integration-fixture is missing or unreachable (Command failed: gh repo view manjula25/loop-integration-fixture --json name
+GraphQL: Could not resolve to a Repository with the name 'manjula25/loop-integration-fixture'. (repository)
+). Provision it once, under owner authority, per docs/work/WI-16/implementation-plan.md T1.3. This test never creates it.
+ ❯ assertFixtureReady tests/integration/fixture.ts:45:11
+     43|     });
+     44|   } catch (error) {
+     45|     throw new FixtureMissingError(repo, error instanceof Error ? error…
+       |           ^
+     46|   }
+     47| }
+ ❯ readProfile tests/integration/fixture.test.ts:27:3
+ ❯ tests/integration/fixture.test.ts:51:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/integration/fixture.test.ts > the disposable integration fixture (WI-16 T1) > has a contract suite that is green in the production image
+FixtureMissingError: integration fixture manjula25/loop-integration-fixture is missing or unreachable (Command failed: gh repo view manjula25/loop-integration-fixture --json name
+GraphQL: Could not resolve to a Repository with the name 'manjula25/loop-integration-fixture'. (repository)
+). Provision it once, under owner authority, per docs/work/WI-16/implementation-plan.md T1.3. This test never creates it.
+ ❯ assertFixtureReady tests/integration/fixture.ts:45:11
+     43|     });
+     44|   } catch (error) {
+     45|     throw new FixtureMissingError(repo, error instanceof Error ? error…
+       |           ^
+     46|   }
+     47| }
+ ❯ cloneIfAbsent tests/integration/fixture.test.ts:32:3
+ ❯ tests/integration/fixture.test.ts:59:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  20:40:19
+   Duration  2.27s (tests 98%, transform 1%, import 1%)
+
+
+exit=1

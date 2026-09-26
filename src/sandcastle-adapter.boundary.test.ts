@@ -9,13 +9,34 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** The only files permitted to import @ai-hero/sandcastle. Anything else fails. */
 const ALLOWED_IMPORTERS = new Set(["src/sandcastle-adapter.ts", ".sandcastle/main.ts"]);
 
-/** Recursively collect .ts files under the given roots (test files included). */
-async function tsFiles(dir: string): Promise<string[]> {
+/**
+ * Directories never scanned. `node_modules` and `.git` are not our code; `.claude`
+ * holds sibling worktrees, each a full copy of this repo whose own adapter would
+ * report as an offender; the rest is tooling output.
+ */
+const SKIP_DIRS = new Set(["node_modules", ".git", ".claude", ".loop-work", "dist", "coverage"]);
+
+/**
+ * Every extension a hand-written source file plausibly carries. Narrowing this to
+ * `.ts` would leave the rule enforceable only against files that happen to use it.
+ */
+const SOURCE_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx"];
+
+/**
+ * Recursively collect source files under `dir`, skipping SKIP_DIRS. The scan root
+ * is the whole repository, not `src/`: the rule this test enforces is about every
+ * file, so a scanner pointed at two directories enforces something weaker than the
+ * rule it is recorded as enforcing (finding A-3, 2026-09-25).
+ */
+async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files = await Promise.all(
     entries.map(async (entry) => {
       const full = join(dir, entry.name);
-      return entry.isDirectory() ? tsFiles(full) : entry.name.endsWith(".ts") ? [full] : [];
+      if (entry.isDirectory()) {
+        return SKIP_DIRS.has(entry.name) ? [] : sourceFiles(full);
+      }
+      return SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)) ? [full] : [];
     }),
   );
   return files.flat();
@@ -23,13 +44,11 @@ async function tsFiles(dir: string): Promise<string[]> {
 
 describe("sandcastle adapter boundary (FR-001)", () => {
   it("only the adapter (plus the explicitly allowed init template) imports @ai-hero/sandcastle", async () => {
-    // src/ is where harness code lives; .sandcastle/ holds the committed init
-    // scaffold, whose blank template (main.ts) imports the package. The
-    // exemption is explicit here so a NEW file importing it anywhere fails.
-    const files = [
-      ...(await tsFiles(join(repoRoot, "src"))),
-      ...(await tsFiles(join(repoRoot, ".sandcastle"))),
-    ];
+    // The scan root is the whole repository, so a NEW file importing the package
+    // anywhere fails — not only one placed under src/. `.sandcastle/` holds the
+    // committed init scaffold, whose blank template (main.ts) imports the package;
+    // that exemption is explicit in ALLOWED_IMPORTERS above.
+    const files = await sourceFiles(repoRoot);
     expect(files.length).toBeGreaterThan(0);
     // Detect imports (static, type-only, dynamic, require) — a mere textual
     // mention in a comment or message must not trip the boundary.

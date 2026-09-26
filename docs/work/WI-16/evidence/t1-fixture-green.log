@@ -1,0 +1,125 @@
+# WI-16 T1.3 — provisioning the fixture, and the first green run
+
+T1.3 does two outward-facing things under the owner's authority, given 2026-09-25:
+creates `manjula25/loop-integration-fixture` (public) and files its seed issue.
+
+## 1. The seed, built locally before anything was created
+
+Seven files under `/tmp/wi16-seed/loop-integration-fixture`, committed as one seed
+commit. `git rev-parse --show-toplevel` was run **before** `git init` and failed
+("not a git repository"), per the repository's lesson about un-initialized
+directories silently joining a parent repo.
+
+```
+$ git log --format='%H%n%an <%ae>%n%s' -1
+a4348dafa4aa328b908692ed46a1d4ddf9796fd7
+manjula <manjula@bitcot.com>
+seed: loopsample with a latent truncate defect
+
+$ git ls-files
+.gitignore
+.loop-harness/profile.json
+README.md
+pyproject.toml
+src/loopsample/__init__.py
+src/loopsample/textops.py
+tests/test_textops.py
+```
+
+**Born-green and latent-defect, checked before the repository existed** — run in
+`sandcastle-loop` against a read-only mount of the seed:
+
+```
+$ docker run --rm --user 0:0 -v <seed>:/src:ro --entrypoint bash sandcastle-loop -lc \
+    'cp -r /src /work && cd /work && pip install -q -e ".[test]" && pytest -q; ...'
+...                                                                      [100%]
+3 passed in 0.01s
+PYTEST_EXIT=0
+defect probe: 'abcde…' len=6
+docstring example: 'abcd…'
+at-limit: 'abcde'
+```
+
+The contract suite is green **with the defect present** (D3), and the defect is
+real: `truncate("abcdefghij", 5)` returns six characters. The docstring states the
+correct contract (`truncate("abcdef", 4) == "abc…"`) and the code violates it, so
+the issue body's stated symptom and its expected value are both accurate.
+
+## 2. The repository, read back rather than assumed
+
+```
+$ gh repo view manjula25/loop-integration-fixture --json name,visibility,defaultBranchRef,isEmpty
+{"defaultBranchRef":{"name":"main"},"isEmpty":false,"name":"loop-integration-fixture","visibility":"PUBLIC"}
+
+$ git ls-remote --symref origin HEAD
+ref: refs/heads/main	HEAD
+a4348dafa4aa328b908692ed46a1d4ddf9796fd7	HEAD
+```
+
+`isEmpty: false`, and the remote's `HEAD` is the local seed commit — the push
+landed what was committed, not something else.
+
+## 3. The issue, read back
+
+```
+$ gh issue list --repo manjula25/loop-integration-fixture --state open --json number,title,labels
+[{"labels":[],"number":1,"title":"truncate() returns one character more than the limit"}]
+```
+
+Exactly one open issue, **#1** — no labels, no attachment URL, and no cause stated.
+`#1` normalizes to id `gh-1`, so scenario 1's reproduction test is
+`tests/fixed-issues/test_gh_1.py`.
+
+## 4. The first run: RED, and not on its subject
+
+The first `npm run test:integration` after provisioning **failed** — and the
+failure was in T1.2's own test, not in the fixture:
+
+```
+$ npm run test:integration
+Cloning into '/tmp/loop-integration-fixture'...
+ ❯ tests/integration/fixture.test.ts (3 tests | 1 failed) 16844ms
+   ❯ the disposable integration fixture (WI-16 T1) (3)
+     × has a contract suite that is green in the production image 13839ms
+
+Error: Test timed out in 5000ms.
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+exit=1
+```
+
+A cold `gh repo clone` plus a container run with `pip install` needs ~14s; vitest's
+default is 5000ms. The test could never have passed. Fixed by raising
+`testTimeout` to 300_000 in `vitest.integration.config.ts` — see that file's comment
+for why the value is a bound rather than a budget.
+
+That run's output above is transcribed from the terminal capture; its raw file was
+overwritten by the green run in §5, so it is not re-readable from disk.
+
+This RED is recorded rather than discarded because it is the honest history of the
+first run against the real fixture. It is not the guard's RED (that is
+`t1-guard-absent-fixture.log`) and not FR-004's killed-run criterion (that needs a
+run that does work, and completes in T4).
+
+## 5. The green run
+
+```
+$ npm run test:integration
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  20:53:12
+   Duration  8.74s (tests 99%)
+exit=0
+```
+
+All three T1 tests pass against the live fixture.
+
+## 6. Unchanged, checked in the same step
+
+```
+$ npm test          → Test Files 10 passed (10); Tests 287 passed (287); exit=0
+$ npm run typecheck → exit 0
+```
+
+The integration surface is additive: the default gate is byte-for-byte the same
+suite it was before T1.1.

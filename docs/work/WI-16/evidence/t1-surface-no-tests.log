@@ -1,0 +1,38 @@
+# WI-16 T1.1 — RED: the integration surface refuses to pass empty
+
+Observed 2026-09-25 at `aec13df`, immediately after `vitest.integration.config.ts`,
+the `test:integration` script and the `tsconfig.json` include were added, and
+**before** `tests/integration/fixture.test.ts` existed. The output below is that
+run, transcribed verbatim.
+
+It is not re-runnable as printed: the command now finds the test file T1.2 added.
+Re-running it today shows the T1.2 RED instead — see `t1-guard-absent-fixture.log`.
+
+```
+$ npm run test:integration
+
+> software-factory-loop@0.0.0 test:integration
+> vitest run --config vitest.integration.config.ts
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop
+
+No test files found, exiting with code 1
+
+include: tests/integration/**/*.test.ts
+exclude:  **/node_modules/**, **/.git/**
+
+exit=1
+```
+
+The point of the observation: `passWithNoTests: false` is what makes this exit 1
+rather than 0. An integration command that finds no tests must fail — a check
+that cannot fail is not evidence, and a gate that passes on an empty directory
+is the vacuous-pass shape this work item exists to remove.
+
+Checked in the same step, unchanged by it:
+
+```
+$ npm test          → Test Files 10 passed (10); Tests 287 passed (287); 1.45s
+$ npm run typecheck → exit 0
+```

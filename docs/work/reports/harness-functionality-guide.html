@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How the Fix-It Harness Works</title>
+<title>Issue-Driven Test &amp; Fix Loop</title>
 <style>
   :root {
     --bg: #f7f8fa; --surface: #ffffff; --ink: #1a2332; --ink-soft: #4a5568;
@@ -89,6 +89,8 @@
   .t { fill: var(--ink); font: 600 13px -apple-system, "Segoe UI", sans-serif; }
   .ts { fill: var(--ink-faint); font: 400 10.5px -apple-system, "Segoe UI", sans-serif; }
   .tl { fill: var(--ink-soft); font: 600 11.5px -apple-system, "Segoe UI", sans-serif; }
+  .tablewrap { overflow-x: auto; }
+  .tablewrap table { min-width: 560px; }
   table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-faint); }
@@ -102,6 +104,10 @@
   .choices .pick { font-weight: 700; color: var(--ink); }
   .choices .rejected { color: var(--ink-faint); }
   .choices .rejected s { color: var(--red); }
+  code {
+    font: 0.88em/1.4 var(--mono); background: var(--line); color: var(--ink);
+    padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+  }
   footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-faint); }
 </style>
 </head>
@@ -109,7 +115,7 @@
 <main>
 
 <span class="kicker">Plain-language functionality guide</span>
-<h1>How the fix-it harness works</h1>
+<h1>The issue-driven test &amp; fix loop</h1>
 <p class="lede">
   The harness is a software assistant that fixes problems people have already reported — and does it
   under one non-negotiable rule that shapes everything in this guide:
@@ -124,7 +130,7 @@
 </div>
 <div class="grid3">
   <div class="principle"><h3>Every fix leaves a permanent tripwire</h3><p>The test that proves the bug is real stays in the suite forever — the same bug can never quietly return.</p></div>
-  <div class="principle"><h3>Humans stay in charge</h3><p>A person approves every fix by default; automatic landing exists only where a team explicitly asked for it.</p></div>
+  <div class="principle"><h3>Humans stay in charge</h3><p>Two modes, both explicit: by default a person approves every fix; a team can opt in at setup to fully automated landing — green fixes then land with no human in the loop, wrapped in an automated review, a canary check, and an undo-and-alert net.</p></div>
   <div class="principle"><h3>When unsure, stop and ask</h3><p>Anything ambiguous is left open for a person with a clear note. Nothing is forced through.</p></div>
 </div>
 
@@ -188,6 +194,7 @@
 
   <h3>What changed, dimension by dimension</h3>
   <div class="card">
+    <div class="tablewrap">
     <table>
       <tr><th>Dimension</th><th>Before</th><th>Now</th></tr>
       <tr><td>Trust in a fix</td><td>Rests on the author's care</td><td class="changed"><span class="tag">changed</span> Rests on an independent re-test the author can't influence</td></tr>
@@ -196,6 +203,7 @@
       <tr><td>Approval</td><td>Human review of raw changes</td><td class="changed"><span class="tag">changed</span> Human review of changes already proven by tests — the human decides, the machine carries the proof</td></tr>
       <tr><td>Accountability</td><td>Diffuse after the fact</td><td class="changed"><span class="tag">changed</span> Every run ends with an honest, checkable tally</td></tr>
     </table>
+    </div>
   </div>
 </section>
 
@@ -451,6 +459,92 @@
   </div>
 </section>
 
+<!-- ============ EVERY CASE ============ -->
+<section id="cases">
+  <h2>Every case it handles</h2>
+  <p>
+    The sections above describe what the harness does. This one is the casebook: the specific
+    situations that come up during a real run, and what happens in each. Every row below describes
+    behaviour that was built and exercised — not an intention, and not a hope.
+  </p>
+
+  <h3>Getting problems in</h3>
+  <div class="tablewrap">
+    <table>
+      <tr><th>The situation</th><th>What the harness does</th></tr>
+      <tr><td>The same problem is already being fixed</td><td>Skips it and says so. Skipping is cheap and safe — if that other work doesn't finish, the problem simply reappears in the next queue.</td></tr>
+      <tr><td>The problem was already fixed and that fix landed</td><td>Skips it as done.</td></tr>
+      <tr><td>A fix landed, and was later rolled back</td><td>Puts the original problem back in the queue by itself. A rolled-back fix leaves an unfixed problem, and the harness treats it that way.</td></tr>
+      <tr><td>A leftover branch from an abandoned attempt</td><td>Deletes it, here and on the server, then carries on with the problem.</td></tr>
+      <tr><td>One problem depends on another</td><td>The dependent waits, and starts in the next round once its blocker has actually landed.</td></tr>
+      <tr><td>The dependencies form a loop</td><td>Rejects the plan and falls back to one-at-a-time. A circular plan is never guessed at.</td></tr>
+      <tr><td>The planning step fails, or returns something unreadable</td><td>Says so in the log and uses the safe fallback order. It never proceeds on a plan it can't read.</td></tr>
+      <tr><td>More problems than the spending cap allows</td><td>Runs only up to the cap, and the rest stay queued untouched.</td></tr>
+      <tr><td>A problem arrives with a log or a screenshot</td><td>Carries it into the working copy, so the fix is based on what the reporter actually saw.</td></tr>
+      <tr><td>The material belongs to a client who hasn't been cleared</td><td>Refuses to process it. The block lives in the software, not only in a policy document.</td></tr>
+    </table>
+  </div>
+
+  <h3>Fixing, and checking the fix</h3>
+  <div class="tablewrap">
+    <table>
+      <tr><th>The situation</th><th>What the harness does</th></tr>
+      <tr><td>The bug can't be reproduced</td><td>Reports it failed, with the reason, and attempts no fix. A problem nobody can pin down is not one to guess at.</td></tr>
+      <tr><td>The fix doesn't make the reproduction test pass</td><td>Reports it failed, leaves the problem open, and moves on to the next one.</td></tr>
+      <tr><td>The full suite fails for a reason that was <em>already</em> failing before the fix</td><td>Doesn't hold it against the fix. Only newly broken things count.</td></tr>
+      <tr><td>The test run produced no evidence that any test actually ran</td><td>Doesn't count as a pass. Silence is not a result.</td></tr>
+      <tr><td>Throwing away a finished working copy fails</td><td>Writes down that it failed, and leaves the verdict it belonged to exactly as it was. Messy tidying never rewrites the outcome.</td></tr>
+    </table>
+  </div>
+
+  <h3>Delivering</h3>
+  <div class="tablewrap">
+    <table>
+      <tr><th>The situation</th><th>What the harness does</th></tr>
+      <tr><td>Two fixes prepared at the same time touch the same code</td><td>A referee proposes a version combining both — and that proposal is re-tested from scratch like any other change.</td></tr>
+      <tr><td>The referee's combined version doesn't pass</td><td>Sets the proposal aside and hands a human the conflict, written up plainly.</td></tr>
+      <tr><td>Auto-landing is on, and the review before landing is unsure</td><td>Stops, and leaves the fix as a review request for a person.</td></tr>
+      <tr><td>Auto-landing is on, and the check after landing goes red</td><td>Undoes the fix, stops the line, and alerts the named person.</td></tr>
+      <tr><td>A fix landed, but the check after landing couldn't run</td><td>Records it as landed-without-the-check, undoes nothing (a blind undo would make things worse), and stops the line.</td></tr>
+      <tr><td>One landing has already gone wrong in this run</td><td>No further fix is landed for the rest of the run, however healthy the next one looks.</td></tr>
+      <tr><td>The problem came from GitHub</td><td>The issue is closed once the fix has landed and passed.</td></tr>
+    </table>
+  </div>
+
+  <h3>When a fix fails and someone needs to know</h3>
+  <div class="tablewrap">
+    <table>
+      <tr><th>The situation</th><th>What the harness does</th></tr>
+      <tr><td>A GitHub problem fails</td><td>Comments on the issue the moment it fails, carrying the same reason, the kind of failure, and a pointer to the operator's log — and tags the person to look at, when one is configured.</td></tr>
+      <tr><td>Nobody is configured to be tagged</td><td>Still comments, and says plainly that no one is set up to be notified. It doesn't stay quiet because the setting is missing.</td></tr>
+      <tr><td>A problem is failing right now</td><td>Wears a visible <code>harness-failed</code> label on GitHub, so the state is obvious without reading logs.</td></tr>
+      <tr><td>The problem is then fixed and delivered</td><td>The label comes off — on every delivered outcome, including fixes left open for a human to merge.</td></tr>
+      <tr><td>The label isn't on the issue at all</td><td>Checks first, and simply doesn't call. A label that was never there is not an error.</td></tr>
+      <tr><td>Removing the label fails, or reading the labels fails</td><td>Writes the exact error into the run summary and carries on. It never retries, and never lets tidying change the verdict it is standing next to.</td></tr>
+      <tr><td>Anything at all is about to be sent out</td><td>Passes a screen that blocks credentials, keys, and tokens first.</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ NOT DOING ============ -->
+<section id="not-doing">
+  <h2>What it doesn't do</h2>
+  <p>
+    A guide is only honest if it says where the edges are. Each of these is a decision, not an
+    oversight, and each one has a reason:
+  </p>
+  <div class="card">
+    <ul class="choices">
+      <li><span class="pick">It doesn't go looking for bugs.</span> It works the list people already reported, and nothing else. Deciding what's worth fixing is a human judgement, and it stays one.</li>
+      <li><span class="pick">It doesn't run on a schedule.</span> A person starts a run. Nothing runs unattended overnight.</li>
+      <li><span class="pick">It doesn't use cloud machinery.</span> This proof runs on a local machine in disposable containers, and stays there until it has been signed off.</li>
+      <li><span class="pick">It doesn't manage secrets inside the working copy.</span> Credentials are kept out of the isolated environment rather than handed to it and guarded.</li>
+      <li><span class="pick">It doesn't touch client material before sign-off.</span> No client repository, issue list, or log goes near it until leadership has confirmed, for that client, that it may.</li>
+      <li><span class="pick">It doesn't land anything by itself unless a team asked it to.</span> Auto-landing is opt-in per team, decided at setup — and this harness's own repository never uses it, whichever way the flag is set.</li>
+    </ul>
+  </div>
+</section>
+
 <!-- ============ PROTECTING INFORMATION ============ -->
 <section id="protection">
   <h2>Protecting information</h2>
@@ -458,8 +552,9 @@
   <div class="feature">
     <h3>Nothing leaves without a secrets check</h3>
     <p>Every piece of text the harness sends out — to the AI service, to GitHub, into a report —
-    passes a screen that blocks credentials, keys, and tokens.</p>
-    <p class="why"><b>What it prevents:</b> automation leaking access it was never supposed to share. <b>Boundary:</b> this is a screen on what the harness emits, not a general security audit of the surrounding systems.</p>
+    is checked against the harness's own configured credentials before it leaves, and the send is
+    blocked if one of them appears in it.</p>
+    <p class="why"><b>What it prevents:</b> the harness leaking its own access keys into a prompt, a review request, or a log. <b>Boundary:</b> it looks for <em>its own</em> configured values, so it is not a general scan for credentials — a password or key sitting inside a client's error log is not caught here. Keeping material like that away from the harness is the job of the per-client clearance rule below, and reviewing it is a human decision.</p>
   </div>
 
   <div class="feature">
@@ -490,6 +585,7 @@
 <section id="rules">
   <h2>Who owns what</h2>
   <div class="card">
+    <div class="tablewrap">
     <table>
       <tr><th>Decision</th><th>Owned by</th></tr>
       <tr><td>What gets fixed</td><td>People — the harness only works the list humans report</td></tr>
@@ -498,6 +594,7 @@
       <tr><td>Whether client material may be processed</td><td>Company leadership, per client — the harness enforces the answer</td></tr>
       <tr><td>Whether a fix is actually correct</td><td>The independent re-test — nobody's opinion, machine or human, overrides it</td></tr>
     </table>
+    </div>
   </div>
 </section>
 
@@ -505,6 +602,7 @@
 <section id="glossary">
   <h2>Words we use</h2>
   <div class="card">
+    <div class="tablewrap">
     <table>
       <tr><th>Word</th><th>What it means here</th></tr>
       <tr><td>Queue</td><td>The ordered list of reported problems the harness will work through.</td></tr>
@@ -515,6 +613,7 @@
       <tr><td>Revert</td><td>Automatically taking a landed fix back out, returning the shared code to its last known-good state.</td></tr>
       <tr><td>Run</td><td>One session of the harness working through its queue, ending with an honest summary.</td></tr>
     </table>
+    </div>
   </div>
 </section>
 
@@ -528,6 +627,12 @@
     repositories, and then a first client project once the confidentiality decision is made. Not yet
     tested: other repositories, other AI providers, and heavier workloads than three parallel fixes.
     This guide describes designed and proven behaviour, not a production rollout claim.
+  </p>
+  <p>
+    <b>One boundary to know.</b> The automated checks cover each piece of the harness on its own.
+    The assembled command-line path — the exact git and GitHub commands it runs when you start it —
+    is proved by those live runs, not by the automated checks. So a change to that wiring is not
+    covered until the next live run, and "the checks pass" is not evidence about it.
   </p>
 </section>
 

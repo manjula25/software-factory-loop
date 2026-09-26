@@ -48,6 +48,21 @@ describe("SUITE_SUMMARY_RE (shared execution-evidence definition, WI-4 T3)", () 
     expect(SUITE_SUMMARY_RE.test("")).toBe(false);
     expect(SUITE_SUMMARY_RE.test("some random output")).toBe(false);
   });
+
+  it("does not match a zero count — '0 passed' is a suite that ran nothing", () => {
+    // The rule is "a counted outcome proves the suite executed". Zero is a count
+    // but not execution: pytest says "no tests ran" in this case, and a runner
+    // that instead reports "0 passed" must not read as evidence (finding A-4).
+    expect(SUITE_SUMMARY_RE.test("0 passed in 0.01s")).toBe(false);
+    expect(SUITE_SUMMARY_RE.test("0 failed, 0 passed")).toBe(false);
+  });
+
+  it("still matches a real count that happens to contain a zero digit", () => {
+    // The zero-exclusion must key on the count's value, not on the digit being
+    // present: "10 passed" ran ten tests.
+    expect(SUITE_SUMMARY_RE.test("10 passed in 1.20s")).toBe(true);
+    expect(SUITE_SUMMARY_RE.test("20 skipped in 0.01s")).toBe(true);
+  });
 });
 
 describe("diffVerification (baseline-diff gate, Grilling decision 6)", () => {
