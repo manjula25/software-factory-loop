@@ -284,11 +284,16 @@ exit=0
 | 7 | The default gates are untouched | `vitest.scenarios.config.ts` (separate include glob `tests/scenarios/**`); run at `5393e1a` | `npm test` 287 rc=0; typecheck rc=0; `test:integration` 5/5 rc=0 at T3.1 and unchanged since |
 | 8 | No file under `src/` changed | `git diff --name-only 4701f21..5393e1a` | 11 files, none under `src/` (list in implementation-notes §10's range check) |
 
-Claims 1 and 5's red halves are contingent observations: their commands require
-the stub state or a removed precondition and cannot be re-run as printed now.
-Each log says so. Exit codes were captured with `rc=$?` immediately after each
-command; the 690.47s re-capture's rc was captured in the invoking shell and
-appended to the log in the same motion.
+Claim 1's red half is a **contingent observation**: its command requires the
+born-red stub that existed only between `d7f83c2` and `0e10076`, so re-running
+`npm run test:scenarios` against any later tree passes — the log says so in its
+appended contingency note. *(Corrected in place 2026-09-26, review finding E1 —
+the paragraph previously classed claim 5's red as non-re-runnable too, which is
+false: `DOCKER_HOST=unix:///nonexistent-t3.sock npm run test:scenarios` is
+verbatim re-runnable and reproduces its red.)* Claim 5's red is an ordinary
+re-runnable command, not a contingent one. Exit codes were captured with
+`rc=$?` immediately after each command; the 690.47s re-capture's rc was
+captured in the invoking shell and appended to the log in the same motion.
 
 ## Evidence boundary
 

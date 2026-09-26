@@ -80,3 +80,5 @@ AssertionError: expected [Function] to throw error matching /docker/i but got 'T
 
 
 exit=1 (captured as rc=$? on the line immediately after the command; 4/4 tests failed on the born-red stub — "not implemented yet" — not on a load failure)
+
+[contingency note, appended 2026-09-26 per review finding E1] This red is contingent on the born-red stub that existed between d7f83c2 and 0e10076: re-running `npm run test:scenarios` against any later tree passes, because the stub throwing "T3 born-red stub: ... not implemented yet" was replaced by the real machinery. The precondition RED is NOT contingent — its command (DOCKER_HOST=unix:///nonexistent-t3.sock npm run test:scenarios, evidence/t3-precondition-red.log) is verbatim re-runnable and reproduces its red.
