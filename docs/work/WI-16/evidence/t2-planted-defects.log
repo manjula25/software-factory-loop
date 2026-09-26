@@ -1,0 +1,68 @@
+WI-16 T2.3 — planted-defect pairs: each assertion proven load-bearing.
+
+Method, per pair: edit .sandcastle/scripted-agent/claude, rebuild the image
+(npm run build:image:test), run the full integration gate (npm run
+test:integration), record; then revert (git checkout -- the file), confirm the
+revert is byte-identical via an immediately-following empty `git diff --quiet`
+(rc 0), rebuild, re-run, record. Exit codes captured with rc=$? on the line
+after each command.
+
+================================================================================
+PAIR 1 (fix side) — the script emits the report WITHOUT the <green-evidence>
+block. Expectation: the fix test fails on the missing tag — the same
+observation extractEvidence throws on in production.
+================================================================================
+
+$ npm run build:image:test && npm run test:integration   # planted defect in place
+rc=1
+
+ FAIL  tests/integration/scripted-agent.test.ts > the scripted agent (WI-16 T2) > fix pass: patch, reproduction test and evidence land on fix/gh-1
+AssertionError: expected 'Reproduction test written at tests/fi…' to contain '<green-evidence>'
+
+- Expected
++ Received (excerpt)
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 4 passed (5)
+
+$ git checkout -- .sandcastle/scripted-agent/claude
+$ git diff --quiet -- .sandcastle/scripted-agent/claude
+rc=0        # byte-identical revert confirmed BEFORE the green re-run
+$ npm run build:image:test && npm run test:integration
+rc=0
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+
+================================================================================
+PAIR 2 (review side) — the script answers <review>wrong</review> instead of
+approve. Expectation: parseReviewOutput yields 'wrong', the review test fails.
+================================================================================
+
+$ npm run build:image:test && npm run test:integration   # planted defect in place
+rc=1
+
+ FAIL  tests/integration/scripted-agent.test.ts > the scripted agent (WI-16 T2) > review pass: the answer satisfies the harness's verdict parser
+AssertionError: expected 'wrong' to be 'approve' // Object.is equality
+
+Expected: "approve"
+Received: "wrong"
+
+ ❯ tests/integration/scripted-agent.test.ts:125:39
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 4 passed (5)
+
+$ git checkout -- .sandcastle/scripted-agent/claude
+$ git diff --quiet -- .sandcastle/scripted-agent/claude
+rc=0        # byte-identical revert confirmed BEFORE the green re-run
+$ npm run build:image:test && npm run test:integration
+rc=0
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+
+Full verbatim run outputs for the four runs above are the four vitest outputs
+taken 2026-09-26 between 18:30 and 18:42 (p1-red 149.45s, p1-green 150.10s,
+p2-red 149.80s, p2-green 149.69s); the excerpts here carry each run's failing
+assertion and its summary block.
