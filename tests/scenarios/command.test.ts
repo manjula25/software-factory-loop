@@ -86,10 +86,16 @@ describe("the scenarios command (WI-16 T3)", () => {
     ensureFixtureClone();
 
     // The hand-made mess: a scratch branch with a junk commit, pushed, with an
-    // open PR from it. Authorized by the fixture's purpose (FR-004).
+    // open PR from it. Authorized by the fixture's purpose (FR-004). The clone
+    // is from the fixture's REAL remote (GitHub), not the local clone dir —
+    // pushing to a path remote would never reach the PR assertion's subject.
+    const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: FIXTURE_CLONE_DIR,
+      encoding: "utf8",
+    }).trim();
     const scratch = mkdtempSync(join(tmpdir(), "loop-t3-mutate-"));
     try {
-      execFileSync("git", ["clone", "--quiet", FIXTURE_CLONE_DIR, scratch]);
+      execFileSync("git", ["clone", "--quiet", remoteUrl, scratch]);
       execFileSync("git", ["checkout", "-q", "-b", "t3/hand-mutation"], { cwd: scratch });
       writeFileSync(join(scratch, "T3-MUTATION.txt"), "hand-made mess for the reset test\n");
       execFileSync("git", ["add", "T3-MUTATION.txt"], { cwd: scratch });
@@ -135,7 +141,10 @@ describe("the scenarios command (WI-16 T3)", () => {
     // The real CLI entry as a process (FR-001's shape), with placeholder
     // provider credentials — resolveProvider validates presence only. The
     // label is worn by no issue, so the queue is empty: no planner, no
-    // sandbox, no agent pass.
+    // sandbox, no agent pass. This test carries its own 480s timeout (the
+    // config's 300s default is a bound, not a budget): a single gh API POST
+    // costs ~16s from this network, and the empty-queue run makes several —
+    // measured standalone at 111s, rc=0.
     const run = spawnSync(
       "npm",
       [
@@ -159,7 +168,7 @@ describe("the scenarios command (WI-16 T3)", () => {
           CLI_PROXY_API_URL: "https://placeholder.invalid",
           CLI_PROXY_API_TOKEN: "placeholder-not-a-real-credential",
         },
-        timeout: 240_000,
+        timeout: 420_000,
       },
     );
     // Observed, not asserted: a clean exit is incidental (FR-005 posture); a
@@ -170,7 +179,7 @@ describe("the scenarios command (WI-16 T3)", () => {
     }
 
     expectFixtureClean();
-  });
+  }, 480_000);
 
   it("the guard refuses while held, naming the holder; a dead holder is stolen", () => {
     assertScenariosPreconditions();
@@ -217,10 +226,14 @@ describe("the scenarios command (WI-16 T3)", () => {
     expect(() => assertScenariosPreconditions(noDocker)).toThrow(/docker/i);
 
     // gh auth removed without touching PATH: an empty GH_CONFIG_DIR has no
-    // credentials, so `gh auth status` fails.
+    // credentials (and any token env vars are stripped — they would override
+    // it), so `gh auth status` fails.
     const ghConfig = mkdtempSync(join(tmpdir(), "loop-t3-gh-config-"));
     try {
-      const noAuth = { ...process.env, GH_CONFIG_DIR: ghConfig };
+      const noAuth: NodeJS.ProcessEnv = { ...process.env, GH_CONFIG_DIR: ghConfig };
+      delete noAuth.GH_TOKEN;
+      delete noAuth.GITHUB_TOKEN;
+      delete noAuth.GH_ENTERPRISE_TOKEN;
       expect(() => assertScenariosPreconditions(noAuth)).toThrow(/gh/i);
     } finally {
       rmSync(ghConfig, { recursive: true, force: true });
