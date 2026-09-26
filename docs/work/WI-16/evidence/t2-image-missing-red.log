@@ -1,0 +1,50 @@
+
+> software-factory-loop@0.0.0 test:integration
+> vitest run --config vitest.integration.config.ts
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t2
+
+ ❯ tests/integration/scripted-agent.test.ts (2 tests | 2 failed) 31357ms
+   ❯ the scripted agent (WI-16 T2) (2)
+     × fix pass: patch, reproduction test and evidence land on fix/gh-1 15662ms
+     × review pass: the answer satisfies the harness's verdict parser 15692ms
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: pip install --upgrade pip
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/scripted-agent.test.ts > the scripted agent (WI-16 T2) > fix pass: patch, reproduction test and evidence land on fix/gh-1
+ImageNotBuiltError: sandbox image sandcastle-loop-test is not built locally. Build it once with npm run build:image:test (from the harness repository root), then re-run.
+ ❯ assertImageBuilt tests/integration/fixture.ts:95:11
+     93|     execFileSync("docker", ["image", "inspect", image], { stdio: ["ign…
+     94|   } catch {
+     95|     throw new ImageNotBuiltError(image);
+       |           ^
+     96|   }
+     97| }
+ ❯ tests/integration/scripted-agent.test.ts:67:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/integration/scripted-agent.test.ts > the scripted agent (WI-16 T2) > review pass: the answer satisfies the harness's verdict parser
+ImageNotBuiltError: sandbox image sandcastle-loop-test is not built locally. Build it once with npm run build:image:test (from the harness repository root), then re-run.
+ ❯ assertImageBuilt tests/integration/fixture.ts:95:11
+     93|     execFileSync("docker", ["image", "inspect", image], { stdio: ["ign…
+     94|   } catch {
+     95|     throw new ImageNotBuiltError(image);
+       |           ^
+     96|   }
+     97| }
+ ❯ tests/integration/scripted-agent.test.ts:109:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 3 passed (5)
+   Start at  17:54:40
+   Duration  112.28s (tests 100%)
+
