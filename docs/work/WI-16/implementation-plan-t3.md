@@ -136,7 +136,13 @@ Recorded to `docs/work/WI-16/evidence/t3-command-green.log` (with exit codes).
 Edit `fixture-reset.ts`, run just the scenarios command, revert, re-run — recorded to
 `docs/work/WI-16/evidence/t3-planted-defects.log` with per-command exit codes:
 
-1. Drop the `gh pr close` step → the hand-mutation test fails on the open-PR assertion.
+1. ~~Drop the `gh pr close` step → the hand-mutation test fails on the open-PR assertion.~~
+   *(Corrected in place 2026-09-26, on the evidence of the planted-defect run itself: with
+   the close loop skipped the test still PASSED — deleting a PR's head branch on GitHub
+   auto-closes the PR, so the open-PR assertion cannot catch this defect alone. The close
+   step is retained in the reset as explicit, loud bookkeeping, but the planted defect the
+   assertions catch is the branch deletion:)* Drop the remote-branch deletion → the
+   hand-mutation test fails on the only-`main` heads assertion.
 2. Drop the force-push of the seed → the hand-mutation test fails on the base-commit
    assertion.
 

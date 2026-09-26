@@ -81,13 +81,24 @@ function expectFixtureClean(): void {
 
 describe("the scenarios command (WI-16 T3)", () => {
   it("resets a hand-mutated fixture: branch gone, PR closed, base at the seed", () => {
+    // Owns a 480s timeout like the invocation test below: it performs TWO
+    // resets (the self-healing start plus the reset under test) and a
+    // three-part mess, and each gh API POST costs ~16s from this network.
     assertScenariosPreconditions();
     openGuard();
     ensureFixtureClone();
 
+    // Start from a clean fixture — a previous red run may have died mid-mess,
+    // and the junk commits are timestamp-unique, so a second push over a
+    // leftover branch would be rejected non-fast-forward before the reset
+    // under test ever runs.
+    resetFixture();
+
     // The hand-made mess: a scratch branch with a junk commit, pushed, with an
-    // open PR from it. Authorized by the fixture's purpose (FR-004). The clone
-    // is from the fixture's REAL remote (GitHub), not the local clone dir —
+    // open PR from it — AND main itself advanced by a junk commit, which is
+    // what a killed post-merge run leaves behind (the shape the force-push
+    // exists for). Authorized by the fixture's purpose (FR-004). The clone is
+    // from the fixture's REAL remote (GitHub), not the local clone dir —
     // pushing to a path remote would never reach the PR assertion's subject.
     const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
       cwd: FIXTURE_CLONE_DIR,
@@ -123,13 +134,22 @@ describe("the scenarios command (WI-16 T3)", () => {
         ],
         { cwd: scratch, encoding: "utf8" },
       );
+      execFileSync("git", ["checkout", "-q", "main"], { cwd: scratch });
+      writeFileSync(join(scratch, "T3-MAIN-MUTATION.txt"), "main advanced by the mess\n");
+      execFileSync("git", ["add", "T3-MAIN-MUTATION.txt"], { cwd: scratch });
+      execFileSync(
+        "git",
+        ["-c", "user.name=T3", "-c", "user.email=t3@invalid", "commit", "-q", "-m", "t3 main advance"],
+        { cwd: scratch },
+      );
+      execFileSync("git", ["push", "-q", "origin", "main"], { cwd: scratch });
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
 
     resetFixture();
     expectFixtureClean();
-  });
+  }, 480_000);
 
   it("smallest real invocation: the loop finds no eligible issue and the fixture is unchanged", () => {
     assertScenariosPreconditions();

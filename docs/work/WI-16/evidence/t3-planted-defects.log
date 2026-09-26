@@ -1,0 +1,185 @@
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+remote: 
+remote: Create a pull request for 't3/hand-mutation' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-integration-fixture/pull/new/t3/hand-mutation        
+remote: 
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  21:21:10
+   Duration  242.49s (tests 100%)
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+remote: 
+remote: Create a pull request for 't3/hand-mutation' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-integration-fixture/pull/new/t3/hand-mutation        
+remote: 
+ ❯ tests/scenarios/command.test.ts (4 tests | 1 failed | 3 skipped) 179116ms
+   ❯ the scenarios command (WI-16 T3) (4)
+     × resets a hand-mutated fixture: branch gone, PR closed, base at the seed 179114ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > resets a hand-mutated fixture: branch gone, PR closed, base at the seed
+FixtureResetError: scenarios fixture machinery failed at step "verify remote heads": expected only "main", found [main, t3/hand-mutation]
+ ❯ resetFixture tests/scenarios/fixture-reset.ts:228:11
+    226|     .sort();
+    227|   if (remaining.join(",") !== "main") {
+    228|     throw new FixtureResetError(
+       |           ^
+    229|       "verify remote heads",
+    230|       `expected only "main", found [${remaining.join(", ")}]`,
+ ❯ tests/scenarios/command.test.ts:130:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  21:26:22
+   Duration  179.33s (tests 100%)
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+To https://github.com/manjula25/loop-integration-fixture.git
+ ! [rejected]        t3/hand-mutation -> t3/hand-mutation (non-fast-forward)
+error: failed to push some refs to 'https://github.com/manjula25/loop-integration-fixture.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+ ❯ tests/scenarios/command.test.ts (4 tests | 1 failed | 3 skipped) 63523ms
+   ❯ the scenarios command (WI-16 T3) (4)
+     × resets a hand-mutated fixture: branch gone, PR closed, base at the seed 63521ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > resets a hand-mutated fixture: branch gone, PR closed, base at the seed
+Error: Command failed: git push -q origin t3/hand-mutation
+To https://github.com/manjula25/loop-integration-fixture.git
+ ! [rejected]        t3/hand-mutation -> t3/hand-mutation (non-fast-forward)
+error: failed to push some refs to 'https://github.com/manjula25/loop-integration-fixture.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+
+ ❯ tests/scenarios/command.test.ts:109:7
+    107|         { cwd: scratch },
+    108|       );
+    109|       execFileSync("git", ["push", "-q", "origin", "t3/hand-mutation"]…
+       |       ^
+    110|       execFileSync(
+    111|         "gh",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  21:31:34
+   Duration  63.76s (tests 100%)
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+remote: 
+remote: Create a pull request for 't3/hand-mutation' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-integration-fixture/pull/new/t3/hand-mutation        
+remote: 
+ ❯ tests/scenarios/command.test.ts (4 tests | 1 failed | 3 skipped) 310288ms
+   ❯ the scenarios command (WI-16 T3) (4)
+     × resets a hand-mutated fixture: branch gone, PR closed, base at the seed 310286ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > resets a hand-mutated fixture: branch gone, PR closed, base at the seed
+FixtureResetError: scenarios fixture machinery failed at step "force-push main to seed": git push origin main:main --dry-run failed: To https://github.com/manjula25/loop-integration-fixture.git
+ ! [rejected]        main -> main (non-fast-forward)
+error: failed to push some refs to 'https://github.com/manjula25/loop-integration-fixture.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+ ❯ run tests/scenarios/fixture-reset.ts:59:11
+     57|       return "";
+     58|     }
+     59|     throw new FixtureResetError(
+       |           ^
+     60|       step,
+     61|       `${command} ${args.join(" ")} failed: ${stderr.trim() || (failur…
+ ❯ resetFixture tests/scenarios/fixture-reset.ts:214:3
+ ❯ tests/scenarios/command.test.ts:147:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  21:34:13
+   Duration  310.53s (tests 100%)
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+remote: 
+remote: Create a pull request for 't3/hand-mutation' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-integration-fixture/pull/new/t3/hand-mutation        
+remote: 
+ ❯ tests/scenarios/command.test.ts (4 tests | 1 failed | 3 skipped) 293282ms
+   ❯ the scenarios command (WI-16 T3) (4)
+     × resets a hand-mutated fixture: branch gone, PR closed, base at the seed 293280ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/scenarios/command.test.ts > the scenarios command (WI-16 T3) > resets a hand-mutated fixture: branch gone, PR closed, base at the seed
+FixtureResetError: scenarios fixture machinery failed at step "force-push main to seed": git push origin main:main --dry-run failed: To https://github.com/manjula25/loop-integration-fixture.git
+ ! [rejected]        main -> main (non-fast-forward)
+error: failed to push some refs to 'https://github.com/manjula25/loop-integration-fixture.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+ ❯ run tests/scenarios/fixture-reset.ts:59:11
+     57|       return "";
+     58|     }
+     59|     throw new FixtureResetError(
+       |           ^
+     60|       step,
+     61|       `${command} ${args.join(" ")} failed: ${stderr.trim() || (failur…
+ ❯ resetFixture tests/scenarios/fixture-reset.ts:214:3
+ ❯ tests/scenarios/command.test.ts:150:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  22:28:23
+   Duration  293.49s (tests 100%)
+
+
+ RUN  v5.0.0 /home/bitcot/Documents/projects/software-factory-loop/.claude/worktrees/wi-16-t3
+
+remote: 
+remote: Create a pull request for 't3/hand-mutation' on GitHub by visiting:        
+remote:      https://github.com/manjula25/loop-integration-fixture/pull/new/t3/hand-mutation        
+remote: 
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  22:33:49
+   Duration  382.44s (tests 100%)
+
+
+--- summary (runs above, in order) ---
+1. planted: close loop skipped -> test PASSED (GitHub auto-closes a PR whose head branch is deleted; the plan expectation corrected in place)
+2. planted: branch deletion skipped -> rc=1, FixtureResetError "verify remote heads": expected only "main", found [main, t3/hand-mutation]
+   revert -> git diff empty -> green re-run rc=0
+3. planted: force-push made --dry-run -> first attempt failed at the mess push (fixture left dirty by run 2; the test now resets BEFORE mutating); after that fix -> rc=1 at the post-mess reset, "force-push main to seed" rejected non-fast-forward
+   revert -> git diff empty (rc=0) -> green re-run rc=0 (4/4 suite green re-verified after)
